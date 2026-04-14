@@ -136,6 +136,8 @@ orbit-engine/
 ├── TUTORIAL.md               # Hands-on tutorial
 ├── GUIDE.md                  # Full reference guide
 ├── VALIDATION.md             # Test coverage (contributors)
+├── FEEDBACK.md               # Feedback collection system (contributors)
+├── SELF-EVOLUTION.md         # Self-evolution cycle (contributors)
 ├── CONTRIBUTING.md
 └── LICENSE                   # MIT
 ```

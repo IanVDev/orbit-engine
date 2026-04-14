@@ -181,6 +181,10 @@ Score = earned_points / max_points
 Test pass/fail = all HARD asserts passed (SOFT ignored for verdict)
 ```
 
+### Real-world feedback
+
+Validation scores measure structural and perceived quality against golden outputs. To measure whether outputs are *actually useful* in practice, see [FEEDBACK.md](FEEDBACK.md) — a lightweight system that collects adoption metrics from real sessions and correlates them with validation scores.
+
 ### Anti-gaming detection
 
 The test suite includes a cross-output gaming detector that analyzes all golden outputs together for three signals:

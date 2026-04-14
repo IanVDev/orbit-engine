@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-04-14T20:58:25+00:00",
+  "tests_passed": 18,
+  "tests_total": 18,
+  "avg_score": 0.9925925925925926,
+  "per_test_scores": {
+    "CT1 \u2014 Block on complex prompt (no grounding)": 1.0,
+    "CT2 \u2014 Surgical diagnosis (real code)": 1.0,
+    "CT3 \u2014 Ambiguous intent (perception under doubt)": 0.95,
+    "CT4 \u2014 Perceived quality (subtle pattern + real code)": 0.9166666666666666,
+    "Eval 01 \u2014 Correction chain": 1.0,
+    "Eval 02 \u2014 Repeated edits": 1.0,
+    "Eval 03 \u2014 Complex migration no constraints": 1.0,
+    "Eval 04 \u2014 Unsolicited long response": 1.0,
+    "Eval 05 \u2014 Exploratory reading": 1.0,
+    "Eval 06 \u2014 Large paste": 1.0,
+    "Eval 07 \u2014 Explicit request": 1.0,
+    "Eval 08 \u2014 Ambiguous fail-closed": 1.0,
+    "Eval 09 \u2014 No /clear with unsaved context": 1.0,
+    "Eval 10 \u2014 No /compact on short session": 1.0,
+    "Eval 11 \u2014 Simple question (silence)": 1.0,
+    "Eval 12 \u2014 Trivial fix (silence)": 1.0,
+    "Eval 13 \u2014 Casual conversation (silence)": 1.0,
+    "Format rules \u2014 all positive outputs": 1.0
+  },
+  "gaming_warnings": 0,
+  "skill_lines": 259,
+  "skill_hash": "sha256:a885e7cbef029980"
+}
