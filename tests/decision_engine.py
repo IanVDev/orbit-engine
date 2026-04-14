@@ -466,7 +466,7 @@ _W_EFFICIENCY = 0.30
 _W_OUTPUT = 0.20
 
 # Canonical causality message (stable string — tests assert against this).
-_CAUSALITY_MSG = "This improvement was triggered by a skill suggestion."
+_CAUSALITY_MSG = "This improvement was triggered by a orbit-engine-skill suggestion."
 
 
 @dataclass
