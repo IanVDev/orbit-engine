@@ -230,6 +230,56 @@ Each invocation is independent. The decision engine is stateless except for the 
 
 ---
 
+## Dogfooding — using the skill on its own development
+
+The skill should analyze its own development sessions. Without this, the system is incomplete — it validates changes but never *suggests* them.
+
+### The loop
+
+```text
+1. Developer works on orbit-engine (edits skill, tests, infra)
+2. At any point, apply the skill:
+   "Before answering, apply orbit-engine"
+3. Skill reads conversation history, detects waste patterns
+4. Skill outputs DIAGNOSIS / ACTIONS / DO NOT DO NOW
+5. Developer acts on recommendations (or not)
+6. Changes are validated:
+   $ python3 tests/evolve.py skill/SKILL.md --origin skill-suggested
+7. Decision engine approves or rejects
+8. Evidence log records: verdict + origin=skill-suggested
+```
+
+### Origin tracking
+
+The `--origin` flag marks who proposed the change:
+
+| Origin | Meaning |
+| --- | --- |
+| `manual` | Developer edited the skill directly (default) |
+| `skill-suggested` | orbit-engine diagnosed a pattern and recommended the change |
+| `automated` | CI, script, or batch process made the change |
+
+This lets you compare acceptance rates by origin — are skill-suggested changes better?
+
+```bash
+# Run after a skill-suggested change
+python3 tests/evolve.py skill/SKILL.md --origin skill-suggested
+
+# Review evidence by origin
+grep '"origin"' tests/evidence_log.jsonl | python3 -m json.tool
+```
+
+### What this proves
+
+When the evidence log contains entries with `"origin": "skill-suggested"` and `"verdict": "ACCEPT"`, it means:
+
+1. The skill detected a real pattern in its own development
+2. The recommendation led to a concrete change
+3. The change passed all 3 gates (validation, feedback, safety)
+4. The system is eating its own dog food — and the food is good
+
+---
+
 ## Files
 
 | File | Role |
@@ -238,4 +288,5 @@ Each invocation is independent. The decision engine is stateless except for the 
 | `tests/evolve.py` | Orchestrator — backup, validate, decide, commit |
 | `tests/decision_engine.py` | Gate logic — pure function, no state, no learning |
 | `tests/.baseline.json` | Snapshot of last accepted scores |
+| `tests/evidence_log.jsonl` | Append-only decision history with origin tracking |
 | `skill/SKILL.md.bak` | Automatic backup (created during evolution cycle) |

@@ -9,6 +9,8 @@ Usage:
     python3 tests/evolve.py skill/SKILL.md              # full cycle
     python3 tests/evolve.py skill/SKILL.md --dry-run     # validate without commit
     python3 tests/evolve.py skill/SKILL.md --feedback f.jsonl  # include adoption data
+    python3 tests/evolve.py skill/SKILL.md --impact i.json     # include impact proof
+    python3 tests/evolve.py skill/SKILL.md --origin skill-suggested  # track who proposed
     python3 tests/evolve.py --save-baseline              # snapshot current state
 
 Exit codes:
@@ -35,6 +37,7 @@ from decision_engine import (
     Baseline,
     DecisionResult,
     FeedbackMetrics,
+    ImpactFeedback,
     ValidationResults,
     Verdict,
     append_evidence,
@@ -189,7 +192,21 @@ def main() -> int:
 
     # ── Evolution mode ──
     dry_run = "--dry-run" in args
-    clean_args = [a for a in args if not a.startswith("--")]
+
+    # Extract positional args (skip flags and their values)
+    _FLAGS_WITH_VALUE = {"--feedback", "--origin", "--impact"}
+    clean_args: list[str] = []
+    skip_next = False
+    for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in _FLAGS_WITH_VALUE:
+            skip_next = True
+            continue
+        if a.startswith("--"):
+            continue
+        clean_args.append(a)
 
     if not clean_args:
         print("Usage: python3 tests/evolve.py <skill_file> [options]")
@@ -197,6 +214,8 @@ def main() -> int:
         print("Options:")
         print("  --dry-run              Validate without commit")
         print("  --feedback <file>      Include feedback JSONL")
+        print("  --impact <file>        Include impact proof JSON")
+        print("  --origin <tag>         Who proposed: manual, skill-suggested, automated")
         print("  --save-baseline        Snapshot current state")
         return 0
 
@@ -217,6 +236,23 @@ def main() -> int:
             if not fb_path.is_absolute():
                 fb_path = _PROJECT_ROOT / fb_path
             feedback = FeedbackMetrics.from_jsonl(fb_path)
+
+    # Load impact proof if provided
+    impact: ImpactFeedback | None = None
+    if "--impact" in args:
+        idx = args.index("--impact")
+        if idx + 1 < len(args):
+            imp_path = Path(args[idx + 1])
+            if not imp_path.is_absolute():
+                imp_path = _PROJECT_ROOT / imp_path
+            impact = ImpactFeedback.from_file(imp_path)
+
+    # Parse origin tag
+    origin = "manual"
+    if "--origin" in args:
+        idx = args.index("--origin")
+        if idx + 1 < len(args):
+            origin = args[idx + 1]
 
     # Load baseline if exists
     baseline: Baseline | None = None
@@ -242,6 +278,7 @@ def main() -> int:
         skill_content=skill_content,
         skill_lines=skill_lines,
         feedback=feedback,
+        impact=impact,
     )
 
     # Step 4: Report
@@ -254,6 +291,8 @@ def main() -> int:
         feedback=feedback,
         baseline=baseline,
         skill_hash=compute_skill_hash(skill_path),
+        origin=origin,
+        impact=impact,
     )
 
     # Step 5: Act on verdict

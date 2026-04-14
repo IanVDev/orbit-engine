@@ -1,0 +1,40 @@
+{
+  "sessions": [
+    {
+      "action_followed": true,
+      "rework_before": 6,
+      "rework_after": 1,
+      "message_count_before": 35,
+      "message_count_after": 14,
+      "output_size_before": 900,
+      "output_size_after": 250
+    },
+    {
+      "action_followed": true,
+      "rework_before": 4,
+      "rework_after": 1,
+      "message_count_before": 28,
+      "message_count_after": 10,
+      "output_size_before": 700,
+      "output_size_after": 180
+    },
+    {
+      "action_followed": true,
+      "rework_before": 7,
+      "rework_after": 2,
+      "message_count_before": 32,
+      "message_count_after": 15,
+      "output_size_before": 850,
+      "output_size_after": 300
+    },
+    {
+      "action_followed": false,
+      "rework_before": 8,
+      "rework_after": 7,
+      "message_count_before": 40,
+      "message_count_after": 38,
+      "output_size_before": 1200,
+      "output_size_after": 1100
+    }
+  ]
+}
