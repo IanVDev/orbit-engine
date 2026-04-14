@@ -4,7 +4,7 @@
 
 A Claude Code skill that detects waste patterns in your session and outputs the exact commands to eliminate them.
 
-[Get started in 2 min](ONBOARDING.md) · [Tutorial](TUTORIAL.md) · [Install](#install) · [See output](#what-it-outputs)
+[Get started in 2 min](ONBOARDING.md) · [Tutorial](TUTORIAL.md) · [Usage](#usage) · [See output](#what-it-outputs)
 
 ---
 
@@ -53,11 +53,13 @@ DO NOT DO NOW
 
 ---
 
-## Install
+## Usage
 
-**Drag the `skill/` folder into Claude Code.** Recommended method.
+### Claude Code
 
-Alternatively, drag `skill/SKILL.md` directly into the Claude Code interface.
+Download `orbit-engine.skill` and install in your skills folder.
+
+Or drag the `skill/` folder directly into the Claude Code interface.
 
 **First Run** — after installing, ask:
 
@@ -71,6 +73,12 @@ How efficient is this?
 After the first run, the skill activates automatically on complex tasks and long sessions.
 
 Full onboarding (30 seconds): [ONBOARDING.md](ONBOARDING.md)
+
+### Any AI (GPT, Gemini, etc.)
+
+Copy and paste [`orbit-engine.prompt.md`](orbit-engine.prompt.md) at the start of your session.
+
+Then use it normally — Orbit Engine will activate when it detects inefficiency in your conversation.
 
 ---
 
@@ -115,7 +123,9 @@ The skill stays silent when the session is healthy — no output means no waste 
 
 ```
 orbit-engine/
-├── skill/                    # The skill package
+├── orbit-engine.skill        # Installable skill package (ZIP)
+├── orbit-engine.prompt.md    # Universal prompt (GPT, Gemini, etc.)
+├── skill/                    # The skill source files
 │   ├── SKILL.md              # Core logic — install this
 │   ├── EXAMPLES.md           # Output examples
 │   ├── ONBOARDING.md         # First-time setup (inside skill)
