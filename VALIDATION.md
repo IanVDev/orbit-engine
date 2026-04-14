@@ -3,7 +3,7 @@
 > **⚙️ Advanced** — This document is for contributors and technical reviewers.
 > If you just want to use the skill, start with [QUICK-START.md](QUICK-START.md).
 
-How to verify that `orbit-engine.skill` is working correctly.
+How to verify that orbit-engine is working correctly.
 
 ## Test coverage
 
@@ -100,7 +100,7 @@ Verify:
 
 ## How to run
 
-1. Install the skill: drag `orbit-engine.skill` into Claude Code
+1. Install the skill: drag the `skill/` folder into Claude Code
 2. Open a new session
 3. Test each scenario one at a time
 4. Compare the response against the expected output and assertions

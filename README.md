@@ -55,15 +55,9 @@ DO NOT DO NOW
 
 ## Install
 
-**Drag `orbit-engine.skill` into Claude Code.** Recommended method.
+**Drag the `skill/` folder into Claude Code.** Recommended method.
 
-Alternatively, type in Claude Code (not in your terminal):
-
-```
-/install orbit-engine.skill
-```
-
-> If `/install` returns an error, use drag-and-drop — it always works. No config. No restart.
+Alternatively, drag `skill/SKILL.md` directly into the Claude Code interface.
 
 **First Run** — after installing, ask:
 
@@ -120,16 +114,22 @@ The skill stays silent when the session is healthy — no output means no waste 
 
 ```
 orbit-engine/
-├── orbit-engine.skill       # Install this
+├── skill/                    # The skill package
+│   ├── SKILL.md              # Core logic — install this
+│   ├── EXAMPLES.md           # Output examples
+│   ├── ONBOARDING.md         # First-time setup (inside skill)
+│   └── QUICK-START.md        # Quick reference (inside skill)
 ├── README.md
-├── ONBOARDING.md            # First-time setup (2 min)
-├── QUICK-START.md           # Quick reference
-├── TUTORIAL.md              # Hands-on tutorial
-├── GUIDE.md                 # Full reference guide
-├── VALIDATION.md            # Test coverage (contributors)
+├── ONBOARDING.md             # First-time setup (2 min)
+├── QUICK-START.md            # Quick reference
+├── TUTORIAL.md               # Hands-on tutorial
+├── GUIDE.md                  # Full reference guide
+├── VALIDATION.md             # Test coverage (contributors)
 ├── CONTRIBUTING.md
-└── LICENSE                  # MIT
+└── LICENSE                   # MIT
 ```
+
+> **To install:** drag the entire `skill/` folder into Claude Code, or drag individual `.md` files from inside it.
 
 ---
 

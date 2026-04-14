@@ -4,7 +4,7 @@ Contributions are welcome for improvements to the skill logic, new strategies, d
 
 ## Naming convention
 
-The project name is `orbit-engine`. Use `orbit-engine:` as the response label in all usage examples throughout the docs and demo. When referencing the install artifact, always use the full name: `orbit-engine.skill`. No aliases, no abbreviations.
+The project name is `orbit-engine`. Use `orbit-engine:` as the response label in all usage examples throughout the docs and demo. When referencing the install artifact, always use `skill/` folder or `skill/SKILL.md`. No aliases, no abbreviations.
 
 ## Before opening a PR
 
@@ -65,7 +65,7 @@ Before pushing, confirm:
 - [ ] No roadmap specifics (what comes next, when, under what conditions)
 - [ ] No known limitations framed as future problems to solve
 - [ ] All new docs are written for users, not for contributors tracking decisions
-- [ ] Naming convention respected: `orbit-engine`, `orbit-engine.skill`, no aliases
+- [ ] Naming convention respected: `orbit-engine`, `skill/`, no aliases
 
 ## Code of conduct
 

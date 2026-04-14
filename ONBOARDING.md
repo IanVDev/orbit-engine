@@ -10,15 +10,11 @@ This skill detects that — and tells you exactly what to fix.
 
 ## Step 1 — Install (10 seconds)
 
-**Drag `orbit-engine.skill` into the Claude Code interface.** That's the recommended method.
+**Drag the `skill/` folder into the Claude Code interface.** That's the recommended method.
 
-Alternatively, type directly in Claude Code (not in your terminal):
+Alternatively, drag `skill/SKILL.md` directly.
 
-```text
-/install orbit-engine.skill
-```
-
-> ⚠️ If `/install` returns an error or nothing happens, use drag-and-drop — it always works.
+> ⚠️ If nothing happens, try drag-and-drop again — it always works.
 
 No config. No restart.
 
@@ -48,7 +44,7 @@ Before answering, apply orbit-engine. Then: how efficient is this?
 
 > **⛔ Do not continue until you see DIAGNOSIS at least once.**
 > If it doesn't trigger, paste the exact prompt again — repetition works.
-> If it still doesn't appear, the skill is not loaded — run `/install orbit-engine.skill` again or use drag-and-drop.
+> If it still doesn't appear, the skill is not loaded — drag the `skill/` folder into Claude Code again.
 
 ---
 

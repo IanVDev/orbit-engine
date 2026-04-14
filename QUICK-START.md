@@ -2,15 +2,9 @@
 
 ## Step 1 — Install
 
-**Drag `orbit-engine.skill` into the Claude Code interface.** That's it.
+**Drag the `skill/` folder into the Claude Code interface.** That's it.
 
-Alternatively, type in Claude Code (not in your terminal):
-
-```text
-/install orbit-engine.skill
-```
-
-> If `/install` returns an error, use the drag-and-drop method above — it always works.
+Alternatively, drag `skill/SKILL.md` directly — it always works.
 
 ---
 

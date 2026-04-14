@@ -29,15 +29,9 @@ When in doubt, the skill activates rather than staying silent — the cost of no
 
 ## Installation
 
-**Drag `orbit-engine.skill` into the Claude Code interface.** That's the most reliable method.
+**Drag the `skill/` folder into the Claude Code interface.** That's the most reliable method.
 
-Alternatively, type in Claude Code (not in your terminal):
-
-```text
-/install orbit-engine.skill
-```
-
-> If `/install` returns an error, use drag-and-drop — it always works. No terminal. No restart.
+Alternatively, drag `skill/SKILL.md` directly — it always works. No terminal. No restart.
 
 ---
 
