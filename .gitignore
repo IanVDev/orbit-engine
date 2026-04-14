@@ -1,0 +1,51 @@
+# ============================================================
+# orbit-engine: .gitignore
+# Protege contra commit acidental de lógica interna/proprietária
+# ============================================================
+
+# --- Artefatos internos (NUNCA devem ir para repo público) ---
+.internal/
+.internal.*
+decision-engine/
+evals/
+future/
+
+# --- Arquivos de skill compilados (binários) ---
+*.skill
+
+# --- Nomes legados do projeto ---
+token-optimizer*
+
+# --- Documentos internos que podem ser criados localmente ---
+RESUMO-EXECUTIVO*
+ANTI-LEAK*
+FREE-FIRST*
+HEURISTIC-ACTIVATION*
+OUTPUT-TEMPLATES*
+REPO-SEPARATION*
+PHASED-EXECUTION*
+cli-notes*
+
+# --- Eval data ---
+**/evals.json
+**/first-run-guarantee.json
+
+# --- OS artifacts ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# --- Editor ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Node (caso usado no futuro) ---
+node_modules/
+package-lock.json
+yarn.lock
+
+# --- Logs ---
+*.log
