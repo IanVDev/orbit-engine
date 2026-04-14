@@ -58,11 +58,12 @@ If it still doesn't appear, the skill is not installed — go back to the prereq
 
 You only need the prompt above once.
 
-After the first run, the skill activates automatically when it detects:
+After the first run, the skill checks every response automatically. It detects:
 
-- Session over 15 messages without `/clear`
-- Complex task keywords ("refactor", "migration", "redesign")
-- Token pressure ("getting slow", "near limit")
+- Correction chains (multiple follow-ups fixing output)
+- Rework patterns (same file edited repeatedly)
+- Weak prompts (complex tasks with no constraints)
+- Unsolicited long responses
 
 You can also trigger it anytime with: `analyze cost`
 
@@ -155,14 +156,17 @@ analyze cost
 
 ```text
 DIAGNOSIS
-- Context in critical state (>15 messages without /clear)
-- Idle MCPs injecting context
-Risk: critical
+- Same file edited 3 times — rework pattern detected
+- Follow-up corrections indicate initial prompt was underspecified
+Risk: high — address before continuing
 
 ACTIONS
-1. /compact "preserve completed feature"
-2. /mcp → disconnect idle integrations
-3. Finish in 1 message
+1. Restate request with constraints — specify exactly what "done" looks like
+2. /compact "preserve final file state and current requirements"
+3. Finish current file before moving to the next
+
+DO NOT DO NOW
+- Edit the same file again without confirming requirements first
 ```
 
 ---
@@ -170,7 +174,7 @@ ACTIONS
 ### Simple rule
 
 ```text
-Session got long → analyze cost
+Feeling stuck → analyze cost
 ```
 
 ---
@@ -181,13 +185,14 @@ The skill always suggests what to do.
 
 But these are the most common:
 
-| Command | What it does |
+| Type | What it does |
 | --- | --- |
 | Shift+Tab | Plan before executing |
 | /compact | Reduces context while keeping what matters |
 | /clear | Resets the session |
-| /mcp | Removes idle integrations |
 | @file: | References only what's needed |
+| Rewrite prompt | Add constraints, boundaries, scope |
+| Break into subtasks | Split large work into steps |
 
 ---
 
@@ -250,13 +255,14 @@ analyze cost
 
 ## Lesson 7: Automatic activation
 
-The skill fires on its own when it detects:
+The skill checks every response and fires when it detects:
 
-| Situation | Example |
+| Pattern | Example |
 | --- | --- |
-| Long session | Many messages without clearing |
-| Complex task | "refactor", "migration" |
-| Token pressure | "getting slow" |
+| Correction chain | 3+ follow-ups correcting output |
+| Rework | Same file edited multiple times |
+| Weak prompt | Complex task with no constraints |
+| Over-generation | Long response to a short question |
 
 ---
 

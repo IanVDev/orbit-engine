@@ -10,22 +10,23 @@ Drag the `skill/` folder into Claude Code. Done.
 analyze cost
 ```
 
-Or let it activate automatically on complex tasks and long sessions.
+Or let it activate automatically when it detects waste patterns (rework, vague prompts, over-generation).
 
 ## 3. Follow the output
 
 ```text
 DIAGNOSIS → what's wrong
-ACTIONS → what to do
+ACTIONS → what to do (commands, prompt rewrites, or task structure)
 DO NOT DO NOW → what to avoid
 ```
 
-## Commands it recommends
+## What it recommends
 
-| Command | What it does |
+| Type | Examples |
 | --- | --- |
-| `/clear` | Resets session history |
-| `/compact "instruction"` | Summarizes history, keeps what matters |
-| `/mcp` | Lists MCPs — disconnect idle ones |
+| `/clear` | Reset session history |
+| `/compact "instruction"` | Summarize history, keep what matters |
 | `Shift+Tab` | Plan Mode — plan before executing |
 | `@file:function` | Reference specific code, not whole files |
+| Rewrite prompt | Add constraints, boundaries, definition of done |
+| Break into subtasks | Split large work into sequential steps |

@@ -101,29 +101,30 @@ Check the response:
 | `is this optimal?` / `can this be improved?` | Variations — all recognized |
 | `Before answering, apply orbit-engine. Then: [task]` | Guaranteed fallback — always fires even on fresh sessions |
 
-The skill also activates automatically on long sessions (>15 msgs), complex task keywords, and token pressure signals.
+The skill also checks every response automatically, detecting: correction chains, rework patterns, weak prompts, over-generation, and exploratory reading.
 
 ---
 
-## Commands the skill recommends
+## What the skill recommends
 
-| Command | What it does |
+| Type | Examples |
 | --- | --- |
 | `/clear` | Wipes history. Use between different tasks. |
 | `/compact [instruction]` | Summarizes history without losing what matters. |
-| `/mcp` | Lists MCPs to disconnect idle ones. |
 | `Shift+Tab` | Plan Mode. Plan before executing. |
 | `@file:function` | Precise reference, no whole-file dumps. |
+| Rewrite prompt | Add constraints, boundaries, definition of done. |
+| Break into subtasks | Split large work into sequential steps. |
 
 ---
 
 ## 3 common situations
 
-**Long session + big task**
-→ Plan Mode → /compact → /clear after. Save 50-60%.
+**Vague prompt on complex task**
+→ Add constraints → Plan Mode → execute in batches.
 
-**Tokens almost gone**
-→ /compact NOW → disconnect MCPs → finish in 1 message.
+**Correction chain (3+ follow-ups fixing output)**
+→ Rewrite prompt with boundaries → /compact → restart cleanly.
 
 **Planning a migration**
 → Plan Mode → @file:model → /compact after. Map first, execute clean.

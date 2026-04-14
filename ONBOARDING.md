@@ -2,7 +2,7 @@
 
 Your sessions can be more efficient than you think.
 
-Every message in Claude Code re-reads the entire history. At message 30, you pay for all 29 before it. Add idle MCPs, skip a planning step, and a $2 session costs $18.
+Every message in Claude Code re-reads the entire history. At message 30, you pay for all 29 before it. Skip a planning step, send vague prompts that cause rework, and a $2 session costs $18.
 
 This skill detects that — and tells you exactly what to fix.
 
@@ -52,11 +52,13 @@ Before answering, apply orbit-engine. Then: how efficient is this?
 
 You only need the prompt above once.
 
-After the first run, the skill activates automatically when it detects:
+After the first run, the skill checks every response automatically. It detects:
 
-- Session over 15 messages without `/clear`
-- Complex task keywords ("refactor", "migration", "redesign", "implement")
-- Token pressure signals ("getting slow", "tokens running out", "near limit")
+- Correction chains (multiple short follow-ups fixing output)
+- Rework patterns (same file edited repeatedly)
+- Weak prompts (complex tasks with no constraints or scope)
+- Unsolicited long responses
+- Exploratory file reading without a plan
 
 You can also trigger it explicitly anytime with: `analyze cost`
 

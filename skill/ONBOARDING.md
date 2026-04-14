@@ -32,9 +32,10 @@ Before answering, apply orbit-engine. Then: how efficient is this?
 
 The skill activates automatically when it detects:
 
-- Long sessions without /clear
-- Complex tasks without planning
-- Signs of token pressure
+- Correction chains (multiple short follow-ups fixing your output)
+- Rework patterns (same file edited repeatedly)
+- Weak prompts (complex tasks with no constraints)
+- Unsolicited long responses
 
 You can also trigger it anytime: `analyze cost`
 

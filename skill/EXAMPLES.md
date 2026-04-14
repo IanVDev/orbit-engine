@@ -1,127 +1,171 @@
 # orbit-engine: Examples
 
-Real output examples for common scenarios.
+Real output examples showing the new observable-pattern detection.
 
 ---
 
-## Scenario 1 — Long session before a complex task
+## Scenario 1 — Correction chain after vague prompt
 
-**Context:** 25+ messages in, no /clear used, about to start a refactor.
+**What happened in the conversation:**
+- User: "Refactor the auth module"
+- Claude: rewrote 3 files, added OAuth2, changed database schema
+- User: "No, just extract the middleware"
+- User: "Don't touch the schema"
+- User: "Revert the routes file"
+
+**orbit-engine output:**
 
 ```text
 DIAGNOSIS
-- Long session without /clear or /compact
-- Complex task started without Plan Mode
-Risk: high
+- 3 consecutive corrections after initial response — prompt lacked constraints
+- Same files edited multiple times (auth.ts, routes.ts, schema.ts)
+Risk: high — address before continuing
 
 ACTIONS
-1. Shift+Tab (Plan Mode) — map scope before spending tokens
-2. /compact "preserve architecture decisions" — clean history safely
-3. /clear after finishing — reset cost between tasks
+1. Restate request with boundaries — "extract auth middleware from auth.ts into middleware/auth.ts, don't touch routes or schema"
+2. Shift+Tab (Plan Mode) — confirm scope before executing
+3. /compact "preserve current file state and user corrections" — reduce accumulated rework from context
 
 DO NOT DO NOW
-- Start coding without a plan — causes rework and invisible cost
+- Continue editing without a clear scope — each correction adds another full pass to context
 ```
 
 ---
 
-## Scenario 2 — Tokens running low
+## Scenario 2 — Unsolicited long response
 
-**Context:** User mentions things are "getting slow" or "near the limit."
+**What happened in the conversation:**
+- User: "Fix the type error on line 42 of utils.ts"
+- Claude: generated 180 lines — rewrote the entire file, added error handling, refactored interfaces, added JSDoc
+
+**orbit-engine output:**
 
 ```text
 DIAGNOSIS
-- Session showing signs of token pressure
-- Multiple messages accumulated without compaction
+- Response far exceeded the request — user asked for a one-line fix, got a full rewrite
+Risk: medium
+
+ACTIONS
+1. Restate with constraint — "Fix only the type error on line 42, change nothing else"
+2. Use @file:utils.ts:calculateTotal to reference just the function, not the whole file
+
+DO NOT DO NOW
+- Accept the full rewrite — it changes behavior beyond what was requested
+```
+
+---
+
+## Scenario 3 — Complex first message with no constraints
+
+**What happened in the conversation:**
+- User's first message: "I need to migrate 40 Prisma models to a new schema with different relations"
+- No file targets, no priority order, no constraints
+
+**orbit-engine output:**
+
+```text
+DIAGNOSIS
+- Large task with no scope constraints — high speculation risk
+Risk: medium
+
+ACTIONS
+1. Shift+Tab (Plan Mode) — map dependencies and define migration order before touching any file
+2. Define done — which models are critical? What does "migrated" mean for each?
+
+DO NOT DO NOW
+- Start migrating without a plan — generates speculative code that will need rework
+```
+
+---
+
+## Scenario 4 — Exploratory reading without direction
+
+**What happened in the conversation:**
+- User: "Understand this codebase"
+- Claude: read 12 files across 4 directories, generated a 300-line summary
+- Most files read were not referenced in follow-up messages
+
+**orbit-engine output:**
+
+```text
+DIAGNOSIS
+- 12 files read in one turn without a specific search goal
+- Large summary generated — most content unused in subsequent messages
+Risk: high — address before continuing
+
+ACTIONS
+1. Add boundary — "Focus on src/auth/ only" or "I need to understand the payment flow specifically"
+2. /compact "preserve summary of auth module only" — discard unrelated file contents
+
+DO NOT DO NOW
+- Ask to "understand" another broad area — compounds the context with more unused content
+```
+
+---
+
+## Scenario 5 — Repeated edits to the same file
+
+**What happened in the conversation:**
+- Claude edited `api/routes.ts` in turn 3, turn 5, turn 8, and turn 11
+- Each edit was a correction or addition to the previous edit
+- Other files were edited once and left alone
+
+**orbit-engine output:**
+
+```text
+DIAGNOSIS
+- api/routes.ts edited 4 times across the conversation — rework pattern
+- Each re-edit re-processes all previous context for the same target
 Risk: critical
 
 ACTIONS
-1. /compact "preserve completed feature" — free up space now
-2. /mcp → disconnect non-essential MCPs — remove invisible overhead
-3. Finish current task in as few messages as possible
+⚠️ 1. /compact "preserve final state of api/routes.ts and current task requirements" — collapse the rework history
+2. Break remaining work into batches — finish routes.ts completely before moving to the next file
+3. Define done for routes.ts — what does "finished" look like?
 
 DO NOT DO NOW
-- Start new tasks or paste large files — no room for exploration
+- Edit routes.ts again without first confirming the final requirements
 ```
 
 ---
 
-## Scenario 3 — Complex migration without planning
+## Scenario 6 — Large file pasted instead of referenced
 
-**Context:** User asks to migrate 40 database models without Plan Mode.
+**What happened in the conversation:**
+- User pasted 400 lines of a controller directly into the message
+- Only 1 function in that controller was relevant to the question
+
+**orbit-engine output:**
 
 ```text
 DIAGNOSIS
-- Large task started without planning step
-- High rework risk without dependency mapping
-Risk: high
+- Large code block pasted (full controller) when only one function was relevant
+Risk: low
 
-ACTIONS
-1. Shift+Tab (Plan Mode) — map dependencies and constraints first
-2. @file:model instead of pasting full files — precision without overhead
-3. /compact "preserve plan + decisions" — prepare for clean execution
-
-DO NOT DO NOW
-- Dump all models at once — overwhelms context without structure
+No action required. Something to keep in mind.
 ```
 
----
-
-## Scenario 4 — Idle MCPs wasting context
-
-**Context:** 3 MCPs connected (Figma, Slack, GitHub), only GitHub in use.
-
-```text
-DIAGNOSIS
-- Connected MCPs not being used in recent messages
-- Each idle MCP adds overhead to every message
-Risk: medium
-
-ACTIONS
-1. /mcp → review connected integrations
-2. Disconnect Figma and Slack if not needed for current task
-
-DO NOT DO NOW
-- Disconnect MCPs you're about to use — check first, then disconnect
-```
+Next time, use `@file:controller.ts:handlePayment` to reference just what's needed.
 
 ---
 
-## Scenario 5 — Large file pasted instead of referenced
+## Scenario 7 — Healthy session (silence)
 
-**Context:** User pasted an 800-line controller into chat.
+**What happened in the conversation:**
+- Short session, focused task, clear prompts, no rework
 
-```text
-DIAGNOSIS
-- Large file pasted in full instead of using precise reference
-Risk: medium
+The skill produces **no output**. Complete silence.
 
-ACTIONS
-1. Use @file:functionName to reference only what's needed
-2. /compact "preserve current task context" — reduce what just grew
-
-DO NOT DO NOW
-- Paste another large file — compounds the overhead
-```
+Silence = healthy. Nothing to optimize.
 
 ---
 
-## Scenario 6 — Healthy session (no output)
+## Scenario 8 — Explicit trigger on a healthy session
 
-**Context:** Short session, simple task, no waste detected.
-
-The skill stays **completely silent**. No DIAGNOSIS, no output.
-
-Silence = healthy. Nothing to fix.
-
----
-
-## Scenario 7 — Explicit trigger on a healthy session
-
-**Context:** User types "analyze cost" but the session is short and focused.
+**What happened:** User types "analyze cost" on a short, focused session.
 
 ```text
 Session looks healthy. No action needed.
 ```
 
-One line. No drama. Move on.
+One line. Move on.

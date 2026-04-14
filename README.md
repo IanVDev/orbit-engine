@@ -12,7 +12,7 @@ A Claude Code skill that detects waste patterns in your session and outputs the 
 
 Token cost in Claude Code isn't per-message. It's cumulative.
 
-Every message re-reads the entire conversation history. At message 30, you're paying for all 29 previous messages plus the new one. Add 3 idle MCPs injecting tool definitions, skip a planning step on a complex task, and a session that should cost $2 costs $18.
+Every message re-reads the entire conversation history. At message 30, you're paying for all 29 previous messages plus the new one. Skip a planning step on a complex task, send vague prompts that cause rework, and a session that should cost $2 costs $18.
 
 The patterns that cause this are mechanical and detectable. This skill detects them and tells you what to do.
 
@@ -102,9 +102,10 @@ The skill stays silent when the session is healthy — no output means no waste 
 | --- | --- |
 | Explicit | type `analyze cost`, `analyze-cost`, or `/analyze-cost` |
 | Guaranteed | `Before answering, apply orbit-engine. Then: [your task]` |
-| Long session | >15 messages without `/clear` |
+| Correction chain | 3+ short follow-ups correcting your output |
+| Rework pattern | same file edited 3+ times in the conversation |
+| Weak prompt | complex task with no constraints, scope, or boundaries |
 | Complex task | "refactor...", "migration...", "redesign...", "implement..." |
-| Token pressure | "getting slow", "tokens running out", "near limit" |
 
 > **Tip:** On a fresh session with no history, auto-triggers may not fire. Use `analyze cost` explicitly or the guaranteed phrase above.
 
