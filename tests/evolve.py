@@ -37,6 +37,7 @@ from decision_engine import (
     FeedbackMetrics,
     ValidationResults,
     Verdict,
+    append_evidence,
     compute_skill_hash,
     count_lines,
     create_baseline,
@@ -124,6 +125,16 @@ def print_report(result: DecisionResult, skill_path: Path,
             # Truncate if too long
             if len(line) > 52:
                 line = line[:49] + "..."
+            print(f"│{line:<54s}│")
+
+    # Category scores
+    if result.category_scores:
+        print("│" + " " * 54 + "│")
+        print(f"│{'  Scores by category:':<54s}│")
+        for cat, score in sorted(result.category_scores.items()):
+            bar_len = int(score * 20)
+            bar = "█" * bar_len + "░" * (20 - bar_len)
+            line = f"    {cat:<12s} {bar} {score:.0%}"
             print(f"│{line:<54s}│")
 
     print("│" + " " * 54 + "│")
@@ -235,6 +246,15 @@ def main() -> int:
 
     # Step 4: Report
     print_report(result, skill_path, dry_run=dry_run)
+
+    # Step 4b: Evidence log (always, including dry-run)
+    append_evidence(
+        result=result,
+        validation=validation,
+        feedback=feedback,
+        baseline=baseline,
+        skill_hash=compute_skill_hash(skill_path),
+    )
 
     # Step 5: Act on verdict
     if dry_run:

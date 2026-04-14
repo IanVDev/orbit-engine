@@ -49,3 +49,8 @@ yarn.lock
 
 # --- Logs ---
 *.log
+
+# --- Evolution artifacts (local state) ---
+tests/.baseline.json
+tests/evidence_log.jsonl
+*.bak

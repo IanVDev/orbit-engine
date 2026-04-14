@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -61,6 +62,7 @@ class DecisionResult:
     verdict: Verdict
     gates: list[GateResult]
     reasons: list[str] = field(default_factory=list)
+    category_scores: dict[str, float] = field(default_factory=dict)
 
     def summary(self) -> str:
         lines = []
@@ -120,6 +122,90 @@ def compute_skill_hash(path: Path) -> str:
 
 def count_lines(path: Path) -> int:
     return len(path.read_text(encoding="utf-8").splitlines())
+
+
+# ---------------------------------------------------------------------------
+# Category scores — group test results by type
+# ---------------------------------------------------------------------------
+
+_CATEGORY_RULES: list[tuple[str, str]] = [
+    # (substring in test name, category)
+    ("CT1", "canonical"),
+    ("CT2", "canonical"),
+    ("CT3", "canonical"),
+    ("CT4", "canonical"),
+    ("Eval 11", "silence"),
+    ("Eval 12", "silence"),
+    ("Eval 13", "silence"),
+    ("Eval 09", "gating"),
+    ("Eval 10", "gating"),
+    ("Format rules", "structural"),
+]
+
+
+def _classify_test(name: str) -> str:
+    """Return the category for a test name."""
+    for substr, cat in _CATEGORY_RULES:
+        if substr in name:
+            return cat
+    return "structural"
+
+
+def compute_category_scores(
+    per_test_scores: dict[str, float],
+) -> dict[str, float]:
+    """Compute avg score per category from per-test scores."""
+    buckets: dict[str, list[float]] = {}
+    for name, score in per_test_scores.items():
+        cat = _classify_test(name)
+        buckets.setdefault(cat, []).append(score)
+    return {
+        cat: sum(vals) / len(vals) if vals else 0.0
+        for cat, vals in sorted(buckets.items())
+    }
+
+
+# ---------------------------------------------------------------------------
+# Evidence log — append-only JSONL
+# ---------------------------------------------------------------------------
+
+_EVIDENCE_LOG_PATH = Path(__file__).parent / "evidence_log.jsonl"
+
+
+def append_evidence(result: "DecisionResult",
+                    validation: "ValidationResults",
+                    feedback: "FeedbackMetrics | None",
+                    baseline: "Baseline | None",
+                    skill_hash: str) -> None:
+    """Append one decision record to evidence_log.jsonl."""
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "verdict": result.verdict.value,
+        "gates": {
+            g.gate: g.verdict.value for g in result.gates
+        },
+        "tests_passed": validation.tests_passed,
+        "tests_total": validation.tests_total,
+        "avg_score": round(validation.avg_score, 4),
+        "gaming_warnings": validation.gaming_warnings,
+        "category_scores": {
+            k: round(v, 4) for k, v in result.category_scores.items()
+        },
+        "skill_hash": skill_hash,
+    }
+    if baseline:
+        entry["baseline_score"] = round(baseline.avg_score, 4)
+        entry["baseline_hash"] = baseline.skill_hash
+    if feedback:
+        entry["feedback"] = {
+            "activations": feedback.total_activations,
+            "adoption": round(feedback.adoption_rate, 4),
+            "tta": feedback.avg_time_to_action,
+            "silence": round(feedback.silence_rate, 4),
+            "recurrence": round(feedback.pattern_recurrence_rate, 4),
+        }
+    with open(_EVIDENCE_LOG_PATH, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +417,14 @@ def check_validation(results: ValidationResults,
     else:
         gate.reasons.append(f"SOFT: {results.avg_score:.0%} avg (no baseline)")
 
-    # Gaming warnings
-    if baseline and results.gaming_warnings > baseline.gaming_warnings:
+    # Gaming warnings — absolute + relative thresholds
+    if results.gaming_warnings >= 2:
+        gate.verdict = Verdict.REJECT
+        gate.reasons.append(
+            f"Gaming: {results.gaming_warnings} warnings ≥ 2 — "
+            f"strong overfitting signal"
+        )
+    elif baseline and results.gaming_warnings > baseline.gaming_warnings:
         gate.verdict = Verdict.HOLD
         gate.reasons.append(
             f"Gaming: {results.gaming_warnings} warnings "
@@ -345,7 +437,13 @@ def check_validation(results: ValidationResults,
 
 
 def check_feedback(metrics: FeedbackMetrics | None) -> GateResult:
-    """Gate 2 — Feedback adoption metrics."""
+    """Gate 2 — Feedback adoption metrics with confidence check.
+
+    Confidence zones prevent borderline metrics from sneaking through:
+      - n < 10: skip entirely (insufficient data)
+      - n 10-29: narrower acceptance bands (HOLD on borderline)
+      - n >= 30: standard thresholds apply
+    """
     gate = GateResult(gate="Gate 2 (Feedback)", verdict=Verdict.ACCEPT)
 
     if metrics is None:
@@ -353,39 +451,74 @@ def check_feedback(metrics: FeedbackMetrics | None) -> GateResult:
         gate.reasons.append("No feedback data provided — gate skipped")
         return gate
 
-    if metrics.total_activations < 10:
+    n = metrics.total_activations
+
+    if n < 10:
         gate.verdict = Verdict.HOLD
         gate.reasons.append(
-            f"Only {metrics.total_activations} activations "
+            f"Only {n} activations "
             f"(need ≥10 for confidence) — gate skipped"
         )
         return gate
 
-    issues = []
+    # Confidence tier: low-n gets tighter thresholds
+    low_confidence = n < 30
+    adopt_threshold = 0.35 if low_confidence else 0.25
+    tta_threshold = 2.5 if low_confidence else 3.0
+    silence_threshold = 0.40 if low_confidence else 0.50
+    recurrence_threshold = 0.25 if low_confidence else 0.30
 
-    if metrics.adoption_rate < 0.25:
+    if low_confidence:
+        gate.reasons.append(
+            f"Low-confidence mode (n={n}, need ≥30 for standard) — "
+            f"tighter thresholds applied"
+        )
+
+    issues: list[str] = []
+
+    if metrics.adoption_rate < adopt_threshold:
         issues.append(
-            f"Adoption rate {metrics.adoption_rate:.0%} < 25% — "
+            f"Adoption rate {metrics.adoption_rate:.0%} < "
+            f"{adopt_threshold:.0%} — "
             f"users aren't acting on recommendations"
         )
 
-    if metrics.avg_time_to_action is not None and metrics.avg_time_to_action > 3.0:
+    if metrics.avg_time_to_action is not None and metrics.avg_time_to_action > tta_threshold:
         issues.append(
-            f"Avg time-to-action {metrics.avg_time_to_action:.1f} turns > 3.0 — "
-            f"output may be unclear"
+            f"Avg time-to-action {metrics.avg_time_to_action:.1f} turns > "
+            f"{tta_threshold:.1f} — output may be unclear"
         )
 
-    if metrics.silence_rate > 0.50:
+    if metrics.silence_rate > silence_threshold:
         issues.append(
-            f"Silence rate {metrics.silence_rate:.0%} > 50% — "
-            f"users are ignoring the skill"
+            f"Silence rate {metrics.silence_rate:.0%} > "
+            f"{silence_threshold:.0%} — users are ignoring the skill"
         )
 
-    if metrics.pattern_recurrence_rate > 0.30:
+    if metrics.pattern_recurrence_rate > recurrence_threshold:
         issues.append(
-            f"Pattern recurrence {metrics.pattern_recurrence_rate:.0%} > 30% — "
-            f"fix isn't preventing the pattern"
+            f"Pattern recurrence {metrics.pattern_recurrence_rate:.0%} > "
+            f"{recurrence_threshold:.0%} — fix isn't preventing the pattern"
         )
+
+    # Ambiguity check: when metrics are close to thresholds with low n,
+    # even a "pass" is unreliable — force HOLD
+    if not issues and low_confidence:
+        margins = []
+        margins.append(metrics.adoption_rate - adopt_threshold)
+        if metrics.avg_time_to_action is not None:
+            margins.append(tta_threshold - metrics.avg_time_to_action)
+        margins.append(silence_threshold - metrics.silence_rate)
+        margins.append(recurrence_threshold - metrics.pattern_recurrence_rate)
+
+        min_margin = min(margins) if margins else 1.0
+        if min_margin < 0.05:
+            gate.verdict = Verdict.HOLD
+            gate.reasons.append(
+                f"Borderline metrics (min margin {min_margin:.0%}) with "
+                f"n={n} — not enough confidence to ACCEPT"
+            )
+            return gate
 
     if issues:
         gate.verdict = Verdict.HOLD
@@ -399,7 +532,8 @@ def check_feedback(metrics: FeedbackMetrics | None) -> GateResult:
         )
 
         # Strong confidence signal
-        if (metrics.adoption_rate >= 0.50
+        if (not low_confidence
+                and metrics.adoption_rate >= 0.50
                 and metrics.avg_time_to_action is not None
                 and metrics.avg_time_to_action <= 1.0):
             gate.reasons.append("Strong adoption signal — high confidence")
@@ -447,7 +581,10 @@ def decide(
         verdict = Verdict.HOLD
         reasons = ["Unexpected gate combination — fail-closed to HOLD"]
 
-    return DecisionResult(verdict=verdict, gates=gates, reasons=reasons)
+    return DecisionResult(
+        verdict=verdict, gates=gates, reasons=reasons,
+        category_scores=compute_category_scores(validation.per_test_scores),
+    )
 
 
 # ---------------------------------------------------------------------------
