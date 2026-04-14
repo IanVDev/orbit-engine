@@ -181,6 +181,10 @@ def append_evidence(result: "DecisionResult",
                     impact: "ImpactFeedback | None" = None) -> None:
     """Append one decision record to evidence_log.jsonl.
 
+    The ``session_result`` key stores the full SessionResultSchema v1 dict.
+    The top-level ``impact`` key (raw rates) is kept for backward compatibility
+    but is omitted when session_result is present — the schema supersedes it.
+
     Args:
         origin: Who proposed the change. One of:
             "manual"         — human edited the skill directly
@@ -188,6 +192,13 @@ def append_evidence(result: "DecisionResult",
             "automated"      — CI or script-driven change
         impact: Optional impact proof from before/after session data.
     """
+    # Build the schema once — used both for session_result and tradeoff flag
+    schema = build_session_result(
+        impact=impact,
+        origin=origin,
+        verdict=result.verdict,
+    )
+
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "origin": origin,
@@ -215,16 +226,11 @@ def append_evidence(result: "DecisionResult",
             "silence": round(feedback.silence_rate, 4),
             "recurrence": round(feedback.pattern_recurrence_rate, 4),
         }
-    if impact is not None:
-        r = impact.result
-        entry["impact"] = {
-            "sessions_analyzed": r.sessions_analyzed,
-            "sessions_followed": r.sessions_followed,
-            "rework_reduction": r.rework_reduction_rate,
-            "efficiency_gain": r.session_efficiency_gain,
-            "output_reduction": r.output_reduction_rate,
-            "composite_improvement": r.composite_improvement,
-        }
+
+    # session_result replaces the old flat "impact" key —
+    # it contains everything the schema tracks, nothing more.
+    entry["session_result"] = schema.to_dict()
+
     with open(_EVIDENCE_LOG_PATH, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
 
@@ -444,6 +450,281 @@ class ImpactFeedback:
 
         result = compute_real_impact(sessions)
         return cls(sessions=sessions, result=result)
+
+
+# ---------------------------------------------------------------------------
+# SESSION RESULT — contract v1
+# ---------------------------------------------------------------------------
+
+# Per-metric guardrail threshold (shared with check_feedback)
+_METRIC_FLOOR = -0.10
+
+# Composite weights — declared here, consumed by compute_real_impact AND
+# build_session_result so both are always in sync.
+_W_REWORK = 0.50
+_W_EFFICIENCY = 0.30
+_W_OUTPUT = 0.20
+
+# Canonical causality message (stable string — tests assert against this).
+_CAUSALITY_MSG = "This improvement was triggered by a skill suggestion."
+
+
+@dataclass
+class SessionResultSchema:
+    """Contract v1 — structured representation of a SESSION RESULT.
+
+    Invariants:
+      - ``measured`` is False iff impact is None or sessions_followed == 0.
+      - ``tradeoff_detected`` is True iff composite > 0 AND any breakdown
+        metric is below _METRIC_FLOOR.
+      - ``tradeoff_metrics`` is empty when tradeoff_detected is False.
+      - ``causality_message`` is set iff origin == "skill-suggested"
+        AND measured is True.
+      - ``composite_weights`` always sums to 1.0.
+    """
+    # identity
+    schema_version: str                    # "v1"
+    origin: str
+    verdict: str                           # Verdict.value
+
+    # impact summary
+    measured: bool                         # False when no impact data
+    impact_percent: float | None           # composite × 100, or None
+    impact_status: str                     # "positive" | "negative" | "marginal" | "n/a"
+
+    # breakdown — all None when measured is False
+    breakdown_rework: float | None
+    breakdown_efficiency: float | None
+    breakdown_output: float | None
+
+    # formula transparency
+    composite_formula: str                 # human-readable formula string
+    composite_weights: dict[str, float]    # {"rework": 0.5, ...}
+
+    # tradeoff
+    tradeoff_detected: bool
+    tradeoff_metrics: list[str]            # names of regressing metrics
+
+    # causality
+    causality_message: str | None          # set when origin == "skill-suggested"
+
+    def to_dict(self) -> dict:
+        """Serialise to a plain dict (JSON-safe, no custom types)."""
+        return {
+            "schema_version": self.schema_version,
+            "origin": self.origin,
+            "verdict": self.verdict,
+            "measured": self.measured,
+            "impact_percent": (
+                round(self.impact_percent, 1)
+                if self.impact_percent is not None else None
+            ),
+            "impact_status": self.impact_status,
+            "breakdown": {
+                "rework": self.breakdown_rework,
+                "efficiency": self.breakdown_efficiency,
+                "output": self.breakdown_output,
+            },
+            "composite_formula": self.composite_formula,
+            "composite_weights": self.composite_weights,
+            "tradeoff_detected": self.tradeoff_detected,
+            "tradeoff_metrics": self.tradeoff_metrics,
+            "causality_message": self.causality_message,
+        }
+
+
+def build_session_result(
+    impact: ImpactFeedback | None,
+    origin: str,
+    verdict: Verdict,
+) -> SessionResultSchema:
+    """Construct a SessionResultSchema from raw inputs.
+
+    This is the single authoritative place where the contract is
+    assembled.  ``format_session_result`` and ``append_evidence``
+    both consume the schema — neither recomputes it independently.
+    """
+    no_data = impact is None or impact.result.sessions_followed == 0
+
+    if no_data:
+        return SessionResultSchema(
+            schema_version="v1",
+            origin=origin,
+            verdict=verdict.value,
+            measured=False,
+            impact_percent=None,
+            impact_status="n/a",
+            breakdown_rework=None,
+            breakdown_efficiency=None,
+            breakdown_output=None,
+            composite_formula=(
+                f"(rework × {_W_REWORK:.0%})"
+                f" + (efficiency × {_W_EFFICIENCY:.0%})"
+                f" + (output × {_W_OUTPUT:.0%})"
+            ),
+            composite_weights={
+                "rework": _W_REWORK,
+                "efficiency": _W_EFFICIENCY,
+                "output": _W_OUTPUT,
+            },
+            tradeoff_detected=False,
+            tradeoff_metrics=[],
+            causality_message=None,
+        )
+
+    r = impact.result
+    pct = r.composite_improvement * 100
+
+    if pct > 20:
+        status = "positive"
+    elif pct < 0:
+        status = "negative"
+    else:
+        status = "marginal"
+
+    # Tradeoff: composite positive but at least one metric regresses
+    regressing = []
+    if r.rework_reduction_rate < _METRIC_FLOOR:
+        regressing.append("rework")
+    if r.session_efficiency_gain < _METRIC_FLOOR:
+        regressing.append("efficiency")
+    if r.output_reduction_rate < _METRIC_FLOOR:
+        regressing.append("output")
+    tradeoff = bool(regressing) and r.composite_improvement > 0
+
+    causality = _CAUSALITY_MSG if origin == "skill-suggested" else None
+
+    return SessionResultSchema(
+        schema_version="v1",
+        origin=origin,
+        verdict=verdict.value,
+        measured=True,
+        impact_percent=round(pct, 1),
+        impact_status=status,
+        breakdown_rework=round(r.rework_reduction_rate * 100, 1),
+        breakdown_efficiency=round(r.session_efficiency_gain * 100, 1),
+        breakdown_output=round(r.output_reduction_rate * 100, 1),
+        composite_formula=(
+            f"(rework × {_W_REWORK:.0%})"
+            f" + (efficiency × {_W_EFFICIENCY:.0%})"
+            f" + (output × {_W_OUTPUT:.0%})"
+        ),
+        composite_weights={
+            "rework": _W_REWORK,
+            "efficiency": _W_EFFICIENCY,
+            "output": _W_OUTPUT,
+        },
+        tradeoff_detected=tradeoff,
+        tradeoff_metrics=regressing if tradeoff else [],
+        causality_message=causality,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session result formatter — human-readable output for the user
+# ---------------------------------------------------------------------------
+
+def format_session_result(
+    schema: SessionResultSchema,
+) -> str:
+    """Render a SessionResultSchema as the human-readable SESSION RESULT block.
+
+    This function only renders — all logic lives in build_session_result().
+    """
+    W = 56  # inner width (between │ and │)
+
+    def row(text: str = "") -> str:
+        return f"│  {text:<{W - 2}s}│"
+
+    def divider() -> str:
+        return "│" + "─" * W + "│"
+
+    verdict_icon = {"ACCEPT": "✅", "REJECT": "🔴", "HOLD": "⚠️"}[schema.verdict]
+
+    lines: list[str] = []
+    lines.append("┌" + "─" * W + "┐")
+    lines.append(row("SESSION RESULT  (contract v1)"))
+    lines.append(divider())
+
+    # ── identity ──
+    lines.append(row(f"origin   {schema.origin}"))
+    lines.append(row(f"verdict  {verdict_icon} {schema.verdict}"))
+
+    # ── impact ──
+    lines.append(divider())
+
+    if not schema.measured:
+        lines.append(row("impact   n/a  (no followed sessions)"))
+        lines.append(row())
+        lines.append(row("  No before/after data provided."))
+        lines.append(row("  Run with --impact <file> to measure real impact."))
+    else:
+        pct = schema.impact_percent
+        sign = "+" if pct >= 0 else ""
+        composite_str = f"{sign}{pct:.0f}%"
+
+        lines.append(row(f"impact   {composite_str}  ({schema.impact_status})"))
+        lines.append(row())
+
+        # Breakdown with progress bars
+        lines.append(row("  breakdown:"))
+
+        def metric_row(label: str, value_pct: float, weight: float) -> str:
+            bar_val = max(0.0, value_pct / 100)
+            bar_len = int(bar_val * 16)
+            bar = "█" * bar_len + "░" * (16 - bar_len)
+            s = "+" if value_pct >= 0 else ""
+            flag = "  ⚠ regression" if value_pct < _METRIC_FLOOR * 100 else ""
+            return row(
+                f"    {label:<12s} {bar}  {s}{value_pct:.0f}%"
+                f"  (w={weight:.0%}){flag}"
+            )
+
+        w = schema.composite_weights
+        lines.append(metric_row("rework",     schema.breakdown_rework,      w["rework"]))
+        lines.append(metric_row("efficiency", schema.breakdown_efficiency,   w["efficiency"]))
+        lines.append(metric_row("output",     schema.breakdown_output,       w["output"]))
+        lines.append(row())
+
+        # Composite formula
+        rw = schema.breakdown_rework / 100
+        ef = schema.breakdown_efficiency / 100
+        ou = schema.breakdown_output / 100
+        rw_c = rw * w["rework"]
+        ef_c = ef * w["efficiency"]
+        ou_c = ou * w["output"]
+        lines.append(row(f"  composite = {schema.composite_formula}"))
+        lines.append(row(
+            f"           = ({rw:+.0%}×{w['rework']:.0%})"
+            f" + ({ef:+.0%}×{w['efficiency']:.0%})"
+            f" + ({ou:+.0%}×{w['output']:.0%})"
+        ))
+        lines.append(row(
+            f"           = {rw_c:+.0%} + {ef_c:+.0%} + {ou_c:+.0%}"
+            f" = {composite_str}"
+        ))
+
+        # Tradeoff
+        if schema.tradeoff_detected:
+            labeled = [
+                f"{m} ({getattr(schema, f'breakdown_{m}'):+.0f}%)"
+                for m in schema.tradeoff_metrics
+            ]
+            lines.append(divider())
+            lines.append(row("⚠  TRADEOFF DETECTED"))
+            lines.append(row(
+                f"   composite is positive but "
+                f"{', '.join(labeled)}"
+            ))
+            lines.append(row("   regresses. Improvement is not uniform."))
+
+        # Causality
+        if schema.causality_message:
+            lines.append(divider())
+            lines.append(row(f"🔁  {schema.causality_message}"))
+
+    lines.append("└" + "─" * W + "┘")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

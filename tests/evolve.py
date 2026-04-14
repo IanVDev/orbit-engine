@@ -38,13 +38,16 @@ from decision_engine import (
     DecisionResult,
     FeedbackMetrics,
     ImpactFeedback,
+    SessionResultSchema,
     ValidationResults,
     Verdict,
     append_evidence,
+    build_session_result,
     compute_skill_hash,
     count_lines,
     create_baseline,
     decide,
+    format_session_result,
 )
 
 _BASELINE_PATH = _TESTS_DIR / ".baseline.json"
@@ -112,8 +115,10 @@ def cleanup_backup(skill_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def print_report(result: DecisionResult, skill_path: Path,
-                 dry_run: bool = False) -> None:
-    """Print a formatted evolution gate report."""
+                 dry_run: bool = False,
+                 impact: ImpactFeedback | None = None,
+                 origin: str = "manual") -> None:
+    """Print a formatted evolution gate report followed by SESSION RESULT."""
     print()
     print("┌" + "─" * 54 + "┐")
     print("│  orbit-engine evolution gate" + " " * 25 + "│")
@@ -125,7 +130,6 @@ def print_report(result: DecisionResult, skill_path: Path,
         print(f"│{header:<54s}│")
         for reason in gate.reasons:
             line = f"    {reason}"
-            # Truncate if too long
             if len(line) > 52:
                 line = line[:49] + "..."
             print(f"│{line:<54s}│")
@@ -156,6 +160,15 @@ def print_report(result: DecisionResult, skill_path: Path,
         print(f"│{'  (dry run — no changes applied)':<54s}│")
 
     print("└" + "─" * 54 + "┘")
+    print()
+
+    # Build schema once — used for both display and evidence log
+    schema = build_session_result(
+        impact=impact,
+        origin=origin,
+        verdict=result.verdict,
+    )
+    print(format_session_result(schema))
     print()
 
 
@@ -282,7 +295,7 @@ def main() -> int:
     )
 
     # Step 4: Report
-    print_report(result, skill_path, dry_run=dry_run)
+    print_report(result, skill_path, dry_run=dry_run, impact=impact, origin=origin)
 
     # Step 4b: Evidence log (always, including dry-run)
     append_evidence(
