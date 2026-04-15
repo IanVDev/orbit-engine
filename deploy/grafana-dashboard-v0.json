@@ -38,7 +38,7 @@
   "annotations": {
     "list": []
   },
-  "description": "orbit-engine v1.0 command center — full operational visibility",
+  "description": "orbit-engine gateway command center — requests, blocked, errors, latency p95",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -388,139 +388,6 @@
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
-      "id": 20,
-      "title": "orbit-engine — Sessions & Failures",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
-            "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line",
-            "fillOpacity": 10, "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5,
-            "scaleDistribution": { "type": "linear" }, "showPoints": "never",
-            "spanNulls": false, "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
-      "id": 21,
-      "options": {
-        "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "none" }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_total:prod",
-          "legendFormat": "sessions total",
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_with_activation:prod",
-          "legendFormat": "com ativação",
-          "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_without_activation:prod",
-          "legendFormat": "sem ativação",
-          "refId": "C"
-        }
-      ],
-      "title": "Sessions (prod)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null },
-            { "color": "yellow", "value": 50 },
-            { "color": "red", "value": 80 }
-          ]},
-          "unit": "percent",
-          "min": 0,
-          "max": 100
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
-      "id": 22,
-      "options": {
-        "colorMode": "background", "graphMode": "area", "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "100 * orbit:sessions_with_activation:prod / (orbit:sessions_total:prod > 0)",
-          "legendFormat": "activation rate",
-          "refId": "A"
-        }
-      ],
-      "title": "Skill Activation Rate (%)",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "red" },
-          "custom": {
-            "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
-            "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line",
-            "fillOpacity": 20, "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5,
-            "scaleDistribution": { "type": "linear" }, "showPoints": "never",
-            "spanNulls": false, "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "line+area" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null }, { "color": "red", "value": 1 }
-          ]},
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
-      "id": 23,
-      "options": {
-        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "none" }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:tracking_failures_total:prod",
-          "legendFormat": "failures (prod)",
-          "refId": "A"
-        }
-      ],
-      "title": "Tracking Failures (prod) ⚠️",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
       "id": 13,
       "title": "Status do Sistema",
       "type": "row"
@@ -545,7 +412,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 28 },
       "id": 7,
       "options": {
         "colorMode": "background",
@@ -586,7 +453,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 28 },
       "id": 8,
       "options": {
         "colorMode": "background",
@@ -625,7 +492,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 28 },
       "id": 9,
       "options": {
         "colorMode": "background",
@@ -645,57 +512,16 @@
       ],
       "title": "Event Staleness",
       "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [
-            { "options": { "0": { "color": "green", "index": 0, "text": "CLEAN" } }, "type": "value" },
-            { "options": { "1": { "color": "red", "index": 1, "text": "CONTAMINATED" } }, "type": "value" }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 37 },
-      "id": 24,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:seed_contamination",
-          "legendFormat": "contamination",
-          "refId": "A"
-        }
-      ],
-      "title": "Seed Contamination",
-      "type": "stat"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["orbit-engine", "gateway", "governance", "v1"],
+  "tags": ["orbit-engine", "gateway", "governance"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "orbit-engine — Command Center v1.0",
+  "title": "orbit-engine — Command Center",
   "uid": "orbit-engine-command-center",
-  "version": 2
+  "version": 1
 }

@@ -81,6 +81,11 @@ check_instant "instance_id"           "orbit_instance_id"
 check_instant "tokens_saved"          "orbit:tokens_saved_total:prod"
 check_instant "activations"           "orbit:activations_total:prod"
 check_instant "staleness"             "orbit:event_staleness_seconds:prod"
+check_instant "sessions_total"        "orbit:sessions_total:prod"
+check_instant "sessions_w_activation" "orbit:sessions_with_activation:prod"
+check_instant "sessions_no_activation" "orbit:sessions_without_activation:prod"
+check_instant "tracking_failures"     "orbit:tracking_failures_total:prod"
+check_instant "seed_contamination"    "orbit:seed_contamination"
 
 # ── Queries Range ────────────────────────────────────────────────────────
 
@@ -90,6 +95,7 @@ echo "── Range (últimos 5 min) ──"
 check_range "requests rate"    "rate(orbit_gateway_requests_total[5m])"
 check_range "blocked rate"     "rate(orbit_gateway_blocked_total[5m])"
 check_range "latência p95"     "histogram_quantile(0.95, rate(orbit_gateway_latency_ms_bucket[5m]))"
+check_range "activation rate"  "100 * orbit:sessions_with_activation:prod / (orbit:sessions_total:prod > 0)"
 
 # ── Governança (deve ser bloqueada) ──────────────────────────────────────
 
