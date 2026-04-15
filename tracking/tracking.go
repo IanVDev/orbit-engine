@@ -7,11 +7,14 @@
 package tracking
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -237,10 +240,62 @@ var (
 			Help: "Sessions that exceeded the event threshold without any skill activation.",
 		},
 	)
+
+	// ── Environment safety metrics ──────────────────────────────────────
+	// orbit_seed_mode: 1 = seed/dev process, 0 = production process.
+	// Allows PromQL guards like: metric{} and orbit_seed_mode == 0
+	seedModeGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_seed_mode",
+			Help: "1 if this process is a seed/dev instance, 0 for production. Used to prevent env mixing.",
+		},
+	)
+
+	// orbit_tracking_up: always 1 while the process is alive.
+	// absence of this metric in Prometheus means the target is down.
+	trackingUpGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_tracking_up",
+			Help: "Always 1 while the tracking process is alive. Absence means target is down.",
+		},
+	)
+
+	// ── Governance metrics ──────────────────────────────────────────────
+	// orbit_instance_id: unique per-process identifier (gauge with label).
+	// Ensures each scrape target has a verifiable identity.
+	instanceIDGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "orbit_instance_id",
+			Help: "Always 1. The instance_id label is a unique per-process UUID.",
+		},
+		[]string{"instance_id"},
+	)
+
+	// orbit_last_event_timestamp: unix epoch of the most recent event.
+	// Freshness query: time() - orbit_last_event_timestamp > threshold
+	lastEventTimestampGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_last_event_timestamp",
+			Help: "Unix timestamp of the last successfully tracked event. 0 means no events yet.",
+		},
+	)
 )
 
 // registerOnce ensures metrics are registered exactly once.
 var registerOnce sync.Once
+
+// processInstanceID holds the unique ID generated at registration time.
+var processInstanceID string
+
+// generateInstanceID returns a random 16-byte hex string (128-bit UUID-like).
+func generateInstanceID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: deterministic but still unique per process start
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
 
 // RegisterMetrics registers all Prometheus collectors on the given
 // registerer. Pass prometheus.DefaultRegisterer for production use
@@ -255,8 +310,52 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			skillSessionsTotal,
 			skillSessionsWithActivation,
 			skillSessionsWithoutActivation,
+			seedModeGauge,
+			trackingUpGauge,
+			instanceIDGauge,
+			lastEventTimestampGauge,
 		)
+		// Process is alive → tracking_up = 1.
+		// seed_mode stays 0 (production default) until SetSeedMode(true).
+		trackingUpGauge.Set(1)
+
+		// Generate and publish unique instance ID.
+		processInstanceID = generateInstanceID()
+		instanceIDGauge.WithLabelValues(processInstanceID).Set(1)
 	})
+}
+
+// GetInstanceID returns the process-unique instance identifier.
+// Returns empty string if RegisterMetrics was not called.
+func GetInstanceID() string {
+	return processInstanceID
+}
+
+// ── SetSeedMode — immutable after first call (fail-closed) ──────────
+
+// seedModeSet tracks whether SetSeedMode has been called.
+// 0 = not set, 1 = set. Atomic for concurrency safety.
+var seedModeSet int32
+
+// SetSeedMode sets orbit_seed_mode to 1 (seed/dev) or 0 (production).
+// Must be called exactly ONCE after RegisterMetrics. Subsequent calls
+// will panic to enforce fail-closed governance — environment identity
+// must be immutable for the lifetime of the process.
+func SetSeedMode(isSeed bool) {
+	if !atomic.CompareAndSwapInt32(&seedModeSet, 0, 1) {
+		panic("orbit-engine: SetSeedMode called more than once — environment identity is immutable")
+	}
+	if isSeed {
+		seedModeGauge.Set(1)
+	} else {
+		seedModeGauge.Set(0)
+	}
+}
+
+// ResetSeedModeLock resets the lock for testing purposes ONLY.
+// This must NEVER be called in production code.
+func ResetSeedModeLock() {
+	atomic.StoreInt32(&seedModeSet, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +398,10 @@ func TrackSkillEvent(event SkillEvent) error {
 		return fmt.Errorf("tracking: failed to serialise event: %w", err)
 	}
 	log.Printf("[TRACK] %s", logLine)
+
+	// 4. Update freshness gauge — PromQL can detect staleness via:
+	//    time() - orbit_last_event_timestamp > threshold
+	lastEventTimestampGauge.Set(float64(time.Now().Unix()))
 
 	return nil
 }

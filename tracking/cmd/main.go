@@ -14,6 +14,7 @@ import (
 func main() {
 	// Register metrics on the default Prometheus registry.
 	tracking.RegisterMetrics(prometheus.DefaultRegisterer)
+	tracking.SetSeedMode(false) // orbit_seed_mode = 0 → production
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

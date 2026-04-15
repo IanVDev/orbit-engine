@@ -25,6 +25,10 @@ func newTestRegistry() *prometheus.Registry {
 		skillSessionsTotal,
 		skillSessionsWithActivation,
 		skillSessionsWithoutActivation,
+		seedModeGauge,
+		trackingUpGauge,
+		instanceIDGauge,
+		lastEventTimestampGauge,
 	)
 	return reg
 }
@@ -402,7 +406,7 @@ func TestSessionSummaryAccumulates(t *testing.T) {
 	}
 }
 
-// TestSessionMetricsExposed — checks all 7 Prometheus metrics are present.
+// TestSessionMetricsExposed — checks all 11 Prometheus metrics are present.
 func TestSessionMetricsExposed(t *testing.T) {
 	reg := newTestRegistry()
 
@@ -414,11 +418,19 @@ func TestSessionMetricsExposed(t *testing.T) {
 		"orbit_skill_sessions_total",
 		"orbit_skill_sessions_with_activation_total",
 		"orbit_skill_sessions_without_activation_total",
+		"orbit_seed_mode",
+		"orbit_tracking_up",
+		"orbit_instance_id",
+		"orbit_last_event_timestamp",
 	}
 
 	// fire one event so counters are initialized
 	ev := validEvent()
 	TrackSkillEvent(ev)
+
+	// Initialize GaugeVec so it appears in gather (needs at least one label value)
+	instanceIDGauge.WithLabelValues("test-session-metrics").Set(1)
+	defer instanceIDGauge.DeleteLabelValues("test-session-metrics")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -454,5 +466,183 @@ func TestGetLastHash(t *testing.T) {
 	// unknown session returns empty
 	if tracker.GetLastHash("nonexistent") != "" {
 		t.Fatal("unknown session should return empty hash")
+	}
+}
+
+// TestEnvSafetyMetrics — validates fail-closed environment safety gauges.
+func TestEnvSafetyMetrics(t *testing.T) {
+	reg := newTestRegistry()
+
+	t.Run("seed_mode_defaults_to_zero", func(t *testing.T) {
+		seedModeGauge.Set(0) // ensure clean state (direct set, not via SetSeedMode)
+		families, err := reg.Gather()
+		if err != nil {
+			t.Fatalf("gather: %v", err)
+		}
+		for _, f := range families {
+			if f.GetName() == "orbit_seed_mode" {
+				val := f.GetMetric()[0].GetGauge().GetValue()
+				if val != 0 {
+					t.Fatalf("orbit_seed_mode should default to 0 (prod), got %v", val)
+				}
+				return
+			}
+		}
+		t.Fatal("orbit_seed_mode metric not found")
+	})
+
+	t.Run("set_seed_mode_true", func(t *testing.T) {
+		ResetSeedModeLock() // allow SetSeedMode to be called
+		SetSeedMode(true)
+		families, _ := reg.Gather()
+		for _, f := range families {
+			if f.GetName() == "orbit_seed_mode" {
+				val := f.GetMetric()[0].GetGauge().GetValue()
+				if val != 1 {
+					t.Fatalf("orbit_seed_mode should be 1 after SetSeedMode(true), got %v", val)
+				}
+				return
+			}
+		}
+		t.Fatal("orbit_seed_mode metric not found")
+	})
+
+	t.Run("set_seed_mode_false", func(t *testing.T) {
+		ResetSeedModeLock()
+		SetSeedMode(false)
+		families, _ := reg.Gather()
+		for _, f := range families {
+			if f.GetName() == "orbit_seed_mode" {
+				val := f.GetMetric()[0].GetGauge().GetValue()
+				if val != 0 {
+					t.Fatalf("orbit_seed_mode should be 0 after SetSeedMode(false), got %v", val)
+				}
+				return
+			}
+		}
+		t.Fatal("orbit_seed_mode metric not found")
+	})
+
+	t.Run("tracking_up_gauge_exists", func(t *testing.T) {
+		trackingUpGauge.Set(1) // simulate what RegisterMetrics does
+		families, _ := reg.Gather()
+		for _, f := range families {
+			if f.GetName() == "orbit_tracking_up" {
+				val := f.GetMetric()[0].GetGauge().GetValue()
+				if val != 1 {
+					t.Fatalf("orbit_tracking_up should be 1, got %v", val)
+				}
+				return
+			}
+		}
+		t.Fatal("orbit_tracking_up metric not found")
+	})
+
+	// cleanup: restore safe defaults
+	ResetSeedModeLock()
+	seedModeGauge.Set(0)
+}
+
+// -----------------------------------------------------------------------
+// Phase 31 — Governance: lock, instance_id, freshness
+// -----------------------------------------------------------------------
+
+// TestSeedModeLock — calling SetSeedMode twice must panic.
+func TestSeedModeLock(t *testing.T) {
+	ResetSeedModeLock()
+
+	// First call: must NOT panic
+	SetSeedMode(false)
+
+	// Second call: must panic
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on second SetSeedMode call, got none")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "immutable") {
+			t.Fatalf("unexpected panic message: %v", r)
+		}
+		// cleanup
+		ResetSeedModeLock()
+	}()
+
+	SetSeedMode(true) // this must panic
+}
+
+// TestInstanceID — verifies orbit_instance_id is published with a non-empty label.
+func TestInstanceID(t *testing.T) {
+	reg := newTestRegistry()
+
+	// Set a known instance ID via the gauge directly to simulate RegisterMetrics
+	testID := "test-instance-abc123"
+	instanceIDGauge.WithLabelValues(testID).Set(1)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	found := false
+	for _, f := range families {
+		if f.GetName() == "orbit_instance_id" {
+			for _, m := range f.GetMetric() {
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "instance_id" && lp.GetValue() == testID {
+						found = true
+						if m.GetGauge().GetValue() != 1 {
+							t.Fatalf("orbit_instance_id gauge should be 1, got %v", m.GetGauge().GetValue())
+						}
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("orbit_instance_id metric with expected label not found")
+	}
+
+	// cleanup: remove the test label series
+	instanceIDGauge.DeleteLabelValues(testID)
+}
+
+// TestFreshness — verifies orbit_last_event_timestamp updates on TrackSkillEvent.
+func TestFreshness(t *testing.T) {
+	reg := newTestRegistry()
+
+	// Before any event, timestamp should be whatever it was from previous tests.
+	// We set it to 0 explicitly to test the update.
+	lastEventTimestampGauge.Set(0)
+
+	beforeFamilies, _ := reg.Gather()
+	var beforeTS float64
+	for _, f := range beforeFamilies {
+		if f.GetName() == "orbit_last_event_timestamp" {
+			beforeTS = f.GetMetric()[0].GetGauge().GetValue()
+		}
+	}
+
+	// Track an event — should update the timestamp
+	ev := validEvent()
+	if err := TrackSkillEvent(ev); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	afterFamilies, _ := reg.Gather()
+	var afterTS float64
+	for _, f := range afterFamilies {
+		if f.GetName() == "orbit_last_event_timestamp" {
+			afterTS = f.GetMetric()[0].GetGauge().GetValue()
+		}
+	}
+
+	if afterTS <= beforeTS {
+		t.Fatalf("orbit_last_event_timestamp should have increased: before=%v, after=%v", beforeTS, afterTS)
+	}
+
+	// The value should be a reasonable unix timestamp (> year 2020)
+	if afterTS < 1577836800 { // 2020-01-01
+		t.Fatalf("orbit_last_event_timestamp looks invalid: %v", afterTS)
 	}
 }

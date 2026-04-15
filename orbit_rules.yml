@@ -1,0 +1,76 @@
+# orbit_rules.yml — Recording rules for orbit-engine metric governance.
+#
+# PURPOSE: Provide pre-filtered, environment-safe metric views.
+# All dashboards and alerts MUST use orbit:* recorded metrics,
+# NEVER raw orbit_skill_* directly.
+#
+# Raw metrics without {env=...} filter return MULTIPLE series
+# (prod + seed) and WILL produce incorrect aggregations.
+
+groups:
+  - name: orbit_governance
+    interval: 5s
+    rules:
+      # ── tokens saved ───────────────────────────────────────────────
+      - record: orbit:tokens_saved_total:prod
+        expr: orbit_skill_tokens_saved_total{env="prod"}
+
+      - record: orbit:tokens_saved_total:seed
+        expr: orbit_skill_tokens_saved_total{env="seed"}
+
+      # ── activations ────────────────────────────────────────────────
+      - record: orbit:activations_total:prod
+        expr: sum by (mode) (orbit_skill_activations_total{env="prod"})
+
+      - record: orbit:activations_total:seed
+        expr: sum by (mode) (orbit_skill_activations_total{env="seed"})
+
+      # ── waste estimated ────────────────────────────────────────────
+      - record: orbit:waste_estimated:prod
+        expr: orbit_skill_waste_estimated{env="prod"}
+
+      - record: orbit:waste_estimated:seed
+        expr: orbit_skill_waste_estimated{env="seed"}
+
+      # ── sessions ───────────────────────────────────────────────────
+      - record: orbit:sessions_total:prod
+        expr: orbit_skill_sessions_total{env="prod"}
+
+      - record: orbit:sessions_total:seed
+        expr: orbit_skill_sessions_total{env="seed"}
+
+      # ── sessions with activation ───────────────────────────────────
+      - record: orbit:sessions_with_activation:prod
+        expr: orbit_skill_sessions_with_activation_total{env="prod"}
+
+      - record: orbit:sessions_with_activation:seed
+        expr: orbit_skill_sessions_with_activation_total{env="seed"}
+
+      # ── sessions without activation ────────────────────────────────
+      - record: orbit:sessions_without_activation:prod
+        expr: orbit_skill_sessions_without_activation_total{env="prod"}
+
+      - record: orbit:sessions_without_activation:seed
+        expr: orbit_skill_sessions_without_activation_total{env="seed"}
+
+      # ── tracking failures ──────────────────────────────────────────
+      - record: orbit:tracking_failures_total:prod
+        expr: orbit_skill_tracking_failures_total{env="prod"}
+
+      - record: orbit:tracking_failures_total:seed
+        expr: orbit_skill_tracking_failures_total{env="seed"}
+
+      # ── freshness (seconds since last event) ───────────────────────
+      - record: orbit:event_staleness_seconds:prod
+        expr: time() - orbit_last_event_timestamp{env="prod"}
+
+      - record: orbit:event_staleness_seconds:seed
+        expr: time() - orbit_last_event_timestamp{env="seed"}
+
+      # ── governance: seed contamination alert helper ────────────────
+      - record: orbit:seed_contamination
+        expr: orbit_seed_mode{env="prod"} == 1
+
+      # ── governance: misuse detector (raw query returns >1 series) ──
+      - record: orbit:env_series_count
+        expr: count(orbit_skill_tokens_saved_total) by (__name__)
