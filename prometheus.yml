@@ -30,3 +30,12 @@ scrape_configs:
         labels:
           env: seed
     metrics_path: /metrics
+
+  # ── Gateway PromQL (:9091) ────────────────────────────────────────────
+  - job_name: orbit-engine-gateway
+    honor_labels: false
+    static_configs:
+      - targets: ["localhost:9091"]
+        labels:
+          env: prod
+    metrics_path: /metrics

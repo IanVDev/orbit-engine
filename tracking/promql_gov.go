@@ -31,6 +31,7 @@ var _allowedPrefixes = []string{
 	"orbit_tracking_up",          // liveness gauge
 	"orbit_instance_id",          // instance identity
 	"orbit_last_event_timestamp", // freshness gauge
+	"orbit_gateway_",             // gateway self-observability (infra, not skill data)
 }
 
 // ---------------------------------------------------------------------------
