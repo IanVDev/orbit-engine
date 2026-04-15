@@ -35,7 +35,11 @@ func TestV1ContractComplete(t *testing.T) {
 		instanceIDGauge,
 		lastEventTimestampGauge,
 		skillActivationLatency,
+		heartbeatTotal,
 	)
+
+	// Simulate one heartbeat tick so the counter is non-zero in gathered output.
+	heartbeatTotal.Inc()
 
 	// Simulate production startup sequence
 	trackingUpGauge.Set(1)
@@ -43,11 +47,16 @@ func TestV1ContractComplete(t *testing.T) {
 	instanceIDGauge.WithLabelValues("v1-contract-test").Set(1)
 	defer instanceIDGauge.DeleteLabelValues("v1-contract-test")
 
-	// Fire a valid event to populate counters
+	// Use SessionTracker so RecordEvent fires TrackSkillEvent AND observes
+	// activation latency (skillActivationLatency.Observe). Calling
+	// TrackSkillEvent directly skips the latency observation.
+	st := NewSessionTracker()
+	sessionID := "v1-contract-sess-" + time.Now().Format("150405.000")
+
 	ev := SkillEvent{
 		EventType:            "activation",
 		Timestamp:            NowUTC(),
-		SessionID:            "v1-contract-sess",
+		SessionID:            sessionID,
 		Mode:                 "auto",
 		Trigger:              "v1_contract_test",
 		EstimatedWaste:       100.0,
@@ -55,16 +64,16 @@ func TestV1ContractComplete(t *testing.T) {
 		ActionsApplied:       1,
 		ImpactEstimatedToken: 500,
 	}
-	if err := TrackSkillEvent(ev); err != nil {
-		t.Fatalf("TrackSkillEvent failed: %v", err)
+	if _, err := st.RecordEvent(ev); err != nil {
+		t.Fatalf("RecordEvent failed: %v", err)
 	}
 
 	// Fire a second event with different mode to ensure label coverage
 	ev2 := ev
 	ev2.Mode = "suggest"
 	ev2.Timestamp = FlexTime{Time: time.Now().Add(time.Second).UTC()}
-	if err := TrackSkillEvent(ev2); err != nil {
-		t.Fatalf("TrackSkillEvent(suggest) failed: %v", err)
+	if _, err := st.RecordEvent(ev2); err != nil {
+		t.Fatalf("RecordEvent(suggest) failed: %v", err)
 	}
 
 	// Gather all metrics
@@ -104,6 +113,7 @@ func TestV1ContractComplete(t *testing.T) {
 		{"orbit_instance_id", dto.MetricType_GAUGE, &one},
 		{"orbit_last_event_timestamp", dto.MetricType_GAUGE, &positive},
 		{"orbit_skill_activation_latency_seconds", dto.MetricType_HISTOGRAM, nil},
+		{"orbit_heartbeat_total", dto.MetricType_COUNTER, nil},
 	}
 
 	for _, c := range contract {

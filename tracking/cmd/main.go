@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/IanVDev/orbit-engine/tracking"
 	"github.com/prometheus/client_golang/prometheus"
@@ -16,6 +17,10 @@ func main() {
 	// Register metrics on the default Prometheus registry.
 	tracking.RegisterMetrics(prometheus.DefaultRegisterer)
 	tracking.SetSeedMode(false) // orbit_seed_mode = 0 → production
+
+	// Heartbeat: increments orbit_heartbeat_total every 15s.
+	// Alert fires when rate(orbit_heartbeat_total[1m]) == 0.
+	tracking.StartHeartbeat(15 * time.Second)
 
 	http.Handle("/metrics", promhttp.Handler())
 

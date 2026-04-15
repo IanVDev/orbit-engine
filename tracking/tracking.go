@@ -377,6 +377,16 @@ var (
 			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
 		},
 	)
+
+	// orbit_heartbeat_total: monotonically increasing counter incremented
+	// every 15s by StartHeartbeat. If this metric stops increasing, the
+	// process is frozen or dead. Dashboards query rate(orbit_heartbeat_total[1m]).
+	heartbeatTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "orbit_heartbeat_total",
+			Help: "Monotonically increasing counter incremented every 15s. Absence or stale rate means process is dead.",
+		},
+	)
 )
 
 // registerOnce ensures metrics are registered exactly once.
@@ -413,6 +423,7 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			instanceIDGauge,
 			lastEventTimestampGauge,
 			skillActivationLatency,
+			heartbeatTotal,
 		)
 		// Process is alive → tracking_up = 1.
 		// seed_mode stays 0 (production default) until SetSeedMode(true).
@@ -455,6 +466,20 @@ func SetSeedMode(isSeed bool) {
 // This must NEVER be called in production code.
 func ResetSeedModeLock() {
 	atomic.StoreInt32(&seedModeSet, 0)
+}
+
+// StartHeartbeat launches a background goroutine that increments
+// orbit_heartbeat_total every interval. Call once after RegisterMetrics.
+// A Prometheus alert fires when rate(orbit_heartbeat_total[1m]) == 0,
+// meaning the process is frozen or the /metrics endpoint is unreachable.
+func StartHeartbeat(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			heartbeatTotal.Inc()
+		}
+	}()
 }
 
 // ---------------------------------------------------------------------------
