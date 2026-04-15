@@ -10,11 +10,19 @@
 
 Construir software é metade do trabalho. A outra metade — e a mais perigosa — é
 provar que funciona quando tudo dá errado. Este documento é o checklist final
-antes de declarar que o Orbit v1.0 está pronto para uso real. São 10 critérios
-binários (passa ou não passa), um plano de 24h rodando sem parar, cenários de
-falha que você vai forçar manualmente, e um veredito final de GO ou NO-GO.
+antes de declarar que o Orbit v1.0 está pronto para uso real.
 
-> **Se qualquer critério for FAIL, o sistema NÃO está pronto para lançar.**
+**Um único comando decide:**
+
+```bash
+./scripts/prelaunch_gate.sh --smoke   # versão rápida (1h)
+./scripts/prelaunch_gate.sh           # gate completo (24h)
+```
+
+Se ele terminar com `🟢 VEREDITO: GO`, o sistema está pronto. Se terminar com
+`🔴 VEREDITO: NO-GO`, não lança. Sem subjetividade. Sem "quase".
+
+> **Se qualquer critério for FAIL, o script aborta e o veredito é NO-GO.**
 
 ---
 
@@ -38,13 +46,15 @@ Cada item é **PASS** ou **FAIL**. Não existe "quase" ou "parcial".
 ### Como preencher
 
 ```bash
-# Rodar tudo de uma vez (ordem importa):
+# Comando soberano — verifica todos os 10 critérios automaticamente:
+./scripts/prelaunch_gate.sh --smoke    # smoke (1h) — para validação rápida
+./scripts/prelaunch_gate.sh            # completo (24h) — para lançamento real
+
+# Ou verificar etapas individualmente:
 cd tracking && go test ./... -v -count=1          # Critérios 1-3
 promtool check rules ../orbit_rules.yml            # Critério 4
 python3 -c "import json; d=json.load(open('../deploy/grafana-dashboard.json')); print('panels:', len(d['panels']))"  # Critério 5
 grep -c 'alert:' ../orbit_rules.yml                # Critério 6
-MISSION_HOURS=1 ../scripts/mission_24h.sh          # Critério 7 (smoke)
-../scripts/fault_injection.sh                       # Critério 8
 ```
 
 ---
@@ -230,10 +240,9 @@ route:
 ### Próximos passos concretos
 
 1. Subir tracking + gateway + seed + Prometheus + Alertmanager
-2. `MISSION_HOURS=1 ./scripts/mission_24h.sh` → confirmar 0 erros
-3. `./scripts/fault_injection.sh` → confirmar 6/6 detectados
-4. Preencher o checklist acima com ✅ ou ❌
-5. Se tudo ✅ → **GO**. Tag `v1.0.0`, push, deploy.
+2. `./scripts/prelaunch_gate.sh --smoke` → confirmar 🟢 GO
+3. `./scripts/prelaunch_gate.sh` → gate completo (24h) → confirmar 🟢 GO
+4. Se tudo 🟢 → **Tag `v1.0.0`, push, deploy.**
 
 ---
 
