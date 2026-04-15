@@ -99,6 +99,31 @@ This content is now permanently in the context for every future message.
 **What to look for:** a user message containing a large code block or
 file content that could have been referenced instead of inlined.
 
+### 7. Validation theater (build without proof)
+
+The session produced multiple artifacts — plans, contracts, tests, dashboards,
+scripts — but none of them has been executed in a real or simulated environment.
+Everything was written; nothing was observed running. This is the highest-risk
+state: the system looks done but has zero operational evidence.
+
+**What to look for:** multiple files created across multiple turns (documents,
+scripts, configs, tests) with no terminal output showing they were run.
+A session that ends with "it's ready" but never showed a passing test,
+a running process, or a queried metric.
+
+### 8. Context accumulation in long sessions
+
+The conversation is very long (resumed from a summary, or 20+ back-and-forth
+turns) and recent messages are discussing new tasks that depend heavily on
+context from much earlier turns. This means Claude is re-processing a large
+accumulated history for every response — including context that is no longer
+relevant to the current task.
+
+**What to look for:** a conversation with a large summary block at the top
+(from `/compact`), plus many turns since then. The current task is different
+from what the summary captured. Old context is being carried forward for no
+benefit.
+
 ---
 
 ## Output Format
