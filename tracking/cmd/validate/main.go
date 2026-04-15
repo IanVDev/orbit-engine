@@ -66,7 +66,7 @@ func startServer() (addr string, reg *prometheus.Registry) {
 			http.Error(w, fmt.Sprintf("decode error: %v", err), http.StatusBadRequest)
 			return
 		}
-		ev.Timestamp = time.Now()
+		ev.Timestamp = tracking.FlexTime{Time: time.Now()}
 
 		result, err := tracker.RecordEvent(ev)
 		if err != nil {

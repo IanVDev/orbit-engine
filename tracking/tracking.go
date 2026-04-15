@@ -21,13 +21,55 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// FlexTime — time.Time that accepts RFC3339, RFC3339Nano and no-timezone ISO
+// ---------------------------------------------------------------------------
+
+// FlexTime wraps time.Time with a JSON unmarshaler that accepts multiple
+// ISO-8601 / RFC-3339 variants (with or without timezone offset).
+type FlexTime struct{ time.Time }
+
+// UnmarshalJSON parses RFC3339, RFC3339Nano, and bare "YYYY-MM-DDTHH:MM:SS[.NNN]"
+// (treating bare timestamps as UTC).
+func (ft *FlexTime) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		ft.Time = time.Time{}
+		return nil
+	}
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			ft.Time = t
+			return nil
+		}
+	}
+	return fmt.Errorf("tracking: cannot parse timestamp %q", s)
+}
+
+// MarshalJSON always emits RFC3339Nano so round-trips work.
+func (ft FlexTime) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ft.Time.Format(time.RFC3339Nano))
+}
+
+// IsZero delegates to inner time.Time.
+func (ft FlexTime) IsZero() bool { return ft.Time.IsZero() }
+
+// ---------------------------------------------------------------------------
 // SkillEvent — the unit of tracking
 // ---------------------------------------------------------------------------
 
 // SkillEvent represents a single skill activation event.
 type SkillEvent struct {
-	EventType            string    `json:"event_type"`
-	Timestamp            time.Time `json:"timestamp"`
+	EventType            string   `json:"event_type"`
+	Timestamp            FlexTime `json:"timestamp"`
 	SessionID            string    `json:"session_id"`
 	Mode                 string    `json:"mode"` // auto | suggest | off
 	Trigger              string    `json:"trigger"`
@@ -120,7 +162,7 @@ func (st *SessionTracker) RecordEvent(event SkillEvent) (SkillEvent, error) {
 	if !exists {
 		summary = &SessionSummary{
 			SessionID: event.SessionID,
-			StartedAt: event.Timestamp,
+			StartedAt: event.Timestamp.Time,
 		}
 		st.sessions[event.SessionID] = summary
 		skillSessionsTotal.Inc()
@@ -129,7 +171,7 @@ func (st *SessionTracker) RecordEvent(event SkillEvent) (SkillEvent, error) {
 	// Integrity hash chain
 	prevHash := st.lastHash[event.SessionID] // "" for genesis
 	event.PrevHash = prevHash
-	event.EventHash = ComputeHash(event.SessionID, event.Timestamp, event.ImpactEstimatedToken)
+	event.EventHash = ComputeHash(event.SessionID, event.Timestamp.Time, event.ImpactEstimatedToken)
 	st.lastHash[event.SessionID] = event.EventHash
 
 	// Track via existing fail-closed path

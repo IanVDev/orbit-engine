@@ -36,7 +36,7 @@ func newTestRegistry() *prometheus.Registry {
 func validEvent() SkillEvent {
 	return SkillEvent{
 		EventType:            "activation",
-		Timestamp:            time.Now(),
+		Timestamp:            FlexTime{Time: time.Now()},
 		SessionID:            "sess-001",
 		Mode:                 "auto",
 		Trigger:              "correction_chain",
@@ -93,10 +93,10 @@ func TestTrackFailClosed(t *testing.T) {
 		name  string
 		event SkillEvent
 	}{
-		{"missing event_type", SkillEvent{SessionID: "s", Mode: "auto", Timestamp: time.Now()}},
-		{"missing session_id", SkillEvent{EventType: "a", Mode: "auto", Timestamp: time.Now()}},
-		{"missing mode", SkillEvent{EventType: "a", SessionID: "s", Timestamp: time.Now()}},
-		{"invalid mode", SkillEvent{EventType: "a", SessionID: "s", Mode: "invalid", Timestamp: time.Now()}},
+		{"missing event_type", SkillEvent{SessionID: "s", Mode: "auto", Timestamp: FlexTime{Time: time.Now()}}},
+		{"missing session_id", SkillEvent{EventType: "a", Mode: "auto", Timestamp: FlexTime{Time: time.Now()}}},
+		{"missing mode", SkillEvent{EventType: "a", SessionID: "s", Timestamp: FlexTime{Time: time.Now()}}},
+		{"invalid mode", SkillEvent{EventType: "a", SessionID: "s", Mode: "invalid", Timestamp: FlexTime{Time: time.Now()}}},
 		{"missing timestamp", SkillEvent{EventType: "a", SessionID: "s", Mode: "auto"}},
 	}
 
@@ -305,7 +305,7 @@ func TestSessionWithoutSkillIsDetected(t *testing.T) {
 		ev.EventType = "suggestion" // not "activation"
 		ev.ImpactEstimatedToken = 10
 		ev.EstimatedWaste = 5.0
-		ev.Timestamp = time.Now().Add(time.Duration(i) * time.Second)
+		ev.Timestamp = FlexTime{Time: time.Now().Add(time.Duration(i) * time.Second)}
 		tracker.RecordEvent(ev)
 	}
 
@@ -336,11 +336,11 @@ func TestEventHashIntegrity(t *testing.T) {
 	ev1 := validEvent()
 	ev1.SessionID = "sess-hash"
 	ev1.ImpactEstimatedToken = 100
-	ev1.Timestamp = time.Now()
+	ev1.Timestamp = FlexTime{Time: time.Now()}
 	ev1, _ = tracker.RecordEvent(ev1)
 
 	// genesis event: PrevHash must be empty, EventHash must match ComputeHash
-	expected1 := ComputeHash("sess-hash", ev1.Timestamp, 100)
+	expected1 := ComputeHash("sess-hash", ev1.Timestamp.Time, 100)
 	if ev1.EventHash != expected1 {
 		t.Fatalf("event1 hash mismatch: got %s, want %s", ev1.EventHash, expected1)
 	}
@@ -351,11 +351,11 @@ func TestEventHashIntegrity(t *testing.T) {
 	ev2 := validEvent()
 	ev2.SessionID = "sess-hash"
 	ev2.ImpactEstimatedToken = 200
-	ev2.Timestamp = time.Now().Add(time.Second)
+	ev2.Timestamp = FlexTime{Time: time.Now().Add(time.Second)}
 	ev2, _ = tracker.RecordEvent(ev2)
 
 	// second event: PrevHash == first event hash, own hash is different
-	expected2 := ComputeHash("sess-hash", ev2.Timestamp, 200)
+	expected2 := ComputeHash("sess-hash", ev2.Timestamp.Time, 200)
 	if ev2.EventHash != expected2 {
 		t.Fatalf("event2 hash mismatch: got %s, want %s", ev2.EventHash, expected2)
 	}
@@ -379,7 +379,7 @@ func TestSessionSummaryAccumulates(t *testing.T) {
 		ev.SessionID = "sess-accum"
 		ev.ImpactEstimatedToken = tokens[i]
 		ev.EstimatedWaste = wastes[i]
-		ev.Timestamp = time.Now().Add(time.Duration(i) * time.Second)
+		ev.Timestamp = FlexTime{Time: time.Now().Add(time.Duration(i) * time.Second)}
 		if i == 1 {
 			ev.EventType = "activation" // one activation
 		}
@@ -455,7 +455,7 @@ func TestGetLastHash(t *testing.T) {
 	ev := validEvent()
 	ev.SessionID = "sess-lasthash"
 	ev.ImpactEstimatedToken = 42
-	ev.Timestamp = time.Now()
+	ev.Timestamp = FlexTime{Time: time.Now()}
 	ev, _ = tracker.RecordEvent(ev)
 
 	last := tracker.GetLastHash("sess-lasthash")
