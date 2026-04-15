@@ -169,3 +169,56 @@ Session looks healthy. No action needed.
 ```
 
 One line. Move on.
+
+---
+
+## Scenario 9 — Validation theater
+
+**What happened in the conversation:**
+- Session built 8 files across 12 turns: plan, contract, tests, scripts, dashboard, alerts
+- All files were created or edited — none were executed
+- Session ended with "all artifacts are ready"
+- No terminal output, no test run, no `curl`, no metric query
+
+**orbit-engine output:**
+
+```text
+DIAGNOSIS
+- Multiple artifacts created (scripts, tests, rules) with no evidence of execution
+- Session ended declaring readiness — no operational proof exists
+Risk: high — address before continuing
+
+ACTIONS
+1. Run the contract test now — `cd tracking && go test -run TestV1ContractComplete -v`
+2. Execute smoke validation — `MISSION_HOURS=1 ./scripts/mission_24h.sh` — one cycle, real evidence
+3. Define done operationally — "done" means tests pass AND metrics are observed running
+
+DO NOT DO NOW
+- Declare the system ready based on artifacts alone — unexecuted code is a hypothesis
+```
+
+---
+
+## Scenario 10 — Context accumulation in a long session
+
+**What happened in the conversation:**
+- Session resumed from a large `/compact` summary (Phase 1 build)
+- 20+ more turns happened since the summary (Phase 2 validation)
+- Current task is about a new topic (updating a single file)
+- The summary and early turns carry context about completed work that is no longer relevant
+
+**orbit-engine output:**
+
+```text
+DIAGNOSIS
+- Session resumed from a large summary and has accumulated many additional turns
+- Current task is unrelated to most of the carried context
+Risk: medium
+
+ACTIONS
+1. /compact "preserve: current file list, active task, v1.0 contract metrics, GO/NO-GO criteria" — discard completed phase context
+2. Reference files directly — use @file:LAUNCH_READINESS.md instead of relying on summary context
+
+DO NOT DO NOW
+- /clear — active decisions and file state would be lost
+```
