@@ -100,11 +100,32 @@ func NewGateway(upstream *url.URL, client *http.Client) *Gateway {
 // Useful for httptest in integration tests.
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// PromQL endpoints — pass through governance validation.
 	mux.HandleFunc("/query", g.HandleQuery)
 	mux.HandleFunc("/query_range", g.HandleQuery)
 	mux.HandleFunc("/api/v1/query", g.HandleQuery)
 	mux.HandleFunc("/api/v1/query_range", g.HandleQuery)
+	// Gateway health — internal.
 	mux.HandleFunc("/health", g.HandleHealth)
+	// Prometheus metadata endpoints — proxied transparently (no PromQL,
+	// so governance does not apply). Required for Grafana datasource
+	// health-check (Save & Test) and label/metadata exploration.
+	for _, path := range []string{
+		"/api/v1/labels",
+		"/api/v1/label/",
+		"/api/v1/series",
+		"/api/v1/metadata",
+		"/api/v1/rules",
+		"/api/v1/alerts",
+		"/api/v1/targets",
+		"/-/ready",
+		"/-/healthy",
+	} {
+		p := path // capture for closure
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+			g.proxyToUpstream(w, r)
+		})
+	}
 	return mux
 }
 
