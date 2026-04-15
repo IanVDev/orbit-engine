@@ -234,6 +234,11 @@ func (st *SessionTracker) RecordEvent(event SkillEvent) (SkillEvent, error) {
 	if event.EventType == "activation" && !summary.SkillActivated {
 		summary.SkillActivated = true
 		skillSessionsWithActivation.Inc()
+		// Observe activation latency: time from session start to first activation
+		latency := event.Timestamp.Time.Sub(summary.StartedAt).Seconds()
+		if latency >= 0 {
+			skillActivationLatency.Observe(latency)
+		}
 	}
 
 	// Detect session without skill after threshold
@@ -361,6 +366,17 @@ var (
 			Help: "Unix timestamp of the last successfully tracked event. 0 means no events yet.",
 		},
 	)
+
+	// orbit_skill_activation_latency_seconds: time from session start to
+	// first activation event. Measures how quickly the skill provides value.
+	// Only observed once per session (first activation).
+	skillActivationLatency = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "orbit_skill_activation_latency_seconds",
+			Help:    "Seconds from session start to first skill activation. Observed once per session.",
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
+		},
+	)
 )
 
 // registerOnce ensures metrics are registered exactly once.
@@ -396,6 +412,7 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			trackingUpGauge,
 			instanceIDGauge,
 			lastEventTimestampGauge,
+			skillActivationLatency,
 		)
 		// Process is alive → tracking_up = 1.
 		// seed_mode stays 0 (production default) until SetSeedMode(true).

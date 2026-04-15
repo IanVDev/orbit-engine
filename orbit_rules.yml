@@ -74,3 +74,85 @@ groups:
       # ── governance: misuse detector (raw query returns >1 series) ──
       - record: orbit:env_series_count
         expr: count(orbit_skill_tokens_saved_total) by (__name__)
+
+      # ── activation latency (prod only) ─────────────────────────────
+      - record: orbit:activation_latency_p50:prod
+        expr: histogram_quantile(0.50, rate(orbit_skill_activation_latency_seconds_bucket{env="prod"}[5m]))
+
+      - record: orbit:activation_latency_p95:prod
+        expr: histogram_quantile(0.95, rate(orbit_skill_activation_latency_seconds_bucket{env="prod"}[5m]))
+
+  # ── Alerting rules: operational safety ─────────────────────────────
+  - name: orbit_alerts
+    interval: 15s
+    rules:
+      # ALERT 1 — Silence: no events for 10 minutes in prod
+      # A system with zero activity is not "healthy" — it's dead.
+      - alert: OrbitSilence
+        expr: orbit:event_staleness_seconds:prod > 600
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Orbit tracking silencioso há >10min"
+          description: "Nenhum evento recebido em {{ $value | humanizeDuration }}. Sistema pode estar morto."
+
+      # ALERT 2 — Tracking failures detected
+      - alert: OrbitTrackingFailures
+        expr: increase(orbit:tracking_failures_total:prod[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Falhas de tracking detectadas"
+          description: "{{ $value }} falha(s) nos últimos 5 min. Fail-closed pode estar bloqueando ativações."
+
+      # ALERT 3 — Seed contamination in prod
+      - alert: OrbitSeedContamination
+        expr: orbit:seed_contamination == 1
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Contaminação de ambiente: seed detectado em prod"
+          description: "orbit_seed_mode=1 em env=prod. Métricas de produção comprometidas."
+
+      # ALERT 4 — Gateway down (no scrape)
+      - alert: OrbitGatewayDown
+        expr: up{job="orbit-engine-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway PromQL está down"
+          description: "Grafana não consegue consultar métricas. Verificar orbit-gateway."
+
+      # ALERT 5 — Tracking server down
+      - alert: OrbitTrackingDown
+        expr: up{job="orbit-engine-tracking"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tracking server está down"
+          description: "Nenhum evento pode ser registrado. Serviço morto."
+
+      # ALERT 6 — Zero sessions for extended period (system not generating value)
+      - alert: OrbitZeroSessions
+        expr: increase(orbit:sessions_total:prod[30m]) == 0 and orbit:sessions_total:prod > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Zero novas sessões nos últimos 30 min"
+          description: "Sistema está vivo mas não está gerando valor. Verificar integração."
+
+      # ALERT 7 — High governance block rate (potential misconfiguration)
+      - alert: OrbitHighBlockRate
+        expr: rate(orbit_gateway_blocked_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Taxa alta de bloqueios no gateway (>0.5/s)"
+          description: "Possível query malformada em loop ou misconfiguration do Grafana."

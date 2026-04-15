@@ -34,6 +34,7 @@ func TestV1ContractComplete(t *testing.T) {
 		trackingUpGauge,
 		instanceIDGauge,
 		lastEventTimestampGauge,
+		skillActivationLatency,
 	)
 
 	// Simulate production startup sequence
@@ -102,6 +103,7 @@ func TestV1ContractComplete(t *testing.T) {
 		{"orbit_tracking_up", dto.MetricType_GAUGE, &one},
 		{"orbit_instance_id", dto.MetricType_GAUGE, &one},
 		{"orbit_last_event_timestamp", dto.MetricType_GAUGE, &positive},
+		{"orbit_skill_activation_latency_seconds", dto.MetricType_HISTOGRAM, nil},
 	}
 
 	for _, c := range contract {
@@ -241,6 +243,33 @@ func TestV1ContractComplete(t *testing.T) {
 			if err := inv.Validate(); err == nil {
 				t.Errorf("CONTRACT VIOLATION: invalid event #%d was accepted", i)
 			}
+		}
+	})
+	// ── CONTRACT: activation latency histogram is observed ──────────
+
+	t.Run("activation_latency_observed", func(t *testing.T) {
+		f, ok := familyMap["orbit_skill_activation_latency_seconds"]
+		if !ok {
+			t.Fatal("CONTRACT VIOLATION: orbit_skill_activation_latency_seconds not found")
+		}
+		if len(f.GetMetric()) == 0 {
+			t.Fatal("CONTRACT VIOLATION: activation latency histogram has no observations")
+		}
+		h := f.GetMetric()[0].GetHistogram()
+		if h.GetSampleCount() == 0 {
+			t.Fatal("CONTRACT VIOLATION: activation latency histogram sample count is 0 after activation event")
+		}
+		t.Logf("activation latency: %d samples, sum=%.2fs", h.GetSampleCount(), h.GetSampleSum())
+	})
+
+	// ── CONTRACT: governance allows activation latency recording rule ─
+
+	t.Run("governance_allows_activation_latency_rule", func(t *testing.T) {
+		if err := ValidatePromQLStrict("orbit:activation_latency_p95:prod"); err != nil {
+			t.Errorf("CONTRACT VIOLATION: activation latency recording rule rejected: %v", err)
+		}
+		if err := ValidatePromQLStrict("orbit:activation_latency_p50:prod"); err != nil {
+			t.Errorf("CONTRACT VIOLATION: activation latency p50 recording rule rejected: %v", err)
 		}
 	})
 }

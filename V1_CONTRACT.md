@@ -35,6 +35,7 @@
 | `orbit_tracking_up` | gauge | — | 1=vivo, ausência=morto |
 | `orbit_instance_id` | gauge | `instance_id` | Identidade única do processo |
 | `orbit_last_event_timestamp` | gauge | — | Unix epoch do último evento |
+| `orbit_skill_activation_latency_seconds` | histogram | — | Tempo (s) da sessão até primeira ativação. Buckets: 1,5,10,30,60,120,300,600,1800,3600 |
 
 #### Gateway (:9091)
 
@@ -59,6 +60,8 @@
 | `orbit:event_staleness_seconds:prod` | `time() - orbit_last_event_timestamp{env="prod"}` |
 | `orbit:seed_contamination` | `orbit_seed_mode{env="prod"} == 1` |
 | `orbit:env_series_count` | `count(orbit_skill_tokens_saved_total) by (__name__)` |
+| `orbit:activation_latency_p50:prod` | `histogram_quantile(0.50, rate(orbit_skill_activation_latency_seconds_bucket{env="prod"}[5m]))` |
+| `orbit:activation_latency_p95:prod` | `histogram_quantile(0.95, rate(orbit_skill_activation_latency_seconds_bucket{env="prod"}[5m]))` |
 
 ### Governança PromQL
 
@@ -114,7 +117,7 @@
 > Candidatos a contrato em versões futuras.
 
 - Task-level observability (métricas por tipo de tarefa)
-- Alerting rules (Prometheus alerts via orbit_rules.yml)
+- ~~Alerting rules (Prometheus alerts via orbit_rules.yml)~~ **Promovido para contrato na v1.0** — ver `orbit_rules.yml`
 - Rate limiting no gateway
 - Auth no endpoint /track
 - WebSocket streaming de eventos

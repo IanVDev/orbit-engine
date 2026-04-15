@@ -5,6 +5,62 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [1.0.1-rc] — 2026-04-15
+
+### 🎯 Marco
+
+Fase de **validação operacional**. Todos os artefatos para provar que a v1.0
+funciona sob estresse real, não apenas em testes unitários.
+
+### Adicionado
+
+- **`orbit_skill_activation_latency_seconds`** — nova métrica histogram
+  que mede o tempo (em segundos) da sessão até a primeira ativação.
+  Buckets: 1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600.
+
+- **Recording rules de latência** em `orbit_rules.yml`:
+  - `orbit:activation_latency_p50:prod`
+  - `orbit:activation_latency_p95:prod`
+
+- **7 alertas obrigatórios** em `orbit_rules.yml`:
+  - `OrbitSilence` — nenhum evento há 10min (warning)
+  - `OrbitTrackingFailures` — falhas de tracking (critical)
+  - `OrbitSeedContamination` — seed em prod (critical)
+  - `OrbitGatewayDown` — gateway não responde (critical)
+  - `OrbitTrackingDown` — tracking server morto (critical)
+  - `OrbitZeroSessions` — zero sessões em 30min (warning)
+  - `OrbitHighBlockRate` — taxa alta de bloqueios no gateway (warning)
+
+- **LAUNCH_READINESS.md** — checklist de launch com:
+  - 10 critérios binários PASS/FAIL
+  - Plano de validação 24h
+  - 6 cenários de falha documentados
+  - Critério GO/NO-GO
+
+- **scripts/mission_24h.sh** — validação contínua 24h com 5 cenários:
+  long_session, no_activation, late_activation, high_waste, multi_mode
+
+- **scripts/fault_injection.sh** — 6 testes de injeção de falha com auto-revert
+
+- **Painel "Activation Latency (p50 / p95)"** no dashboard Grafana (id 25)
+
+### Alterado
+
+- **V1_CONTRACT.md** — adicionada `orbit_skill_activation_latency_seconds` +
+  recording rules de latência ao contrato público
+- **v1_contract_test.go** — 21 subtests (era 19): novo `activation_latency_observed`
+  e `governance_allows_activation_latency_rule`
+- **Dashboard Grafana** — 19 painéis (era 18), versão 3
+
+### Validado
+
+- ✅ `go test ./... -v -count=1` — todos os testes passam
+- ✅ Dashboard JSON válido com 19 painéis
+- ✅ 7 alertas configurados em orbit_rules.yml
+- ✅ Contract test: 12 métricas de tracking verificadas
+
+---
+
 ## [1.0.0] — 2026-04-15
 
 ### 🎯 Marco

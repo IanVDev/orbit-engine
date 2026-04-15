@@ -482,6 +482,52 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 120 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 36 },
+      "id": 25,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit:activation_latency_p50:prod",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit:activation_latency_p95:prod",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Activation Latency (p50 / p95)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
           "color": { "mode": "fixed", "fixedColor": "red" },
           "custom": {
             "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "",
@@ -520,7 +566,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
       "id": 13,
       "title": "Status do Sistema",
       "type": "row"
@@ -545,7 +591,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 41 },
       "id": 7,
       "options": {
         "colorMode": "background",
@@ -586,7 +632,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 41 },
       "id": 8,
       "options": {
         "colorMode": "background",
@@ -625,7 +671,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 41 },
       "id": 9,
       "options": {
         "colorMode": "background",
@@ -666,7 +712,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 41 },
       "id": 24,
       "options": {
         "colorMode": "background",
@@ -697,5 +743,5 @@
   "timezone": "browser",
   "title": "orbit-engine — Command Center v1.0",
   "uid": "orbit-engine-command-center",
-  "version": 2
+  "version": 3
 }
