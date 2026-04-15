@@ -6,6 +6,10 @@
 // Every PromQL query passes through ValidatePromQLStrict BEFORE being
 // proxied to the upstream Prometheus. Invalid queries never leave the
 // gateway.
+//
+// Production-hardened:
+//   - Prometheus metrics: requests, blocked, errors, latency
+//   - Upstream fail-closed: unreachable → 503, never fallback
 package tracking
 
 import (
@@ -14,7 +18,67 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// -------------------------------------------------------------------------
+// Gateway metrics — self-observability
+// -------------------------------------------------------------------------
+
+var (
+	gatewayRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_gateway_requests_total",
+			Help: "Total PromQL requests received by the gateway.",
+		},
+		[]string{"path", "method"},
+	)
+
+	gatewayBlockedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_gateway_blocked_total",
+			Help: "Requests blocked by governance policy.",
+		},
+		[]string{"reason"},
+	)
+
+	gatewayErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_gateway_errors_total",
+			Help: "Upstream errors (timeouts, connection refused, etc.).",
+		},
+		[]string{"type"},
+	)
+
+	gatewayLatencyMs = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "orbit_gateway_latency_ms",
+			Help:    "End-to-end latency of proxied requests in milliseconds.",
+			Buckets: []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000},
+		},
+	)
+)
+
+// RegisterGatewayMetrics registers gateway-specific Prometheus collectors.
+// Call once at startup. Safe to call multiple times (idempotent via registry
+// error handling).
+func RegisterGatewayMetrics(reg prometheus.Registerer) {
+	for _, c := range []prometheus.Collector{
+		gatewayRequestsTotal,
+		gatewayBlockedTotal,
+		gatewayErrorsTotal,
+		gatewayLatencyMs,
+	} {
+		// Ignore AlreadyRegisteredError for idempotency in tests.
+		if err := reg.Register(c); err != nil {
+			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+				log.Printf("[WARN] gateway metric registration: %v", err)
+			}
+		}
+	}
+}
 
 // -------------------------------------------------------------------------
 // Gateway — fail-closed reverse proxy
@@ -52,22 +116,27 @@ func (g *Gateway) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // HandleQuery validates the PromQL query and proxies it to Prometheus
 // if it passes governance. Invalid queries are rejected with 400.
+// Upstream failures return 503 (fail-closed — never fallback).
 func (g *Gateway) HandleQuery(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	query := ExtractQuery(r)
+
+	gatewayRequestsTotal.WithLabelValues(r.URL.Path, r.Method).Inc()
 
 	// ── Fail-closed enforcement ────────────────────────────────────
 	if err := ValidatePromQLStrict(query); err != nil {
-		log.Printf("[WARN] blocked query: %s", err)
+		log.Printf("[WARN] promql-gateway: blocked query — %s", err)
+		gatewayBlockedTotal.WithLabelValues("governance").Inc()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		// Prometheus-compatible error envelope so Grafana shows a clean
-		// message instead of a cryptic parse error.
 		fmt.Fprintf(w, `{"status":"error","errorType":"governance","error":%q}`+"\n", err.Error())
 		return
 	}
 
 	// ── Proxy to upstream ──────────────────────────────────────────
 	g.proxyToUpstream(w, r)
+
+	gatewayLatencyMs.Observe(float64(time.Since(start).Milliseconds()))
 }
 
 // ExtractQuery pulls the "query" parameter from GET query string or
@@ -96,27 +165,35 @@ func IsQueryBlocked(query string) bool {
 
 // proxyToUpstream forwards the original request to Prometheus and
 // copies the response back to the client.
+//
+// FAIL-CLOSED: if upstream is unreachable → 503 Service Unavailable.
+// We never return cached data, fallback results, or empty success
+// responses. The caller (Grafana) sees the error and retries.
 func (g *Gateway) proxyToUpstream(w http.ResponseWriter, r *http.Request) {
-	// Build upstream URL keeping the original path and query string.
 	target := *g.upstream
 	target.Path = r.URL.Path
 	target.RawQuery = r.URL.RawQuery
 
 	upReq, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
-		log.Printf("[ERROR] failed to build upstream request: %v", err)
-		http.Error(w, `{"status":"error","error":"internal gateway error"}`, http.StatusBadGateway)
+		log.Printf("[ERROR] promql-gateway: failed to build upstream request — %v", err)
+		gatewayErrorsTotal.WithLabelValues("request_build").Inc()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintln(w, `{"status":"error","errorType":"upstream","error":"internal gateway error"}`)
 		return
 	}
 
-	// Copy essential headers.
 	upReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
 	upReq.Header.Set("Accept", r.Header.Get("Accept"))
 
 	resp, err := g.client.Do(upReq)
 	if err != nil {
-		log.Printf("[ERROR] upstream request failed: %v", err)
-		http.Error(w, `{"status":"error","error":"upstream unreachable"}`, http.StatusBadGateway)
+		log.Printf("[ERROR] promql-gateway: upstream unreachable — %v", err)
+		gatewayErrorsTotal.WithLabelValues("upstream_unreachable").Inc()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintln(w, `{"status":"error","errorType":"upstream","error":"upstream unreachable"}`)
 		return
 	}
 	defer resp.Body.Close()

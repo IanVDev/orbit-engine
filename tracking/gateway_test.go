@@ -13,6 +13,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/IanVDev/orbit-engine/tracking"
 )
@@ -240,5 +243,130 @@ func TestIsQueryBlocked(t *testing.T) {
 	}
 	if tracking.IsQueryBlocked("orbit:tokens_saved_total:prod") {
 		t.Fatal("recording rule should not be blocked")
+	}
+}
+
+// -------------------------------------------------------------------------
+// Test: upstream down → 503 (fail-closed, never fallback)
+// -------------------------------------------------------------------------
+
+func TestGatewayUpstreamDown503(t *testing.T) {
+	// Point gateway at a port that is guaranteed to refuse connections.
+	deadURL, _ := url.Parse("http://127.0.0.1:1")
+	gw := tracking.NewGateway(deadURL, &http.Client{Timeout: 1 * time.Second})
+	gateway := httptest.NewServer(gw.Handler())
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/api/v1/query?query=" + url.QueryEscape("orbit:tokens_saved_total:prod"))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Must be 503 — fail-closed, never 200 with empty data.
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503, got %d: %s", resp.StatusCode, body)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("response is not JSON: %v — body: %s", err, string(body))
+	}
+	if envelope["errorType"] != "upstream" {
+		t.Fatalf("expected errorType=upstream, got %v", envelope["errorType"])
+	}
+}
+
+// -------------------------------------------------------------------------
+// Test: gateway metrics are incremented
+// -------------------------------------------------------------------------
+
+func TestGatewayMetricsIncrement(t *testing.T) {
+	// Register metrics on a fresh registry for isolation.
+	reg := prometheus.NewRegistry()
+	tracking.RegisterGatewayMetrics(reg)
+
+	prom := fakePrometheus()
+	defer prom.Close()
+	gateway := gatewayFor(prom)
+	defer gateway.Close()
+
+	// 1. Valid query → requests_total should increment
+	resp, err := http.Get(gateway.URL + "/api/v1/query?query=" + url.QueryEscape("orbit:tokens_saved_total:prod"))
+	if err != nil {
+		t.Fatalf("valid request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for valid query, got %d", resp.StatusCode)
+	}
+
+	// 2. Invalid query → blocked_total should increment
+	resp, err = http.Get(gateway.URL + "/api/v1/query?query=" + url.QueryEscape("orbit_skill_tokens_saved_total"))
+	if err != nil {
+		t.Fatalf("blocked request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for blocked query, got %d", resp.StatusCode)
+	}
+
+	// Gather metrics and verify counters.
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather failed: %v", err)
+	}
+
+	found := map[string]bool{
+		"orbit_gateway_requests_total": false,
+		"orbit_gateway_blocked_total":  false,
+	}
+	for _, f := range families {
+		if _, ok := found[f.GetName()]; ok {
+			for _, m := range f.GetMetric() {
+				if m.GetCounter().GetValue() > 0 {
+					found[f.GetName()] = true
+				}
+			}
+		}
+	}
+
+	for name, ok := range found {
+		if !ok {
+			t.Errorf("metric %s should have value > 0", name)
+		}
+	}
+}
+
+// -------------------------------------------------------------------------
+// Test: upstream slow → timeout → 503
+// -------------------------------------------------------------------------
+
+func TestGatewayUpstreamTimeout503(t *testing.T) {
+	// Upstream that blocks forever (until context cancelled).
+	slowProm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slowProm.Close()
+
+	u, _ := url.Parse(slowProm.URL)
+	gw := tracking.NewGateway(u, &http.Client{Timeout: 100 * time.Millisecond})
+	gateway := httptest.NewServer(gw.Handler())
+	defer gateway.Close()
+
+	resp, err := http.Get(gateway.URL + "/api/v1/query?query=" + url.QueryEscape("orbit:tokens_saved_total:prod"))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 503 for slow upstream, got %d: %s", resp.StatusCode, body)
 	}
 }

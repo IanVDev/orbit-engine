@@ -1,0 +1,42 @@
+[Unit]
+Description=orbit-engine PromQL Gateway (fail-closed)
+Documentation=https://github.com/IanVDev/orbit-engine
+After=network-online.target prometheus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orbit
+Group=orbit
+
+# Fail-closed: restart forever, never leave Grafana without a gateway.
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
+
+# Binary and flags — adjust paths to your deployment.
+ExecStart=/usr/local/bin/orbit-gateway \
+    -listen :9091 \
+    -upstream http://localhost:9090
+
+# Structured JSON logging goes to journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orbit-gateway
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/
+
+# Resource limits (adjust to environment)
+LimitNOFILE=65536
+MemoryMax=256M
+
+# Environment (optional override file)
+EnvironmentFile=-/etc/orbit-engine/gateway.env
+
+[Install]
+WantedBy=multi-user.target
