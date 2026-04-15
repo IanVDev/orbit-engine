@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/IanVDev/orbit-engine/tracking"
 	"github.com/prometheus/client_golang/prometheus"
@@ -38,7 +37,7 @@ func main() {
 			return
 		}
 		if event.Timestamp.IsZero() {
-			event.Timestamp = tracking.FlexTime{Time: time.Now()}
+			event.Timestamp = tracking.NowUTC()
 		}
 		if err := tracking.TrackSkillEvent(event); err != nil {
 			log.Printf("[ERROR] /track: %v", err)

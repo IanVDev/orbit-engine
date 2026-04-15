@@ -28,10 +28,10 @@ func main() {
 	// ── Scenario A: session WITH skill activation ─────────────────────────
 	fmt.Println("▶  Seeding Scenario A: sess-with-skill")
 	eventsA := []tracking.SkillEvent{
-		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 800, ImpactEstimatedToken: 500, Timestamp: tracking.FlexTime{Time: time.Now()}},
-		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 1000, ImpactEstimatedToken: 700, Timestamp: tracking.FlexTime{Time: time.Now().Add(time.Second)}},
-		{SessionID: "sess-with-skill", EventType: "activation", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 1200, ImpactEstimatedToken: 900, Timestamp: tracking.FlexTime{Time: time.Now().Add(2 * time.Second)}},
-		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "suggest", Trigger: "correction_chain", EstimatedWaste: 600, ImpactEstimatedToken: 400, Timestamp: tracking.FlexTime{Time: time.Now().Add(3 * time.Second)}},
+		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 800, ImpactEstimatedToken: 500, Timestamp: tracking.NowUTC()},
+		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 1000, ImpactEstimatedToken: 700, Timestamp: tracking.NowUTCAdd(time.Second)},
+		{SessionID: "sess-with-skill", EventType: "activation", Mode: "auto", Trigger: "correction_chain", EstimatedWaste: 1200, ImpactEstimatedToken: 900, Timestamp: tracking.NowUTCAdd(2 * time.Second)},
+		{SessionID: "sess-with-skill", EventType: "suggestion", Mode: "suggest", Trigger: "correction_chain", EstimatedWaste: 600, ImpactEstimatedToken: 400, Timestamp: tracking.NowUTCAdd(3 * time.Second)},
 	}
 	for _, ev := range eventsA {
 		if _, err := tracker.RecordEvent(ev); err != nil {
@@ -50,7 +50,7 @@ func main() {
 			Trigger:              "idle",
 			EstimatedWaste:       float64(50 + i*10),
 			ImpactEstimatedToken: int64(100 + i*5),
-			Timestamp:            tracking.FlexTime{Time: time.Now().Add(time.Duration(i) * time.Second)},
+			Timestamp:            tracking.NowUTCAdd(time.Duration(i) * time.Second),
 		}
 		if _, err := tracker.RecordEvent(ev); err != nil {
 			log.Printf("[WARN] B[%d]: %v", i, err)

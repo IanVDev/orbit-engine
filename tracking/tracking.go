@@ -21,15 +21,37 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// FlexTime — time.Time that accepts RFC3339, RFC3339Nano and no-timezone ISO
+// FlexTime — strict, fail-closed timestamp with temporal integrity
 // ---------------------------------------------------------------------------
 
-// FlexTime wraps time.Time with a JSON unmarshaler that accepts multiple
-// ISO-8601 / RFC-3339 variants (with or without timezone offset).
+const (
+	// flexTimeMaxFuture is the maximum allowed drift into the future.
+	flexTimeMaxFuture = 5 * time.Minute
+	// flexTimeMaxAge is the maximum allowed age for a timestamp.
+	flexTimeMaxAge = 24 * time.Hour
+)
+
+// flexTimeNow is the clock function used by FlexTime validation.
+// Tests can override this to control "now".
+var flexTimeNow = time.Now
+
+// FlexTime wraps time.Time with a strict JSON unmarshaler.
+//
+// Accepted formats (all MUST contain an explicit timezone offset):
+//   - RFC3339Nano  "2006-01-02T15:04:05.999999999Z07:00"
+//   - RFC3339      "2006-01-02T15:04:05Z07:00"
+//
+// Bare timestamps without timezone (e.g. Python isoformat()) are REJECTED
+// because they introduce temporal ambiguity. All parsed values are
+// normalised to UTC before storage.
+//
+// Temporal bounds are enforced:
+//   - timestamp must not be more than 5 min in the future
+//   - timestamp must not be older than 24 h
 type FlexTime struct{ time.Time }
 
-// UnmarshalJSON parses RFC3339, RFC3339Nano, and bare "YYYY-MM-DDTHH:MM:SS[.NNN]"
-// (treating bare timestamps as UTC).
+// UnmarshalJSON parses strict RFC3339/RFC3339Nano and normalises to UTC.
+// Fail-closed: any format or bounds violation returns an error.
 func (ft *FlexTime) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -39,28 +61,46 @@ func (ft *FlexTime) UnmarshalJSON(data []byte) error {
 		ft.Time = time.Time{}
 		return nil
 	}
-	formats := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.999999999",
-		"2006-01-02T15:04:05",
+
+	// Try RFC3339Nano first (superset), then RFC3339.
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, s)
 	}
-	for _, f := range formats {
-		if t, err := time.Parse(f, s); err == nil {
-			ft.Time = t
-			return nil
-		}
+	if err != nil {
+		return fmt.Errorf("tracking: timestamp %q is not valid RFC3339 (timezone required)", s)
 	}
-	return fmt.Errorf("tracking: cannot parse timestamp %q", s)
+
+	// Normalise to UTC.
+	t = t.UTC()
+
+	// Temporal bounds — fail-closed.
+	now := flexTimeNow().UTC()
+	if t.After(now.Add(flexTimeMaxFuture)) {
+		return fmt.Errorf("tracking: timestamp %q is too far in the future (max %v)", s, flexTimeMaxFuture)
+	}
+	if t.Before(now.Add(-flexTimeMaxAge)) {
+		return fmt.Errorf("tracking: timestamp %q is too old (max age %v)", s, flexTimeMaxAge)
+	}
+
+	ft.Time = t
+	return nil
 }
 
-// MarshalJSON always emits RFC3339Nano so round-trips work.
+// MarshalJSON always emits RFC3339Nano in UTC so round-trips are unambiguous.
 func (ft FlexTime) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ft.Time.Format(time.RFC3339Nano))
+	return json.Marshal(ft.Time.UTC().Format(time.RFC3339Nano))
 }
 
 // IsZero delegates to inner time.Time.
 func (ft FlexTime) IsZero() bool { return ft.Time.IsZero() }
+
+// NowUTC returns a FlexTime set to the current UTC time.
+// Convenience helper so callers never build bare time.Time values.
+func NowUTC() FlexTime { return FlexTime{Time: time.Now().UTC()} }
+
+// NowUTCAdd returns a FlexTime set to now + d in UTC.
+func NowUTCAdd(d time.Duration) FlexTime { return FlexTime{Time: time.Now().Add(d).UTC()} }
 
 // ---------------------------------------------------------------------------
 // SkillEvent — the unit of tracking
@@ -70,15 +110,15 @@ func (ft FlexTime) IsZero() bool { return ft.Time.IsZero() }
 type SkillEvent struct {
 	EventType            string   `json:"event_type"`
 	Timestamp            FlexTime `json:"timestamp"`
-	SessionID            string    `json:"session_id"`
-	Mode                 string    `json:"mode"` // auto | suggest | off
-	Trigger              string    `json:"trigger"`
-	EstimatedWaste       float64   `json:"estimated_waste"`
-	ActionsSuggested     int       `json:"actions_suggested"`
-	ActionsApplied       int       `json:"actions_applied"`
-	ImpactEstimatedToken int64     `json:"impact_estimated_tokens"`
-	EventHash            string    `json:"event_hash"`
-	PrevHash             string    `json:"prev_hash"`
+	SessionID            string   `json:"session_id"`
+	Mode                 string   `json:"mode"` // auto | suggest | off
+	Trigger              string   `json:"trigger"`
+	EstimatedWaste       float64  `json:"estimated_waste"`
+	ActionsSuggested     int      `json:"actions_suggested"`
+	ActionsApplied       int      `json:"actions_applied"`
+	ImpactEstimatedToken int64    `json:"impact_estimated_tokens"`
+	EventHash            string   `json:"event_hash"`
+	PrevHash             string   `json:"prev_hash"`
 }
 
 // Validate returns an error if required fields are missing.

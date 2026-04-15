@@ -36,7 +36,7 @@ func newTestRegistry() *prometheus.Registry {
 func validEvent() SkillEvent {
 	return SkillEvent{
 		EventType:            "activation",
-		Timestamp:            FlexTime{Time: time.Now()},
+		Timestamp:            NowUTC(),
 		SessionID:            "sess-001",
 		Mode:                 "auto",
 		Trigger:              "correction_chain",
@@ -93,10 +93,10 @@ func TestTrackFailClosed(t *testing.T) {
 		name  string
 		event SkillEvent
 	}{
-		{"missing event_type", SkillEvent{SessionID: "s", Mode: "auto", Timestamp: FlexTime{Time: time.Now()}}},
-		{"missing session_id", SkillEvent{EventType: "a", Mode: "auto", Timestamp: FlexTime{Time: time.Now()}}},
-		{"missing mode", SkillEvent{EventType: "a", SessionID: "s", Timestamp: FlexTime{Time: time.Now()}}},
-		{"invalid mode", SkillEvent{EventType: "a", SessionID: "s", Mode: "invalid", Timestamp: FlexTime{Time: time.Now()}}},
+		{"missing event_type", SkillEvent{SessionID: "s", Mode: "auto", Timestamp: NowUTC()}},
+		{"missing session_id", SkillEvent{EventType: "a", Mode: "auto", Timestamp: NowUTC()}},
+		{"missing mode", SkillEvent{EventType: "a", SessionID: "s", Timestamp: NowUTC()}},
+		{"invalid mode", SkillEvent{EventType: "a", SessionID: "s", Mode: "invalid", Timestamp: NowUTC()}},
 		{"missing timestamp", SkillEvent{EventType: "a", SessionID: "s", Mode: "auto"}},
 	}
 
@@ -305,7 +305,7 @@ func TestSessionWithoutSkillIsDetected(t *testing.T) {
 		ev.EventType = "suggestion" // not "activation"
 		ev.ImpactEstimatedToken = 10
 		ev.EstimatedWaste = 5.0
-		ev.Timestamp = FlexTime{Time: time.Now().Add(time.Duration(i) * time.Second)}
+		ev.Timestamp = NowUTCAdd(time.Duration(i) * time.Second)
 		tracker.RecordEvent(ev)
 	}
 
@@ -336,7 +336,7 @@ func TestEventHashIntegrity(t *testing.T) {
 	ev1 := validEvent()
 	ev1.SessionID = "sess-hash"
 	ev1.ImpactEstimatedToken = 100
-	ev1.Timestamp = FlexTime{Time: time.Now()}
+	ev1.Timestamp = NowUTC()
 	ev1, _ = tracker.RecordEvent(ev1)
 
 	// genesis event: PrevHash must be empty, EventHash must match ComputeHash
@@ -351,7 +351,7 @@ func TestEventHashIntegrity(t *testing.T) {
 	ev2 := validEvent()
 	ev2.SessionID = "sess-hash"
 	ev2.ImpactEstimatedToken = 200
-	ev2.Timestamp = FlexTime{Time: time.Now().Add(time.Second)}
+	ev2.Timestamp = NowUTCAdd(time.Second)
 	ev2, _ = tracker.RecordEvent(ev2)
 
 	// second event: PrevHash == first event hash, own hash is different
@@ -379,7 +379,7 @@ func TestSessionSummaryAccumulates(t *testing.T) {
 		ev.SessionID = "sess-accum"
 		ev.ImpactEstimatedToken = tokens[i]
 		ev.EstimatedWaste = wastes[i]
-		ev.Timestamp = FlexTime{Time: time.Now().Add(time.Duration(i) * time.Second)}
+		ev.Timestamp = NowUTCAdd(time.Duration(i) * time.Second)
 		if i == 1 {
 			ev.EventType = "activation" // one activation
 		}
@@ -455,7 +455,7 @@ func TestGetLastHash(t *testing.T) {
 	ev := validEvent()
 	ev.SessionID = "sess-lasthash"
 	ev.ImpactEstimatedToken = 42
-	ev.Timestamp = FlexTime{Time: time.Now()}
+	ev.Timestamp = NowUTC()
 	ev, _ = tracker.RecordEvent(ev)
 
 	last := tracker.GetLastHash("sess-lasthash")
@@ -644,5 +644,100 @@ func TestFreshness(t *testing.T) {
 	// The value should be a reasonable unix timestamp (> year 2020)
 	if afterTS < 1577836800 { // 2020-01-01
 		t.Fatalf("orbit_last_event_timestamp looks invalid: %v", afterTS)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FlexTime — temporal integrity tests
+// ---------------------------------------------------------------------------
+
+// TestFlexTimeAcceptsRFC3339 — valid RFC3339 and RFC3339Nano strings are
+// parsed and normalised to UTC.
+func TestFlexTimeAcceptsRFC3339(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"UTC Z suffix", `"2026-04-15T12:00:00Z"`},
+		{"UTC with nanos", `"2026-04-15T12:00:00.123456789Z"`},
+		{"positive offset", `"2026-04-15T15:00:00+03:00"`},
+		{"negative offset", `"2026-04-15T05:00:00-07:00"`},
+	}
+
+	// Pin "now" so timestamps from 2026-04-15 are within the 24h window.
+	orig := flexTimeNow
+	flexTimeNow = func() time.Time { return time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC) }
+	defer func() { flexTimeNow = orig }()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ft FlexTime
+			if err := ft.UnmarshalJSON([]byte(tc.input)); err != nil {
+				t.Fatalf("expected success for %s, got error: %v", tc.input, err)
+			}
+			if ft.Time.Location() != time.UTC {
+				t.Fatalf("expected UTC, got %v", ft.Time.Location())
+			}
+			if ft.Time.IsZero() {
+				t.Fatal("parsed time should not be zero")
+			}
+		})
+	}
+}
+
+// TestFlexTimeRejectsNoTimezone — bare ISO timestamps without an explicit
+// timezone offset must be rejected (fail-closed: no ambiguity allowed).
+func TestFlexTimeRejectsNoTimezone(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"bare datetime", `"2026-04-15T12:00:00"`},
+		{"bare with nanos", `"2026-04-15T12:00:00.123456"`},
+		{"date only", `"2026-04-15"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ft FlexTime
+			err := ft.UnmarshalJSON([]byte(tc.input))
+			if err == nil {
+				t.Fatalf("expected error for %s (no timezone), but got nil", tc.input)
+			}
+			if !strings.Contains(err.Error(), "not valid RFC3339") {
+				t.Fatalf("error should mention RFC3339, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestFlexTimeRejectsInvalid — garbage, future, and ancient timestamps
+// must be rejected.
+func TestFlexTimeRejectsInvalid(t *testing.T) {
+	// Pin "now" for deterministic bounds checking.
+	orig := flexTimeNow
+	flexTimeNow = func() time.Time { return time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC) }
+	defer func() { flexTimeNow = orig }()
+
+	cases := []struct {
+		name      string
+		input     string
+		errSubstr string
+	}{
+		{"garbage string", `"not-a-date"`, "not valid RFC3339"},
+		{"just a number", `"12345"`, "not valid RFC3339"},
+		{"too far in future", `"2026-04-15T12:10:00Z"`, "too far in the future"},
+		{"too old", `"2026-04-13T00:00:00Z"`, "too old"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ft FlexTime
+			err := ft.UnmarshalJSON([]byte(tc.input))
+			if err == nil {
+				t.Fatalf("expected error for %s, but got nil", tc.input)
+			}
+			if !strings.Contains(err.Error(), tc.errSubstr) {
+				t.Fatalf("error should contain %q, got: %v", tc.errSubstr, err)
+			}
+		})
 	}
 }

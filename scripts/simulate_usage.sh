@@ -30,7 +30,7 @@ for i in $(seq 1 "${COUNT}"); do
   TOKENS=$((500 + (i-1)*100))
   WASTE=$((200 + (i-1)*50))
   TOTAL=$((TOTAL+TOKENS))
-  TS=$(python3 -c "import datetime; print(datetime.datetime.now().isoformat())")
+  TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
 
   PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"%s","mode":"auto","trigger":"simulate_usage_script","estimated_waste":%d,"actions_suggested":3,"actions_applied":2,"impact_estimated_tokens":%d}' \
     "${TS}" "${SESSION}" "${WASTE}" "${TOKENS}")
