@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# simulate_usage.sh — Simula eventos de skill via POST /track (tracking-server :9100).
-# Valida que TODAS métricas críticas aparecem no endpoint /metrics.
-# Simula ataque para garantir orbit_tracking_rejected_total.
+# simulate_usage.sh — Injeta eventos reais no /track usando decisões do SkillRouter.
+# Para cada turno do fixture, roda SkillRouter.evaluate(); só POSTa turnos ativados.
+# Valida métricas críticas em /metrics e simula ataques para gerar rejected_total.
 #
-# Uso: ./scripts/simulate_usage.sh [--count N]
+# Uso: ./scripts/simulate_usage.sh [--fixtures PATH]
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TRACKING="http://127.0.0.1:9100"
 GW="http://127.0.0.1:9091"
-COUNT=3
-if [[ "${1:-}" == "--count" && -n "${2:-}" ]]; then COUNT="$2"; fi
+FIXTURES="${SCRIPT_DIR}/fixtures/activation_turns.jsonl"
 
-SESSION="sim-$(date +%s)"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fixtures) FIXTURES="$2"; shift 2 ;;
+    *) echo "uso: $0 [--fixtures PATH]" >&2; exit 2 ;;
+  esac
+done
+
+RUN_SESSION="sim-$(date +%s)"
 FAILURES=0
 
 fail() { echo "  ❌ $1"; FAILURES=$((FAILURES+1)); }
@@ -19,10 +28,15 @@ pass() { echo "  ✅ $1"; }
 
 echo ""
 echo "══════════════════════════════════════════════"
-echo "  orbit-engine — simulação de uso real"
-echo "  session: ${SESSION}  eventos: ${COUNT}"
+echo "  orbit-engine — simulação via SkillRouter real"
+echo "  run:      ${RUN_SESSION}"
+echo "  fixtures: ${FIXTURES}"
 echo "══════════════════════════════════════════════"
 echo ""
+
+if [[ ! -f "${FIXTURES}" ]]; then
+  echo "  ❌ fixture não encontrado: ${FIXTURES}"; exit 1
+fi
 
 # ── Pré-condição: servidor vivo ──────────────────────────────────────
 if ! curl -sf "${TRACKING}/health" >/dev/null 2>&1; then
@@ -32,30 +46,104 @@ pass "tracking-server OK"
 BEFORE=$(curl -s "${TRACKING}/metrics" | awk '/^orbit_skill_tokens_saved_total/{print $2}')
 echo "  baseline tokens_saved = ${BEFORE:-0}"; echo ""
 
-# ── Injetar eventos normais ─────────────────────────────────────────
-echo "── Injetando ${COUNT} evento(s)..."
-TOTAL=0
-for i in $(seq 1 "${COUNT}"); do
-  TOKENS=$((500 + (i-1)*100))
-  WASTE=$((200 + (i-1)*50))
-  TOTAL=$((TOTAL+TOKENS))
+# ── Avaliar fixture via SkillRouter real (Python) ────────────────────
+echo "── Avaliando fixture via SkillRouter.evaluate()..."
+DECISIONS_FILE="$(mktemp)"
+trap 'rm -f "${DECISIONS_FILE}"' EXIT
+
+if ! python3 "${SCRIPT_DIR}/evaluate_turn.py" "${FIXTURES}" > "${DECISIONS_FILE}"; then
+  echo "  ❌ SkillRouter falhou ao avaliar fixture"; exit 1
+fi
+
+TOTAL_TURNS=$(wc -l < "${DECISIONS_FILE}" | tr -d ' ')
+ACTIVATED_TURNS=$(grep -c '"activated": true' "${DECISIONS_FILE}" || true)
+SUPPRESSED_TURNS=$(grep -c '"suppressed": true' "${DECISIONS_FILE}" || true)
+echo "  turnos avaliados:  ${TOTAL_TURNS}"
+echo "  ativados:          ${ACTIVATED_TURNS}"
+echo "  suprimidos:        ${SUPPRESSED_TURNS}"
+
+if [[ "${TOTAL_TURNS}" -eq 0 ]]; then
+  echo "  ❌ fail-closed: nenhum turno no fixture"; exit 1
+fi
+if [[ "${ACTIVATED_TURNS}" -eq 0 ]]; then
+  echo "  ❌ fail-closed: nenhuma ativação real (router não discrimina — ainda laboratório)"; exit 1
+fi
+
+# ── Injetar SOMENTE decisões ativadas no /track ──────────────────────
+echo ""; echo "── POSTando turnos ativados em /track..."
+POSTED_OK=0
+POSTED_FAIL=0
+TOTAL_TOKENS=0
+i=0
+while IFS= read -r decision; do
+  i=$((i+1))
+  activated=$(printf '%s' "${decision}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('activated', False))")
+  if [[ "${activated}" != "True" ]]; then
+    continue
+  fi
+
+  # Extrair campos da decisão. Fail-closed: qualquer parse error aborta este turno.
+  fields=$(printf '%s' "${decision}" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+signals = d.get("signals") or []
+reason = signals[0] if signals else "none"
+# Texto cru nunca sai do helper; tokens estimados via text_len (heurística /4, min 1).
+tokens = max(d.get("text_len", 0) // 4, 1)
+print(d["session_id"])
+print(d.get("phase", "exploration"))
+print(reason)
+print(tokens)
+') || { fail "turno ${i}: parse falhou"; POSTED_FAIL=$((POSTED_FAIL+1)); continue; }
+
+  SESSION_ID=$(echo "${fields}" | sed -n '1p')
+  PHASE=$(echo    "${fields}" | sed -n '2p')
+  REASON=$(echo   "${fields}" | sed -n '3p')
+  TOKENS=$(echo   "${fields}" | sed -n '4p')
+  WASTE=$((TOKENS * 2))
+  TOTAL_TOKENS=$((TOTAL_TOKENS + TOKENS))
   TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
 
-  PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"%s","mode":"auto","trigger":"simulate_usage_script","estimated_waste":%d,"actions_suggested":3,"actions_applied":2,"impact_estimated_tokens":%d}' \
-    "${TS}" "${SESSION}" "${WASTE}" "${TOKENS}")
+  PAYLOAD=$(python3 -c '
+import json, sys
+print(json.dumps({
+  "event_type": "activation",
+  "timestamp": sys.argv[1],
+  "session_id": sys.argv[2],
+  "mode": "auto",
+  "trigger": "simulate_usage_fixture",
+  "estimated_waste": float(sys.argv[3]),
+  "actions_suggested": 1,
+  "actions_applied": 1,
+  "impact_estimated_tokens": int(sys.argv[4]),
+  "activation_reason": sys.argv[5],
+  "activation_phase": sys.argv[6],
+}))' "${TS}" "${SESSION_ID}" "${WASTE}" "${TOKENS}" "${REASON}" "${PHASE}")
 
   resp=$(curl -s -X POST "${TRACKING}/track" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}")
-
   status=$(echo "${resp}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','?'))" 2>/dev/null || echo "erro")
   if [ "${status}" = "ok" ]; then
-    pass "evento ${i} — waste=${WASTE} tokens=${TOKENS}"
+    pass "turno ${i} [${SESSION_ID}] reason=${REASON} phase=${PHASE} tokens=${TOKENS}"
+    POSTED_OK=$((POSTED_OK+1))
   else
-    fail "evento ${i} — resp=[${resp}]"
+    fail "turno ${i} [${SESSION_ID}] resp=[${resp}]"
+    POSTED_FAIL=$((POSTED_FAIL+1))
   fi
   sleep 0.1
-done
+done < "${DECISIONS_FILE}"
+
+if [[ "${POSTED_OK}" -eq 0 ]]; then
+  echo "  ❌ fail-closed: nenhum evento ativado chegou ao tracking pipeline"; exit 1
+fi
+
+# real_activation_rate: qualidade de discriminação do router no fixture.
+REAL_ACTIVATION_RATE=$(python3 -c "print(f'{${ACTIVATED_TURNS}/${TOTAL_TURNS}:.3f}')")
+echo ""
+echo "── real_activation_rate (router side) ──"
+echo "  ${ACTIVATED_TURNS}/${TOTAL_TURNS} = ${REAL_ACTIVATION_RATE}"
+echo "  posted: ${POSTED_OK} ok / ${POSTED_FAIL} fail"
 
 # ── Simular ataque: payloads inválidos para gerar rejected_total ─────
 echo ""; echo "── Simulando rejeições (ataque)..."
@@ -86,7 +174,7 @@ REJECTED=0
 for i in $(seq 1 10); do
   TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
   PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"burst-%s-%d","mode":"auto","trigger":"burst","estimated_waste":1,"actions_suggested":1,"actions_applied":1,"impact_estimated_tokens":1}' \
-    "${TS}" "${SESSION}" "${i}")
+    "${TS}" "${RUN_SESSION}" "${i}")
   code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${TRACKING}/track" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}")
@@ -159,7 +247,8 @@ done
 # ── Resultado final ──────────────────────────────────────────────────
 echo ""
 echo "══════════════════════════════════════════════"
-echo "  Total tokens simulados: ${TOTAL}"
+echo "  real_activation_rate:   ${REAL_ACTIVATION_RATE} (${ACTIVATED_TURNS}/${TOTAL_TURNS})"
+echo "  eventos no pipeline:    ${POSTED_OK} (tokens=${TOTAL_TOKENS})"
 if [ "${FAILURES}" -gt 0 ]; then
   echo "  ❌ ${FAILURES} FALHA(S) DETECTADA(S)"
   echo "══════════════════════════════════════════════"
