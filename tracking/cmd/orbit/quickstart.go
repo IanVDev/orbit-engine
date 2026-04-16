@@ -49,8 +49,7 @@ func runQuickstart(host string) error {
 	}
 
 	fmt.Println()
-	fmt.Println("🚀  orbit quickstart")
-	fmt.Println("─────────────────────────────────────────")
+	PrintSection("orbit quickstart")
 
 	// ── Etapa 1/3 — Inicializar sessão ──────────────────────────────────
 	printStep(1, 3, "Inicializando sessão...")
@@ -87,15 +86,15 @@ func runQuickstart(host string) error {
 
 	// ── Sumário ─────────────────────────────────────────────────────────
 	fmt.Println()
-	fmt.Println("✅  Quickstart concluído! Orbit está funcionando.")
-	fmt.Println("─────────────────────────────────────────")
-	fmt.Printf("   Session    : %s\n", sessionID)
+	PrintSuccess("Quickstart concluído! Orbit está funcionando.")
+	PrintDivider()
+	PrintKV("Session    :", sessionID)
 	fmt.Printf("   Servidor   : %s\n", host)
-	fmt.Printf("   Tokens     : %d\n", tokens)
-	fmt.Printf("   Proof      : %.16s...\n", proof)
-	fmt.Printf("   Event ID   : %.12s...\n", eventID)
+	PrintKV("Tokens     :", fmt.Sprintf("%d", tokens))
+	PrintKV("Proof      :", proof[:16]+"...")
+	PrintKV("Event ID   :", eventID[:12]+"...")
 	fmt.Println()
-	fmt.Println("   Próximo passo → orbit stats")
+	PrintTip("Próximo passo → orbit stats")
 	fmt.Println()
 	return nil
 }

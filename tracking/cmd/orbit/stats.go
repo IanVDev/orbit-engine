@@ -44,10 +44,9 @@ var metricsPanel = []displayMetric{
 
 // runStats conecta ao tracking-server e exibe os KPIs.
 func runStats(host string) error {
+	PrintSection("Orbit Stats")
+	PrintKV("Servidor:", host)
 	fmt.Println()
-	fmt.Println("📊  Orbit Stats")
-	fmt.Printf("    Servidor : %s\n", host)
-	fmt.Println("─────────────────────────────────────────")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(host + "/metrics")
@@ -79,17 +78,17 @@ func runStats(host string) error {
 		if dm.unit != "" {
 			suffix = " " + dm.unit
 		}
-		fmt.Printf("  %-40s : %s%s\n", dm.label, fmtFloat(val), suffix)
+		PrintKV(dm.label+":", fmtFloat(val)+suffix)
 	}
 
+	fmt.Println()
 	if found == 0 {
-		fmt.Println("  (nenhuma métrica encontrada)")
-		fmt.Println()
-		fmt.Println("  → O servidor está rodando, mas ainda sem eventos.")
-		fmt.Println("  → Execute 'orbit quickstart' para gerar o primeiro evento.")
+		PrintWarn("Nenhuma métrica encontrada.")
+		PrintTip("Execute 'orbit quickstart' para gerar o primeiro evento.")
+	} else {
+		PrintSuccess(fmt.Sprintf("%d métrica(s) exibida(s)", found))
+		PrintTip("Use 'orbit run <cmd>' para registrar execuções com proof.")
 	}
-
-	fmt.Println("─────────────────────────────────────────")
 	fmt.Println()
 	return nil
 }
