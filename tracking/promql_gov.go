@@ -32,6 +32,8 @@ var _allowedPrefixes = []string{
 	"orbit_instance_id",          // instance identity
 	"orbit_last_event_timestamp", // freshness gauge
 	"orbit_gateway_",             // gateway self-observability (infra, not skill data)
+	"orbit_heartbeat_total",      // process liveness heartbeat counter
+	"orbit_real_usage_total",     // total valid events ingested (all real usage)
 }
 
 // ---------------------------------------------------------------------------

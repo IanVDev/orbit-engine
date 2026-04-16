@@ -82,6 +82,16 @@ groups:
       - record: orbit:activation_latency_p95:prod
         expr: histogram_quantile(0.95, rate(orbit_skill_activation_latency_seconds_bucket{env="prod"}[5m]))
 
+      # ── heartbeat rate (prod) ──────────────────────────────────────
+      # rate == 0 means process is frozen or /metrics is unreachable.
+      - record: orbit:heartbeat_rate:prod
+        expr: rate(orbit_heartbeat_total{env="prod"}[1m])
+
+      # ── real usage total (prod) ────────────────────────────────────
+      # Total valid events ingested. rate == 0 means no real usage tracked.
+      - record: orbit:real_usage_total:prod
+        expr: orbit_real_usage_total{env="prod"}
+
   # ── Alerting rules: operational safety ─────────────────────────────
   - name: orbit_alerts
     interval: 15s
@@ -156,3 +166,15 @@ groups:
         annotations:
           summary: "Taxa alta de bloqueios no gateway (>0.5/s)"
           description: "Possível query malformada em loop ou misconfiguration do Grafana."
+
+      # ALERT 8 — Heartbeat ausente: processo morto ou /metrics inacessível
+      # orbit_heartbeat_total incrementa a cada 15s. Se a taxa em 1m for 0,
+      # o processo travou ou o scrape falhou. Fail-closed: sem heartbeat = NO-GO.
+      - alert: OrbitNoHeartbeat
+        expr: rate(orbit_heartbeat_total{env="prod"}[1m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Heartbeat ausente no tracking server (prod)"
+          description: "orbit_heartbeat_total parou de incrementar há >2min. Processo pode estar morto ou /metrics inacessível."
