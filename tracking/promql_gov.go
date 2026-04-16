@@ -26,14 +26,16 @@ const _forbiddenPrefix = "orbit_skill_"
 // _allowedPrefixes lists metric prefixes that ARE safe for production use.
 // Queries referencing only these will pass validation.
 var _allowedPrefixes = []string{
-	"orbit:",                     // recording rules (orbit:tokens_saved_total:prod, etc.)
-	"orbit_seed_mode",            // governance gauge
-	"orbit_tracking_up",          // liveness gauge
-	"orbit_instance_id",          // instance identity
-	"orbit_last_event_timestamp", // freshness gauge
-	"orbit_gateway_",             // gateway self-observability (infra, not skill data)
-	"orbit_heartbeat_total",      // process liveness heartbeat counter
-	"orbit_real_usage_total",     // total valid events ingested (all real usage)
+	"orbit:",                          // recording rules (orbit:tokens_saved_total:prod, etc.)
+	"orbit_seed_mode",                 // governance gauge
+	"orbit_tracking_up",               // liveness gauge
+	"orbit_instance_id",               // instance identity
+	"orbit_last_event_timestamp",      // freshness gauge
+	"orbit_gateway_",                  // gateway self-observability (infra, not skill data)
+	"orbit_heartbeat_total",           // process liveness heartbeat counter
+	"orbit_real_usage_total",          // total valid events ingested (all real usage)
+	"orbit_skill_activation_total",    // SkillRouter decision metric {reason, phase}
+	"orbit_last_real_usage_timestamp", // freshness gauge for real_usage_client events
 }
 
 // ---------------------------------------------------------------------------
@@ -80,15 +82,28 @@ func ValidatePromQL(query string) error {
 
 	// Rule 1: scan for forbidden raw metric prefix
 	// We search case-sensitively — Prometheus metric names are case-sensitive.
-	idx := strings.Index(trimmed, _forbiddenPrefix)
-	if idx >= 0 {
-		// Extract a snippet around the violation for context
-		end := idx + len(_forbiddenPrefix) + 30
-		if end > len(trimmed) {
-			end = len(trimmed)
+	remaining := trimmed
+	for {
+		idx := strings.Index(remaining, _forbiddenPrefix)
+		if idx < 0 {
+			break
 		}
-		snippet := trimmed[idx:end]
 
+		// Extract the full identifier starting at this match.
+		end := idx
+		for end < len(remaining) && isIdentChar(remaining[end]) {
+			end++
+		}
+		ident := remaining[idx:end]
+
+		// If the full identifier matches an explicitly allowed prefix, skip it.
+		if isAllowedIdent(ident) {
+			remaining = remaining[end:]
+			continue
+		}
+
+		// Not in the allow-list — reject.
+		snippet := ident
 		return &PromQLViolation{
 			Query:   query,
 			Reason:  "raw metric prefix \"orbit_skill_\" is forbidden — use recording rules (orbit:*) instead",

@@ -92,6 +92,23 @@ groups:
       - record: orbit:real_usage_total:prod
         expr: orbit_real_usage_total{env="prod"}
 
+      # ── skill activation by reason (prod) ──────────────────────────
+      # SkillRouter decision metric: counts per activation reason and phase.
+      - record: orbit:skill_activation_by_reason:prod
+        expr: sum by (reason, phase) (orbit_skill_activation_total{env="prod"})
+
+      - record: orbit:skill_activation_by_reason:seed
+        expr: sum by (reason, phase) (orbit_skill_activation_total{env="seed"})
+
+      # ── skill activation rate (prod) ───────────────────────────────
+      - record: orbit:skill_activation_rate_5m:prod
+        expr: sum(rate(orbit_skill_activation_total{env="prod"}[5m]))
+
+      # ── real usage freshness (prod) ────────────────────────────────
+      # Staleness of real_usage_client events. High value = no real clients.
+      - record: orbit:real_usage_staleness_seconds:prod
+        expr: time() - orbit_last_real_usage_timestamp{env="prod"}
+
   # ── Alerting rules: operational safety ─────────────────────────────
   - name: orbit_alerts
     interval: 15s

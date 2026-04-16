@@ -28,6 +28,7 @@ import (
 // TestRealUsageClientEndToEnd validates the full real-usage ingestion pipeline.
 func TestRealUsageClientEndToEnd(t *testing.T) {
 	// ── Isolated registry (does not touch prometheus.DefaultRegisterer) ──
+	ResetRateLimit()
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		skillActivationsTotal,
@@ -44,6 +45,8 @@ func TestRealUsageClientEndToEnd(t *testing.T) {
 		skillActivationLatency,
 		heartbeatTotal,
 		realUsageTotal,
+		skillActivationByReason,
+		lastRealUsageTimestamp,
 	)
 	trackingUpGauge.Set(1)
 	seedModeGauge.Set(0)

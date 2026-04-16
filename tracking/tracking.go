@@ -119,6 +119,9 @@ type SkillEvent struct {
 	ImpactEstimatedToken int64    `json:"impact_estimated_tokens"`
 	EventHash            string   `json:"event_hash"`
 	PrevHash             string   `json:"prev_hash"`
+	// SkillRouter decision metadata (optional — set by real_usage_client).
+	ActivationReason string `json:"activation_reason,omitempty"` // first signal from SkillRouter
+	ActivationPhase  string `json:"activation_phase,omitempty"`  // exploration | analysis | consolidation
 }
 
 // Validate returns an error if required fields are missing.
@@ -397,6 +400,35 @@ var (
 			Help: "Total valid skill events successfully processed by TrackSkillEvent.",
 		},
 	)
+
+	// orbit_skill_activation_total: incremented when the SkillRouter decides
+	// to activate the skill. Labels: reason (first signal), phase (session phase).
+	// This is the Python-side decision metric, distinct from orbit_skill_activations_total
+	// which counts raw Go-side events.
+	skillActivationByReason = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_skill_activation_total",
+			Help: "Skill activations by SkillRouter decision. Labels: reason (signal), phase (session phase).",
+		},
+		[]string{"reason", "phase"},
+	)
+
+	// orbit_last_real_usage_timestamp: unix epoch of the most recent event
+	// from a real_usage_client trigger. Allows detecting absence of real events:
+	//   time() - orbit_last_real_usage_timestamp > threshold
+	lastRealUsageTimestamp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_last_real_usage_timestamp",
+			Help: "Unix timestamp of the last event with trigger=real_usage_client. 0 means no real client events yet.",
+		},
+	)
+
+	// sessionRateLimit tracks the last event timestamp per session_id
+	// for server-side rate limiting. Protected by rateMu.
+	sessionRateLimit    = make(map[string]time.Time)
+	rateMu              sync.Mutex
+	rateLimitPerSession = 2 * time.Second // minimum interval between events per session
+	rateLimitDisabled   bool              // testing only — disables rate limit checks
 )
 
 // registerOnce ensures metrics are registered exactly once.
@@ -435,6 +467,8 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			skillActivationLatency,
 			heartbeatTotal,
 			realUsageTotal,
+			skillActivationByReason,
+			lastRealUsageTimestamp,
 		)
 		// Process is alive → tracking_up = 1.
 		// seed_mode stays 0 (production default) until SetSeedMode(true).
@@ -508,6 +542,13 @@ func TrackSkillEvent(event SkillEvent) error {
 		return err
 	}
 
+	// 1b. Rate limit per session_id — reject bursts from the same session.
+	if err := checkRateLimit(event.SessionID); err != nil {
+		skillTrackingFailuresTotal.Inc()
+		log.Printf("[WARN] rate limited session %s: %v", event.SessionID, err)
+		return err
+	}
+
 	// 2. Record Prometheus metrics.
 	//    Wrap in a recover so a panic in the prom client
 	//    doesn't crash the caller — it becomes a returned error.
@@ -523,6 +564,14 @@ func TrackSkillEvent(event SkillEvent) error {
 			skillTokensSavedTotal.Add(float64(event.ImpactEstimatedToken))
 		}
 		skillWasteEstimated.Set(event.EstimatedWaste)
+
+		// 2b. SkillRouter decision metric — only when metadata is present.
+		if event.ActivationReason != "" && event.ActivationPhase != "" {
+			skillActivationByReason.WithLabelValues(
+				event.ActivationReason,
+				event.ActivationPhase,
+			).Inc()
+		}
 	}()
 
 	// 3. Structured log
@@ -538,8 +587,47 @@ func TrackSkillEvent(event SkillEvent) error {
 	//    time() - orbit_last_event_timestamp > threshold
 	lastEventTimestampGauge.Set(float64(time.Now().Unix()))
 
+	// 4b. Update real-usage-client freshness if trigger matches.
+	if event.Trigger == "real_usage_client" {
+		lastRealUsageTimestamp.Set(float64(time.Now().Unix()))
+	}
+
 	// 5. Count every successfully processed event.
 	realUsageTotal.Inc()
 
 	return nil
+}
+
+// checkRateLimit enforces a minimum interval between events for the same session_id.
+// Fail-closed: if rate limit is exceeded, returns an error.
+func checkRateLimit(sessionID string) error {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+	if rateLimitDisabled {
+		return nil
+	}
+	now := time.Now()
+	if last, ok := sessionRateLimit[sessionID]; ok {
+		if now.Sub(last) < rateLimitPerSession {
+			return fmt.Errorf("tracking: rate limited — session %s sent events too fast (min interval %v)",
+				sessionID, rateLimitPerSession)
+		}
+	}
+	sessionRateLimit[sessionID] = now
+	return nil
+}
+
+// ResetRateLimit clears the rate limit state. For testing ONLY.
+func ResetRateLimit() {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+	sessionRateLimit = make(map[string]time.Time)
+	rateLimitDisabled = false
+}
+
+// DisableRateLimit disables rate limiting entirely. For testing ONLY.
+func DisableRateLimit() {
+	rateMu.Lock()
+	defer rateMu.Unlock()
+	rateLimitDisabled = true
 }

@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 // RegisterMetrics means we can only register on DefaultRegisterer once
 // in production, but tests use a custom registry via MustRegister.
 func newTestRegistry() *prometheus.Registry {
+	ResetRateLimit() // clear rate limit state between tests
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		skillActivationsTotal,
@@ -29,6 +31,8 @@ func newTestRegistry() *prometheus.Registry {
 		trackingUpGauge,
 		instanceIDGauge,
 		lastEventTimestampGauge,
+		skillActivationByReason,
+		lastRealUsageTimestamp,
 	)
 	return reg
 }
@@ -175,10 +179,12 @@ func TestTokensSavedAccumulates(t *testing.T) {
 	beforeTokens := counterValue(before, "orbit_skill_tokens_saved_total", "")
 
 	e1 := validEvent()
+	e1.SessionID = "sess-tokens-1"
 	e1.ImpactEstimatedToken = 500
 	_ = TrackSkillEvent(e1)
 
 	e2 := validEvent()
+	e2.SessionID = "sess-tokens-2"
 	e2.ImpactEstimatedToken = 300
 	_ = TrackSkillEvent(e2)
 
@@ -199,11 +205,14 @@ func TestTokensSavedAccumulates(t *testing.T) {
 // -----------------------------------------------------------------------
 
 func TestWasteGaugeReflectsLatest(t *testing.T) {
+	_ = newTestRegistry() // reset rate limit state
 	e1 := validEvent()
+	e1.SessionID = "sess-waste-1"
 	e1.EstimatedWaste = 999.0
 	_ = TrackSkillEvent(e1)
 
 	e2 := validEvent()
+	e2.SessionID = "sess-waste-2"
 	e2.EstimatedWaste = 42.0
 	_ = TrackSkillEvent(e2)
 
@@ -222,9 +231,10 @@ func TestWasteGaugeReflectsLatest(t *testing.T) {
 func TestModeLabels(t *testing.T) {
 	reg := newTestRegistry()
 
-	for _, mode := range []string{"auto", "suggest", "off"} {
+	for i, mode := range []string{"auto", "suggest", "off"} {
 		e := validEvent()
 		e.Mode = mode
+		e.SessionID = fmt.Sprintf("sess-mode-%d", i)
 		if err := TrackSkillEvent(e); err != nil {
 			t.Fatalf("unexpected error for mode %q: %v", mode, err)
 		}
@@ -297,6 +307,8 @@ func counterValue(families []*dto.MetricFamily, name, modeLabel string) float64 
 // asserts the "without_activation" counter is incremented.
 func TestSessionWithoutSkillIsDetected(t *testing.T) {
 	reg := newTestRegistry()
+	DisableRateLimit() // session tests send many events on the same session_id
+	defer ResetRateLimit()
 	tracker := NewSessionTracker()
 
 	for i := 0; i < 21; i++ {
@@ -331,6 +343,9 @@ func TestSessionWithoutSkillIsDetected(t *testing.T) {
 
 // TestEventHashIntegrity — verifies sha256 hash chain across events.
 func TestEventHashIntegrity(t *testing.T) {
+	ResetRateLimit()
+	DisableRateLimit() // session tests send many events on the same session_id
+	defer ResetRateLimit()
 	tracker := NewSessionTracker()
 
 	ev1 := validEvent()
@@ -369,6 +384,9 @@ func TestEventHashIntegrity(t *testing.T) {
 
 // TestSessionSummaryAccumulates — verifies tokens, waste avg, and event count.
 func TestSessionSummaryAccumulates(t *testing.T) {
+	ResetRateLimit()
+	DisableRateLimit() // session tests send many events on the same session_id
+	defer ResetRateLimit()
 	tracker := NewSessionTracker()
 
 	tokens := []int64{100, 200, 300}

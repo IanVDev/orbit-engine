@@ -21,6 +21,7 @@ import (
 // the v1.0 does not exist. It registers all metrics, fires a valid event,
 // and verifies every contracted metric is present with the correct type.
 func TestV1ContractComplete(t *testing.T) {
+	ResetRateLimit() // clear rate limit state for rapid test events
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		skillActivationsTotal,
@@ -37,6 +38,8 @@ func TestV1ContractComplete(t *testing.T) {
 		skillActivationLatency,
 		heartbeatTotal,
 		realUsageTotal,
+		skillActivationByReason,
+		lastRealUsageTimestamp,
 	)
 
 	// Simulate one heartbeat tick so the counter is non-zero in gathered output.
@@ -72,9 +75,21 @@ func TestV1ContractComplete(t *testing.T) {
 	// Fire a second event with different mode to ensure label coverage
 	ev2 := ev
 	ev2.Mode = "suggest"
+	ev2.SessionID = sessionID + "-suggest" // different session to avoid rate limit
 	ev2.Timestamp = FlexTime{Time: time.Now().Add(time.Second).UTC()}
 	if _, err := st.RecordEvent(ev2); err != nil {
 		t.Fatalf("RecordEvent(suggest) failed: %v", err)
+	}
+
+	// Fire a third event with SkillRouter metadata to populate new metrics
+	ev3 := ev
+	ev3.SessionID = sessionID + "-router"
+	ev3.Trigger = "real_usage_client"
+	ev3.ActivationReason = "explicit_activation_command"
+	ev3.ActivationPhase = "analysis"
+	ev3.Timestamp = FlexTime{Time: time.Now().Add(2 * time.Second).UTC()}
+	if _, err := st.RecordEvent(ev3); err != nil {
+		t.Fatalf("RecordEvent(router metadata) failed: %v", err)
 	}
 
 	// Gather all metrics
@@ -116,6 +131,9 @@ func TestV1ContractComplete(t *testing.T) {
 		{"orbit_skill_activation_latency_seconds", dto.MetricType_HISTOGRAM, nil},
 		{"orbit_heartbeat_total", dto.MetricType_COUNTER, nil},
 		{"orbit_real_usage_total", dto.MetricType_COUNTER, nil},
+		// SkillRouter integration metrics
+		{"orbit_skill_activation_total", dto.MetricType_COUNTER, &positive},
+		{"orbit_last_real_usage_timestamp", dto.MetricType_GAUGE, &positive},
 	}
 
 	for _, c := range contract {
@@ -286,6 +304,87 @@ func TestV1ContractComplete(t *testing.T) {
 		if err := ValidatePromQLStrict("orbit:activation_latency_p50:prod"); err != nil {
 			t.Errorf("CONTRACT VIOLATION: activation latency p50 recording rule rejected: %v", err)
 		}
+	})
+
+	// ── CONTRACT: skill_activation_total has reason+phase labels ─────
+
+	t.Run("skill_activation_total_labels", func(t *testing.T) {
+		f, ok := familyMap["orbit_skill_activation_total"]
+		if !ok {
+			t.Fatal("CONTRACT VIOLATION: orbit_skill_activation_total not found")
+		}
+		found := false
+		for _, m := range f.GetMetric() {
+			labels := make(map[string]string)
+			for _, lp := range m.GetLabel() {
+				labels[lp.GetName()] = lp.GetValue()
+			}
+			if labels["reason"] == "explicit_activation_command" && labels["phase"] == "analysis" {
+				found = true
+				v := m.GetCounter().GetValue()
+				if v < 1 {
+					t.Errorf("orbit_skill_activation_total{reason=explicit_activation_command,phase=analysis} = %v, want >= 1", v)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("CONTRACT VIOLATION: orbit_skill_activation_total{reason=explicit_activation_command,phase=analysis} not found")
+		}
+	})
+
+	// ── CONTRACT: last_real_usage_timestamp updated by real_usage_client ─
+
+	t.Run("last_real_usage_timestamp_set", func(t *testing.T) {
+		f, ok := familyMap["orbit_last_real_usage_timestamp"]
+		if !ok {
+			t.Fatal("CONTRACT VIOLATION: orbit_last_real_usage_timestamp not found")
+		}
+		v := extractFirstValue(f)
+		if v <= 0 {
+			t.Fatal("CONTRACT VIOLATION: orbit_last_real_usage_timestamp is 0 after real_usage_client event")
+		}
+		t.Logf("orbit_last_real_usage_timestamp = %.0f ✓", v)
+	})
+
+	// ── CONTRACT: governance allows new metrics ──────────────────────
+
+	t.Run("governance_allows_new_metrics", func(t *testing.T) {
+		for _, q := range []string{
+			"orbit_skill_activation_total",
+			"orbit_last_real_usage_timestamp",
+		} {
+			if err := ValidatePromQLStrict(q); err != nil {
+				t.Errorf("CONTRACT VIOLATION: governance rejected %q: %v", q, err)
+			}
+		}
+	})
+
+	// ── CONTRACT: rate limit blocks rapid events from same session ───
+
+	t.Run("rate_limit_blocks_rapid_events", func(t *testing.T) {
+		rlSession := "rate-limit-test-" + time.Now().Format("150405.000")
+		rlEvent := SkillEvent{
+			EventType:            "activation",
+			Timestamp:            NowUTC(),
+			SessionID:            rlSession,
+			Mode:                 "auto",
+			Trigger:              "real_usage_client",
+			EstimatedWaste:       50.0,
+			ActionsSuggested:     1,
+			ActionsApplied:       1,
+			ImpactEstimatedToken: 100,
+		}
+		// First event should succeed
+		if err := TrackSkillEvent(rlEvent); err != nil {
+			t.Fatalf("first event should succeed: %v", err)
+		}
+		// Immediate second event from same session should be rate limited
+		rlEvent.Timestamp = NowUTC()
+		err := TrackSkillEvent(rlEvent)
+		if err == nil {
+			t.Fatal("CONTRACT VIOLATION: rapid second event was NOT rate limited")
+		}
+		t.Logf("rate limit correctly blocked rapid event: %v", err)
 	})
 }
 

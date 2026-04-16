@@ -86,6 +86,9 @@ check_instant "sessions_w_activation" "orbit:sessions_with_activation:prod"
 check_instant "sessions_no_activation" "orbit:sessions_without_activation:prod"
 check_instant "tracking_failures"     "orbit:tracking_failures_total:prod"
 check_instant "seed_contamination"    "orbit:seed_contamination"
+check_instant "skill_activation_by_reason" "orbit:skill_activation_by_reason:prod"
+check_instant "skill_activation_rate" "orbit:skill_activation_rate_5m:prod"
+check_instant "real_usage_staleness"  "orbit:real_usage_staleness_seconds:prod"
 
 # ── Queries Range ────────────────────────────────────────────────────────
 
