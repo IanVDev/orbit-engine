@@ -109,6 +109,22 @@ groups:
       - record: orbit:real_usage_staleness_seconds:prod
         expr: time() - orbit_last_real_usage_timestamp{env="prod"}
 
+      # ── activation rate (prod) — % of sessions with activation ─────
+      - record: orbit:activation_rate
+        expr: |
+          100 * orbit_skill_sessions_with_activation_total{env="prod"}
+            / (orbit_skill_sessions_total{env="prod"} > 0)
+
+      # ── tokens per session (prod) ─────────────────────────────────
+      - record: orbit:tokens_per_session
+        expr: |
+          orbit_skill_tokens_saved_total{env="prod"}
+            / (orbit_skill_sessions_total{env="prod"} > 0)
+
+      # ── rejected total (prod) — governance wrapper for raw metric ──
+      - record: orbit:rejected_total:prod
+        expr: orbit_tracking_rejected_total{env="prod"}
+
   # ── Alerting rules: operational safety ─────────────────────────────
   - name: orbit_alerts
     interval: 15s

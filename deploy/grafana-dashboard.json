@@ -58,7 +58,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:heartbeat_rate:prod",
+        "expr": "max(up{job=\"orbit-engine-tracking\"})",
         "legendFormat": "", "refId": "A"
       }],
       "title": "💓 Heartbeat",
@@ -124,7 +124,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit_real_usage_alive",
+        "expr": "orbit_real_usage_alive or vector(0)",
         "legendFormat": "", "refId": "A"
       }],
       "title": "📡 Real Usage",
@@ -155,7 +155,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:event_staleness_seconds:prod",
+        "expr": "orbit:event_staleness_seconds:prod or vector(0)",
         "legendFormat": "staleness", "refId": "A"
       }],
       "title": "⏱️ Último Evento",
@@ -194,7 +194,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:tokens_saved_total:prod",
+        "expr": "orbit:tokens_saved_total:prod or vector(0)",
         "legendFormat": "tokens saved", "refId": "A"
       }],
       "title": "🪙 Tokens Economizados (total)",
@@ -225,7 +225,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "100 * orbit:sessions_with_activation:prod / (orbit:sessions_total:prod > 0)",
+        "expr": "orbit:activation_rate or vector(0)",
         "legendFormat": "activation rate", "refId": "A"
       }],
       "title": "🎯 Activation Rate",
@@ -256,7 +256,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:tokens_saved_total:prod / (orbit:sessions_total:prod > 0)",
+        "expr": "orbit:tokens_per_session or vector(0)",
         "legendFormat": "tokens/session", "refId": "A"
       }],
       "title": "📊 Tokens Salvos / Sessão",
@@ -300,7 +300,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:activations_total:prod",
+        "expr": "orbit:activations_total:prod or vector(0)",
         "legendFormat": "activations {{mode}}",
         "refId": "A"
       }],
@@ -343,17 +343,17 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_total:prod",
+          "expr": "orbit:sessions_total:prod or vector(0)",
           "legendFormat": "total", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_with_activation:prod",
+          "expr": "orbit:sessions_with_activation:prod or vector(0)",
           "legendFormat": "com ativação", "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:sessions_without_activation:prod",
+          "expr": "orbit:sessions_without_activation:prod or vector(0)",
           "legendFormat": "sem ativação", "refId": "C"
         }
       ],
@@ -390,7 +390,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "rate(orbit:tokens_saved_total:prod[5m])",
+        "expr": "rate(orbit:tokens_saved_total:prod[5m]) or vector(0)",
         "legendFormat": "tokens saved/s", "refId": "A"
       }],
       "title": "🪙 Tokens Economizados — Taxa (5m)",
@@ -437,7 +437,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:tracking_failures_total:prod",
+        "expr": "orbit:tracking_failures_total:prod or vector(0)",
         "legendFormat": "failures", "refId": "A"
       }],
       "title": "💀 Tracking Failures",
@@ -473,7 +473,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "rate(orbit_tracking_rejected_total[5m])",
+        "expr": "rate(orbit:rejected_total:prod[5m]) or vector(0)",
         "legendFormat": "{{reason}}",
         "refId": "A"
       }],
@@ -507,7 +507,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "orbit:seed_contamination",
+        "expr": "orbit:seed_contamination or vector(0)",
         "legendFormat": "", "refId": "A"
       }],
       "title": "🧬 Seed Contamination",
@@ -537,7 +537,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "sum(rate(orbit_tracking_rejected_total[5m]))",
+        "expr": "sum(rate(orbit:rejected_total:prod[5m])) or vector(0)",
         "legendFormat": "rejections/s", "refId": "A"
       }],
       "title": "🛡️ Total Rejections/s",
@@ -569,12 +569,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:activation_latency_p50:prod",
+          "expr": "orbit:activation_latency_p50:prod or vector(0)",
           "legendFormat": "p50", "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "orbit:activation_latency_p95:prod",
+          "expr": "orbit:activation_latency_p95:prod or vector(0)",
           "legendFormat": "p95", "refId": "B"
         }
       ],
@@ -605,7 +605,7 @@
       },
       "targets": [{
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "expr": "rate(orbit_gateway_errors_total[5m])",
+        "expr": "rate(orbit_gateway_errors_total[5m]) or vector(0)",
         "legendFormat": "gateway errors/s", "refId": "A"
       }],
       "title": "🌐 Gateway Errors/s",
