@@ -94,6 +94,17 @@ tag-v1:
 	git tag -a v1.0.0 -m "orbit-engine v1.0.0 — validated release"
 	@echo "✅ Tagged v1.0.0. Push with: git push origin v1.0.0"
 
+# ── orbit-check (production readiness) ──────────────────────────────
+
+# Verifica saúde do sistema ao vivo: health, métricas críticas, integridade SHA.
+# Em produção: ENV=production ORBIT_GATEWAY_SHA256=<sha> make orbit-check
+orbit-check:
+	@bash scripts/orbit-check.sh
+
+# Executa a suite de testes do orbit-check (servidores mock, sem dependências externas)
+test-orbit-check:
+	@bash tests/test_orbit_check.sh
+
 # ── Cleanup ──────────────────────────────────────────────────────────
 
 clean:
