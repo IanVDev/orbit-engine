@@ -537,8 +537,10 @@ func TrackSkillEvent(event SkillEvent) error {
 		return err
 	}
 
-	// 1b. Token bucket rate limit per session_id — reject bursts.
-	if err := CheckTokenBucket(event.SessionID); err != nil {
+	// 1b. Token bucket rate limit per session — reject bursts.
+	// When called from TrackHandler, the bucket is already checked per client identity.
+	// This is a secondary check using session_id as fallback key.
+	if err := CheckTokenBucket("session:" + event.SessionID); err != nil {
 		skillTrackingFailuresTotal.Inc()
 		trackingBucketRejected.Inc()
 		log.Printf("[WARN] rate limited session %s: %v", event.SessionID, err)
@@ -597,7 +599,7 @@ func TrackSkillEvent(event SkillEvent) error {
 // checkRateLimit is a compatibility shim — now delegates to CheckTokenBucket.
 // Kept only for documentation; callers use CheckTokenBucket directly.
 func checkRateLimit(sessionID string) error {
-	return CheckTokenBucket(sessionID)
+	return CheckTokenBucket("session:" + sessionID)
 }
 
 // ResetRateLimit clears all rate limit state (token buckets + dedup).

@@ -1,12 +1,14 @@
 // security.go — Sovereign security layer for orbit-engine /track endpoint.
 //
 // Implements:
-//  1. Deterministic event ID (SHA-256 of raw payload)
+//  1. Deterministic event ID (SHA-256 of canonical JSON)
 //  2. Event deduplication (5-min sliding window)
 //  3. HMAC-SHA256 authentication via X-Orbit-Signature header
-//  4. Token bucket rate limiting per session_id
+//  4. Token bucket rate limiting per client identity
 //  5. Automatic cleanup of expired state (TTL 1h)
 //  6. orbit_real_usage_alive gauge (1 or 0)
+//  7. Unified rejection metric orbit_tracking_rejected_total{reason}
+//  8. HMAC mandatory in production (ORBIT_ENV=production)
 //
 // Design: fail-closed everywhere. Unknown state → reject.
 // No external dependencies beyond crypto/hmac (stdlib).
@@ -16,9 +18,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -37,12 +41,23 @@ var hmacSecret []byte
 // Fail-closed: if set but request has no signature → reject.
 var hmacRequired bool
 
+// isProduction is true when ORBIT_ENV is "production".
+var isProduction bool
+
 func init() {
+	env := os.Getenv("ORBIT_ENV")
+	isProduction = env == "production"
+
 	if s := os.Getenv("ORBIT_HMAC_SECRET"); s != "" {
 		hmacSecret = []byte(s)
 		hmacRequired = true
 		log.Printf("[SECURITY] HMAC authentication ENABLED (key length=%d)", len(hmacSecret))
 	} else {
+		if isProduction {
+			// Fail-closed: HMAC is mandatory in production.
+			// Panic on startup prevents running an unprotected prod instance.
+			panic("orbit-engine: ORBIT_HMAC_SECRET is required when ORBIT_ENV=production (fail-closed)")
+		}
 		log.Printf("[SECURITY] HMAC authentication DISABLED (set ORBIT_HMAC_SECRET to enable)")
 	}
 }
@@ -53,14 +68,93 @@ func SetHMACSecret(secret string) {
 	hmacRequired = secret != ""
 }
 
+// SetProductionMode overrides isProduction at runtime. For testing ONLY.
+func SetProductionMode(prod bool) {
+	isProduction = prod
+}
+
+// IsProductionMode returns the current production mode state.
+func IsProductionMode() bool {
+	return isProduction
+}
+
 // ---------------------------------------------------------------------------
-// 1. Deterministic Event ID
+// 1. Deterministic Event ID (canonical JSON → SHA-256)
 // ---------------------------------------------------------------------------
 
-// ComputeEventID returns SHA-256 hex of the raw JSON payload.
-// Deterministic: same payload → same ID. Used for dedup.
+// CanonicalizeJSON returns a deterministic JSON representation of the payload.
+// Keys are sorted recursively, whitespace is normalized. This ensures that
+// {"a":1,"b":2} and {"b":2,"a":1} produce the same canonical form.
+// Returns the original payload unchanged if it is not valid JSON (fail-safe).
+func CanonicalizeJSON(payload []byte) []byte {
+	var raw interface{}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		// Not valid JSON — return as-is (will fail at decode step later).
+		return payload
+	}
+	canonical, err := marshalCanonical(raw)
+	if err != nil {
+		return payload
+	}
+	return canonical
+}
+
+// marshalCanonical recursively marshals a value with sorted keys.
+func marshalCanonical(v interface{}) ([]byte, error) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		// Sort keys
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		// Build canonical object
+		buf := []byte("{")
+		for i, k := range keys {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			keyBytes, _ := json.Marshal(k)
+			buf = append(buf, keyBytes...)
+			buf = append(buf, ':')
+			valBytes, err := marshalCanonical(val[k])
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, valBytes...)
+		}
+		buf = append(buf, '}')
+		return buf, nil
+
+	case []interface{}:
+		buf := []byte("[")
+		for i, item := range val {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			itemBytes, err := marshalCanonical(item)
+			if err != nil {
+				return nil, err
+			}
+			buf = append(buf, itemBytes...)
+		}
+		buf = append(buf, ']')
+		return buf, nil
+
+	default:
+		// Primitives: string, number, bool, null
+		return json.Marshal(val)
+	}
+}
+
+// ComputeEventID returns SHA-256 hex of the canonical JSON payload.
+// Deterministic: same logical payload → same ID regardless of key order.
+// Used for dedup.
 func ComputeEventID(payload []byte) string {
-	h := sha256.Sum256(payload)
+	canonical := CanonicalizeJSON(payload)
+	h := sha256.Sum256(canonical)
 	return hex.EncodeToString(h[:])
 }
 
@@ -180,9 +274,25 @@ var (
 	bucketLastAccess = make(map[string]time.Time) // for TTL cleanup
 )
 
-// CheckTokenBucket enforces token-bucket rate limiting per session_id.
+// ClientIdentity extracts a rate-limit key from the HTTP request.
+// Priority: X-Orbit-Client-Id header > IP + User-Agent hash > session_id fallback.
+// This prevents a single attacker from consuming the global bucket.
+func ClientIdentity(clientID, remoteAddr, userAgent, sessionID string) string {
+	if clientID != "" {
+		return "client:" + clientID
+	}
+	if remoteAddr != "" {
+		// Use IP + UA hash as fallback
+		h := sha256.Sum256([]byte(remoteAddr + "|" + userAgent))
+		return "ip:" + hex.EncodeToString(h[:8])
+	}
+	// Last resort: session_id
+	return "session:" + sessionID
+}
+
+// CheckTokenBucket enforces token-bucket rate limiting per key.
 // Fail-closed: returns error if no tokens available.
-func CheckTokenBucket(sessionID string) error {
+func CheckTokenBucket(key string) error {
 	bucketMu.Lock()
 	defer bucketMu.Unlock()
 
@@ -191,7 +301,7 @@ func CheckTokenBucket(sessionID string) error {
 	}
 
 	now := bucketTimeNow()
-	tb, ok := sessionBuckets[sessionID]
+	tb, ok := sessionBuckets[key]
 	if !ok {
 		tb = &tokenBucket{
 			tokens:     bucketCapacity, // start full
@@ -199,13 +309,13 @@ func CheckTokenBucket(sessionID string) error {
 			capacity:   bucketCapacity,
 			refillRate: bucketRefillRate,
 		}
-		sessionBuckets[sessionID] = tb
+		sessionBuckets[key] = tb
 	}
-	bucketLastAccess[sessionID] = now
+	bucketLastAccess[key] = now
 
 	if !tb.allow(now) {
-		return fmt.Errorf("tracking: token bucket exhausted for session %s (capacity=%.0f, refill=%.1f/s)",
-			sessionID, bucketCapacity, bucketRefillRate)
+		return fmt.Errorf("tracking: token bucket exhausted for %s (capacity=%.0f, refill=%.1f/s)",
+			key, bucketCapacity, bucketRefillRate)
 	}
 	return nil
 }
@@ -323,7 +433,33 @@ var (
 			Help: "Total events rejected by token bucket rate limiting.",
 		},
 	)
+
+	// orbit_tracking_rejected_total: unified rejection metric.
+	// Labels: reason=hmac|dedup|rate_limit|invalid
+	// Provides a single query surface for attack detection:
+	//   rate(orbit_tracking_rejected_total[5m]) > threshold
+	trackingRejectedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_tracking_rejected_total",
+			Help: "Total events rejected by the security layer. Label 'reason' identifies the cause.",
+		},
+		[]string{"reason"},
+	)
 )
+
+// RejectReason constants for the unified rejection metric.
+const (
+	RejectReasonHMAC      = "hmac"
+	RejectReasonDedup     = "dedup"
+	RejectReasonRateLimit = "rate_limit"
+	RejectReasonInvalid   = "invalid"
+)
+
+// IncrementRejected increments both the legacy per-type counter and the
+// unified orbit_tracking_rejected_total{reason} metric.
+func IncrementRejected(reason string) {
+	trackingRejectedTotal.WithLabelValues(reason).Inc()
+}
 
 // RegisterSecurityMetrics registers security-related Prometheus collectors.
 // Call once at startup alongside RegisterMetrics.
@@ -334,6 +470,7 @@ func RegisterSecurityMetrics(reg prometheus.Registerer) {
 		trackingCleanupTotal,
 		realUsageAlive,
 		trackingBucketRejected,
+		trackingRejectedTotal,
 	)
 }
 

@@ -127,7 +127,7 @@ echo -e "  scrape_wait:     ${SCRAPE_WAIT}s"
 # ETAPA 1 — /metrics endpoint
 # ════════════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 1/5 — Validação do endpoint /metrics"
+_header "ETAPA 1/6 — Validação do endpoint /metrics"
 
 _step "Checando acessibilidade: GET ${TRACKING_URL}/metrics"
 METRICS_RAW=$(curl -sf --max-time 5 "${TRACKING_URL}/metrics" 2>/dev/null) || true
@@ -175,7 +175,7 @@ fi
 # ETAPA 2 — Prometheus scrape targets
 # ════════════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 2/5 — Validação do scrape Prometheus"
+_header "ETAPA 2/6 — Validação do scrape Prometheus"
 
 _step "Verificando saúde do Prometheus: GET ${PROM_URL}/-/healthy"
 if curl -sf --max-time 5 "${PROM_URL}/-/healthy" >/dev/null 2>&1; then
@@ -242,7 +242,7 @@ fi
 # ETAPA 3 — Geração de carga (POST /track)
 # ════════════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 3/5 — Geração de carga via POST /track"
+_header "ETAPA 3/6 — Geração de carga via POST /track"
 
 SESSION_ID="obs-check-$(date +%s)"
 LOAD_OK=0
@@ -286,7 +286,7 @@ fi
 # ETAPA 4 — Validação de ingestão (métricas incrementaram?)
 # ════════════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 4/5 — Validação de ingestão"
+_header "ETAPA 4/6 — Validação de ingestão"
 
 if [[ "$LOAD_OK" -eq 0 ]]; then
     _warn "Carga não gerada — pulando validação de ingestão"
@@ -358,7 +358,7 @@ fi
 # ETAPA 5 — Alertas e recording rules
 # ════════════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 5/5 — Alertas e recording rules"
+_header "ETAPA 5/6 — Alertas e recording rules"
 
 _step "Contando alertas em orbit_rules.yml"
 RULES_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/orbit_rules.yml"
@@ -423,6 +423,103 @@ except:
             [[ -z "$alert" ]] && continue
             _fail "Alerta FIRING: ${alert}"
         done <<< "$FIRING"
+    fi
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# ETAPA 6/6 — Validação de segurança (HMAC, replay, burst)
+# ════════════════════════════════════════════════════════════════════════════
+
+_header "ETAPA 6/6 — Validação de segurança do /track"
+
+if [[ "$METRICS_ACCESSIBLE" -eq 0 ]]; then
+    _warn "tracking-server inacessível — pulando validação de segurança"
+else
+    # ── 6a. Replay detection (enviar mesmo payload 2x) ──
+    _step "Testando proteção anti-replay (dedup)"
+    REPLAY_TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
+    REPLAY_PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"sec-replay-%s","mode":"auto","trigger":"security_check","estimated_waste":50,"actions_suggested":1,"actions_applied":1,"impact_estimated_tokens":100}' \
+        "$REPLAY_TS" "$(date +%s)")
+
+    REPLAY_RESP1=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${TRACKING_URL}/track" \
+        -H "Content-Type: application/json" -d "$REPLAY_PAYLOAD" 2>/dev/null) || REPLAY_RESP1="000"
+
+    REPLAY_RESP2=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${TRACKING_URL}/track" \
+        -H "Content-Type: application/json" -d "$REPLAY_PAYLOAD" 2>/dev/null) || REPLAY_RESP2="000"
+
+    if [[ "$REPLAY_RESP1" == "200" && "$REPLAY_RESP2" == "409" ]]; then
+        _pass "Anti-replay: primeiro aceito (200), replay bloqueado (409)"
+    elif [[ "$REPLAY_RESP1" == "200" && "$REPLAY_RESP2" == "200" ]]; then
+        _fail "Anti-replay: replay NÃO foi bloqueado (ambos 200)"
+    else
+        _warn "Anti-replay: respostas inesperadas (1st=${REPLAY_RESP1}, 2nd=${REPLAY_RESP2})"
+    fi
+
+    # ── 6b. HMAC inválido (se HMAC estiver habilitado) ──
+    _step "Testando rejeição de HMAC inválido"
+    HMAC_TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
+    HMAC_PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"sec-hmac-%s","mode":"auto","trigger":"security_check","estimated_waste":50,"actions_suggested":1,"actions_applied":1,"impact_estimated_tokens":100}' \
+        "$HMAC_TS" "$(date +%s)")
+
+    HMAC_RESP=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${TRACKING_URL}/track" \
+        -H "Content-Type: application/json" \
+        -H "X-Orbit-Signature: deadbeefdeadbeefdeadbeefdeadbeef" \
+        -d "$HMAC_PAYLOAD" 2>/dev/null) || HMAC_RESP="000"
+
+    # Check if HMAC is enabled (check /metrics for hmac_failures)
+    HMAC_ENABLED=$(echo "$METRICS_RAW" | grep -c "orbit_tracking_hmac_failures_total" || true)
+
+    if [[ "$HMAC_ENABLED" -gt 0 ]]; then
+        if [[ "$HMAC_RESP" == "401" ]]; then
+            _pass "HMAC inválido rejeitado (401) — autenticação ativa"
+        elif [[ "$HMAC_RESP" == "200" ]]; then
+            _warn "HMAC inválido aceito (200) — HMAC pode não estar habilitado"
+        else
+            _info "HMAC: resposta inesperada ${HMAC_RESP}"
+        fi
+    else
+        _warn "HMAC não está habilitado — defina ORBIT_HMAC_SECRET para habilitar"
+    fi
+
+    # ── 6c. Burst (enviar muitos requests rápidos) ──
+    _step "Testando proteção de rate limit (token bucket burst)"
+    BURST_OK=0
+    BURST_LIMITED=0
+    BURST_CLIENT="sec-burst-$(date +%s)"
+    for i in $(seq 1 10); do
+        B_TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
+        B_PAYLOAD=$(printf '{"event_type":"activation","timestamp":"%s","session_id":"burst-sess-%d","mode":"auto","trigger":"security_check","estimated_waste":50,"actions_suggested":1,"actions_applied":1,"impact_estimated_tokens":100}' \
+            "$B_TS" "$i")
+        B_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" --max-time 5 -X POST "${TRACKING_URL}/track" \
+            -H "Content-Type: application/json" \
+            -H "X-Orbit-Client-Id: ${BURST_CLIENT}" \
+            -d "$B_PAYLOAD" 2>/dev/null) || B_STATUS="000"
+        if [[ "$B_STATUS" == "200" ]]; then
+            ((BURST_OK++)) || true
+        elif [[ "$B_STATUS" == "429" ]]; then
+            ((BURST_LIMITED++)) || true
+        fi
+    done
+
+    if [[ "$BURST_LIMITED" -gt 0 ]]; then
+        _pass "Rate limit ativo: ${BURST_OK} aceitos, ${BURST_LIMITED} limitados (429)"
+    elif [[ "$BURST_OK" -eq 10 ]]; then
+        _warn "Rate limit pode não ter disparado (todos 10 aceitos) — bucket pode estar grande"
+    else
+        _warn "Burst: resultados mistos (ok=${BURST_OK}, limited=${BURST_LIMITED})"
+    fi
+
+    # ── 6d. Verificar métrica unificada de rejeição ──
+    _step "Verificando métrica orbit_tracking_rejected_total"
+    METRICS_SEC=$(curl -sf --max-time 5 "${TRACKING_URL}/metrics" 2>/dev/null) || METRICS_SEC=""
+    if echo "$METRICS_SEC" | grep -q "orbit_tracking_rejected_total"; then
+        _pass "orbit_tracking_rejected_total presente em /metrics"
+        # Mostrar valores por reason
+        echo "$METRICS_SEC" | grep "orbit_tracking_rejected_total{" | while IFS= read -r line; do
+            _info "  $line"
+        done
+    else
+        _warn "orbit_tracking_rejected_total ausente — pode não ter havido rejeições"
     fi
 fi
 

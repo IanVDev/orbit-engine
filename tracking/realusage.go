@@ -120,11 +120,12 @@ func (c *RealUsageClient) TrackPromptUsage(ctx context.Context, input, output st
 //
 // Security pipeline (fail-closed):
 //  1. Method check (POST only)
-//  2. Read raw body → compute deterministic event_id
+//  2. Read raw body → canonicalize → compute deterministic event_id
 //  3. Validate HMAC signature (X-Orbit-Signature) if configured
-//  4. Dedup check (5-min window on event_id)
-//  5. Decode JSON → validate → TrackSkillEvent
-//  6. Set orbit_real_usage_alive = 1 on success
+//  4. Token bucket rate limit per client identity
+//  5. Dedup check (5-min window on event_id)
+//  6. Decode JSON → validate → TrackSkillEvent
+//  7. Set orbit_real_usage_alive = 1 on success
 func TrackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -139,13 +140,14 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 2. Compute deterministic event_id
+		// 2. Compute deterministic event_id from canonical JSON
 		eventID := ComputeEventID(rawBody)
 
 		// 3. HMAC authentication (fail-closed when configured)
 		signature := r.Header.Get("X-Orbit-Signature")
 		if err := ValidateHMAC(rawBody, signature); err != nil {
 			trackingHMACFailures.Inc()
+			IncrementRejected(RejectReasonHMAC)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -155,9 +157,33 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 4. Dedup check (reject replayed events)
+		// 4. Token bucket rate limit per client identity
+		clientID := r.Header.Get("X-Orbit-Client-Id")
+		remoteAddr := r.RemoteAddr
+		userAgent := r.Header.Get("User-Agent")
+		// Pre-parse session_id for bucket key fallback
+		var peek struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.Unmarshal(rawBody, &peek)
+		bucketKey := ClientIdentity(clientID, remoteAddr, userAgent, peek.SessionID)
+
+		if err := CheckTokenBucket(bucketKey); err != nil {
+			trackingBucketRejected.Inc()
+			IncrementRejected(RejectReasonRateLimit)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    err.Error(),
+				"event_id": eventID,
+			})
+			return
+		}
+
+		// 5. Dedup check (reject replayed events)
 		if err := CheckDedup(eventID); err != nil {
 			trackingDedupBlocked.Inc()
+			IncrementRejected(RejectReasonDedup)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -167,9 +193,10 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 5. Decode JSON and process
+		// 6. Decode JSON and process
 		var event SkillEvent
 		if err := json.Unmarshal(rawBody, &event); err != nil {
+			IncrementRejected(RejectReasonInvalid)
 			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 			return
 		}
@@ -177,13 +204,14 @@ func TrackHandler() http.HandlerFunc {
 			event.Timestamp = NowUTC()
 		}
 		if err := TrackSkillEvent(event); err != nil {
+			IncrementRejected(RejectReasonInvalid)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
 
-		// 6. Success — mark alive and respond
+		// 7. Success — mark alive and respond
 		SetRealUsageAlive()
 
 		w.Header().Set("Content-Type", "application/json")

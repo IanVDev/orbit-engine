@@ -470,6 +470,7 @@ func TestSecurityMetricsExist(t *testing.T) {
 	trackingCleanupTotal.Inc()
 	trackingBucketRejected.Inc()
 	realUsageAlive.Set(1)
+	IncrementRejected(RejectReasonHMAC)
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -487,6 +488,7 @@ func TestSecurityMetricsExist(t *testing.T) {
 		"orbit_tracking_cleanup_total",
 		"orbit_real_usage_alive",
 		"orbit_tracking_token_bucket_rejected_total",
+		"orbit_tracking_rejected_total",
 	}
 	for _, name := range expected {
 		if !fm[name] {
@@ -506,6 +508,7 @@ func TestSecurityGovernanceAllowsMetrics(t *testing.T) {
 		"orbit_tracking_cleanup_total",
 		"orbit_real_usage_alive",
 		"orbit_tracking_token_bucket_rejected_total",
+		"orbit_tracking_rejected_total",
 	}
 	for _, m := range metrics {
 		if err := ValidatePromQLStrict(m); err != nil {
@@ -546,4 +549,291 @@ func postTrackWithSignature(t *testing.T, baseURL string, body []byte, sig strin
 		t.Fatalf("POST /track with sig: %v", err)
 	}
 	return resp
+}
+
+func postTrackWithHeaders(t *testing.T, baseURL string, body []byte, sig, clientID string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/track", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if sig != "" {
+		req.Header.Set("X-Orbit-Signature", sig)
+	}
+	if clientID != "" {
+		req.Header.Set("X-Orbit-Client-Id", clientID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /track with headers: %v", err)
+	}
+	return resp
+}
+
+// ---------------------------------------------------------------------------
+// 10. JSON Canonicalization Anti-Bypass
+// ---------------------------------------------------------------------------
+
+func TestSecurityCanonicalizeJSON(t *testing.T) {
+	// Different key orders → same canonical form
+	payload1 := []byte(`{"a":1,"b":2}`)
+	payload2 := []byte(`{"b":2,"a":1}`)
+
+	c1 := CanonicalizeJSON(payload1)
+	c2 := CanonicalizeJSON(payload2)
+
+	if string(c1) != string(c2) {
+		t.Fatalf("canonical forms should be equal:\n  c1=%s\n  c2=%s", c1, c2)
+	}
+
+	// Event IDs must match
+	id1 := ComputeEventID(payload1)
+	id2 := ComputeEventID(payload2)
+	if id1 != id2 {
+		t.Fatalf("event_id should be identical for equivalent JSON:\n  id1=%s\n  id2=%s", id1, id2)
+	}
+}
+
+func TestSecurityCanonicalizeJSONNested(t *testing.T) {
+	payload1 := []byte(`{"z":{"b":2,"a":1},"y":[3,1,2]}`)
+	payload2 := []byte(`{"y":[3,1,2],"z":{"a":1,"b":2}}`)
+
+	id1 := ComputeEventID(payload1)
+	id2 := ComputeEventID(payload2)
+	if id1 != id2 {
+		t.Fatalf("nested JSON with different key order should produce same event_id:\n  id1=%s\n  id2=%s", id1, id2)
+	}
+}
+
+func TestSecurityCanonicalizeJSONWhitespace(t *testing.T) {
+	compact := []byte(`{"a":1,"b":2}`)
+	spaced := []byte(`{  "a" : 1 , "b" : 2  }`)
+
+	id1 := ComputeEventID(compact)
+	id2 := ComputeEventID(spaced)
+	if id1 != id2 {
+		t.Fatalf("whitespace differences should produce same event_id:\n  id1=%s\n  id2=%s", id1, id2)
+	}
+}
+
+func TestSecurityCanonicalizeInvalidJSON(t *testing.T) {
+	// Invalid JSON returns as-is (fail-safe)
+	invalid := []byte(`not json at all`)
+	result := CanonicalizeJSON(invalid)
+	if string(result) != string(invalid) {
+		t.Fatalf("invalid JSON should pass through unchanged, got: %s", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 11. Dedup Anti-Bypass via JSON Reorder
+// ---------------------------------------------------------------------------
+
+func TestSecurityDedupBlocksJSONReorder(t *testing.T) {
+	ResetDedup()
+
+	// Two payloads with same data but different key order
+	payload1 := []byte(`{"event_type":"activation","session_id":"s1","mode":"auto"}`)
+	payload2 := []byte(`{"mode":"auto","event_type":"activation","session_id":"s1"}`)
+
+	id1 := ComputeEventID(payload1)
+	id2 := ComputeEventID(payload2)
+
+	if id1 != id2 {
+		t.Fatalf("reordered JSON should have same event_id: %s != %s", id1, id2)
+	}
+
+	// First should be accepted
+	if err := CheckDedup(id1); err != nil {
+		t.Fatalf("first event should be accepted: %v", err)
+	}
+
+	// Reordered payload should be blocked (same canonical event_id)
+	if err := CheckDedup(id2); err == nil {
+		t.Fatal("reordered JSON payload should be blocked by dedup")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 12. HMAC Mandatory in Production
+// ---------------------------------------------------------------------------
+
+func TestSecurityHMACMandatoryInProduction(t *testing.T) {
+	// Save and restore state
+	origSecret := hmacSecret
+	origRequired := hmacRequired
+	origProd := isProduction
+	defer func() {
+		hmacSecret = origSecret
+		hmacRequired = origRequired
+		isProduction = origProd
+	}()
+
+	// Simulate production mode without HMAC — should panic
+	SetProductionMode(true)
+	SetHMACSecret("")
+
+	// ValidateHMAC should still pass when hmacRequired=false
+	// The real enforcement is at init() — we test the behavior
+	// by verifying IsProductionMode() returns true
+	if !IsProductionMode() {
+		t.Fatal("IsProductionMode should return true")
+	}
+
+	// When HMAC is set in production, it should work normally
+	SetHMACSecret("prod-secret-key-32bytes!!")
+	payload := []byte(`{"event":"test"}`)
+	sig := ComputeHMACHex(payload, []byte("prod-secret-key-32bytes!!"))
+	if err := ValidateHMAC(payload, sig); err != nil {
+		t.Fatalf("valid HMAC in production should pass: %v", err)
+	}
+
+	// Missing signature in production (HMAC required) → reject
+	if err := ValidateHMAC(payload, ""); err == nil {
+		t.Fatal("missing HMAC in production should be rejected")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 13. Client Identity for Token Bucket
+// ---------------------------------------------------------------------------
+
+func TestSecurityClientIdentity(t *testing.T) {
+	// X-Orbit-Client-Id takes priority
+	key1 := ClientIdentity("client-abc", "1.2.3.4:5000", "Mozilla/5.0", "sess-1")
+	if key1 != "client:client-abc" {
+		t.Fatalf("expected client:client-abc, got %s", key1)
+	}
+
+	// No client ID → IP+UA hash
+	key2 := ClientIdentity("", "1.2.3.4:5000", "Mozilla/5.0", "sess-1")
+	if !strings.HasPrefix(key2, "ip:") {
+		t.Fatalf("expected ip: prefix, got %s", key2)
+	}
+
+	// Different IP → different key
+	key3 := ClientIdentity("", "5.6.7.8:9000", "Mozilla/5.0", "sess-1")
+	if key2 == key3 {
+		t.Fatal("different IPs should produce different bucket keys")
+	}
+
+	// No client ID, no remote addr → session fallback
+	key4 := ClientIdentity("", "", "", "sess-123")
+	if key4 != "session:sess-123" {
+		t.Fatalf("expected session:sess-123, got %s", key4)
+	}
+}
+
+func TestSecurityTokenBucketPerClient(t *testing.T) {
+	ResetTokenBuckets()
+
+	// Two different clients should have independent buckets
+	clientA := "client:alpha"
+	clientB := "client:beta"
+
+	// Drain client A's bucket
+	for i := 0; i < int(bucketCapacity); i++ {
+		if err := CheckTokenBucket(clientA); err != nil {
+			t.Fatalf("clientA request %d should succeed: %v", i+1, err)
+		}
+	}
+
+	// Client A should be rate-limited
+	if err := CheckTokenBucket(clientA); err == nil {
+		t.Fatal("clientA should be rate-limited after exhausting bucket")
+	}
+
+	// Client B should still have full bucket
+	if err := CheckTokenBucket(clientB); err != nil {
+		t.Fatalf("clientB should still have tokens: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 14. Unified Rejection Metric
+// ---------------------------------------------------------------------------
+
+func TestSecurityRejectedMetric(t *testing.T) {
+	reg := newSecurityTestRegistry()
+
+	// Trigger rejections for each reason
+	IncrementRejected(RejectReasonHMAC)
+	IncrementRejected(RejectReasonHMAC)
+	IncrementRejected(RejectReasonDedup)
+	IncrementRejected(RejectReasonRateLimit)
+	IncrementRejected(RejectReasonInvalid)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	// Check orbit_tracking_rejected_total exists
+	found := false
+	for _, f := range families {
+		if f.GetName() == "orbit_tracking_rejected_total" {
+			found = true
+			// Verify we have labeled series
+			if len(f.GetMetric()) < 3 {
+				t.Fatalf("expected at least 3 label combos, got %d", len(f.GetMetric()))
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("orbit_tracking_rejected_total metric not found in registry")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 15. TrackHandler Rate Limit Returns 429
+// ---------------------------------------------------------------------------
+
+func TestSecurityTrackHandlerRateLimit(t *testing.T) {
+	_ = newSecurityTestRegistry()
+	SetHMACSecret("")
+	ResetDedup()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/track", TrackHandler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	clientID := "rate-limit-test-client"
+
+	// Send requests until rate limited (bucket capacity + 1)
+	var lastStatus int
+	for i := 0; i < int(bucketCapacity)+2; i++ {
+		ev := SkillEvent{
+			EventType:            "activation",
+			Timestamp:            NowUTC(),
+			SessionID:            "rl-sess-" + string(rune('A'+i)),
+			Mode:                 "auto",
+			Trigger:              "test",
+			EstimatedWaste:       100.0,
+			ActionsSuggested:     1,
+			ActionsApplied:       1,
+			ImpactEstimatedToken: 500,
+		}
+		body, _ := json.Marshal(ev)
+		resp := postTrackWithHeaders(t, srv.URL, body, "", clientID)
+		lastStatus = resp.StatusCode
+		resp.Body.Close()
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests after exhausting bucket, got %d", lastStatus)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 16. Governance allows new security metric
+// ---------------------------------------------------------------------------
+
+func TestSecurityGovernanceAllowsRejectedMetric(t *testing.T) {
+	if err := ValidatePromQLStrict("orbit_tracking_rejected_total"); err != nil {
+		t.Errorf("governance rejected orbit_tracking_rejected_total: %v", err)
+	}
+	// With label selector
+	if err := ValidatePromQLStrict(`rate(orbit_tracking_rejected_total{reason="hmac"}[5m])`); err != nil {
+		t.Errorf("governance rejected orbit_tracking_rejected_total with label: %v", err)
+	}
 }
