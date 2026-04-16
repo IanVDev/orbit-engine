@@ -15,6 +15,7 @@
 // 11. Client fingerprint v2 (proxy-aware, NAT-safe, anti-spoof)
 // 12. Structured rejection logging
 // 13. Cardinality protection (no dynamic labels)
+// 14. Behavior abuse detection (repeated-payload heuristic)
 //
 // Design: fail-closed everywhere. Unknown state → reject.
 // No external dependencies beyond crypto/hmac (stdlib).
@@ -680,6 +681,118 @@ func HighCardinalityLabels() []string {
 }
 
 // ---------------------------------------------------------------------------
+// 14. Behavior Abuse Detection — repeated-payload heuristic
+// ---------------------------------------------------------------------------
+//
+// Detects abusive patterns without deep inspection:
+//   - Identical payloads (same hash prefix) within a sliding window
+//   - Low entropy: many near-identical events from the same fingerprint
+//
+// The sliding window is per-fingerprint and holds the last N event hashes.
+// If K out of N hashes share the same 16-byte prefix, the client is blocked.
+//
+// Parameters (tuned for fail-closed safety, not throughput):
+//   behaviorWindowSize = 20 events retained per fingerprint
+//   behaviorThreshold  = 5  identical hashes within window → block
+//   behaviorTTL        = 2 min inactivity → evict window
+//
+// Reason: "behavior_abuse" in orbit_tracking_rejected_total.
+
+const (
+	behaviorWindowSize = 20
+	behaviorThreshold  = 5
+	behaviorTTL        = 2 * time.Minute
+)
+
+// behaviorWindow holds the most recent event hash prefixes for one client.
+type behaviorWindow struct {
+	hashes   [behaviorWindowSize]string
+	count    int       // total events ever (mod ring for position)
+	lastSeen time.Time // for TTL eviction
+}
+
+var (
+	behaviorMu  sync.Mutex
+	behaviorMap = make(map[string]*behaviorWindow) // key = fingerprint
+)
+
+// RejectReasonBehavior is the rejection reason for behavior abuse.
+const RejectReasonBehavior = "behavior_abuse"
+
+// CheckBehaviorAbuse records the event hash prefix for the given fingerprint
+// and returns an error if the heuristic detects abusive repetition.
+// The hashPrefix should be the first 16 hex chars of the event_id (8 bytes).
+//
+// Safe for concurrent use. Fail-closed: any internal inconsistency → reject.
+func CheckBehaviorAbuse(fingerprint, eventID string) error {
+	// Use first 16 hex chars as the comparison prefix (8 bytes of SHA-256).
+	prefix := eventID
+	if len(prefix) > 16 {
+		prefix = prefix[:16]
+	}
+
+	behaviorMu.Lock()
+	defer behaviorMu.Unlock()
+
+	now := time.Now()
+	w, exists := behaviorMap[fingerprint]
+	if !exists {
+		w = &behaviorWindow{}
+		behaviorMap[fingerprint] = w
+	}
+
+	// TTL: if stale, reset the window (fresh start)
+	if exists && now.Sub(w.lastSeen) > behaviorTTL {
+		*w = behaviorWindow{}
+	}
+	w.lastSeen = now
+
+	// Insert into ring buffer
+	pos := w.count % behaviorWindowSize
+	w.hashes[pos] = prefix
+	w.count++
+
+	// Count how many entries in the window match this prefix
+	matches := 0
+	limit := behaviorWindowSize
+	if w.count < behaviorWindowSize {
+		limit = w.count
+	}
+	for i := 0; i < limit; i++ {
+		if w.hashes[i] == prefix {
+			matches++
+		}
+	}
+
+	if matches >= behaviorThreshold {
+		return fmt.Errorf("behavior abuse detected: %d/%d identical events in window", matches, limit)
+	}
+	return nil
+}
+
+// ResetBehaviorAbuse clears all behavior tracking state. For testing ONLY.
+func ResetBehaviorAbuse() {
+	behaviorMu.Lock()
+	behaviorMap = make(map[string]*behaviorWindow)
+	behaviorMu.Unlock()
+}
+
+// CleanupBehaviorState evicts stale behavior windows. Called by CleanupExpiredState.
+func CleanupBehaviorState() int {
+	now := time.Now()
+	behaviorMu.Lock()
+	defer behaviorMu.Unlock()
+	evicted := 0
+	for fp, w := range behaviorMap {
+		if now.Sub(w.lastSeen) > behaviorTTL {
+			delete(behaviorMap, fp)
+			evicted++
+		}
+	}
+	return evicted
+}
+
+// ---------------------------------------------------------------------------
 // 5. Automatic Cleanup (TTL 1h)
 // ---------------------------------------------------------------------------
 
@@ -721,6 +834,10 @@ func CleanupExpiredState() (dedupEvicted, bucketsEvicted int) {
 		}
 	}
 	criticalDedupMu.Unlock()
+
+	// Behavior abuse window cleanup
+	behaviorEvicted := CleanupBehaviorState()
+	dedupEvicted += behaviorEvicted
 
 	return dedupEvicted, bucketsEvicted
 }
@@ -799,6 +916,14 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// orbit_behavior_abuse_total: events rejected by behavior heuristic.
+	behaviorAbuseTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "orbit_behavior_abuse_total",
+			Help: "Total events rejected by behavior abuse detection (repeated-payload heuristic).",
+		},
+	)
 )
 
 // RejectReason constants for the unified rejection metric.
@@ -827,6 +952,7 @@ func RegisterSecurityMetrics(reg prometheus.Registerer) {
 		realUsageAlive,
 		trackingBucketRejected,
 		trackingRejectedTotal,
+		behaviorAbuseTotal,
 	)
 }
 

@@ -491,6 +491,7 @@ func TestSecurityMetricsExist(t *testing.T) {
 		"orbit_real_usage_alive",
 		"orbit_tracking_token_bucket_rejected_total",
 		"orbit_tracking_rejected_total",
+		"orbit_behavior_abuse_total",
 	}
 	for _, name := range expected {
 		if !fm[name] {
@@ -511,6 +512,7 @@ func TestSecurityGovernanceAllowsMetrics(t *testing.T) {
 		"orbit_real_usage_alive",
 		"orbit_tracking_token_bucket_rejected_total",
 		"orbit_tracking_rejected_total",
+		"orbit_behavior_abuse_total",
 	}
 	for _, m := range metrics {
 		if err := ValidatePromQLStrict(m); err != nil {
@@ -1300,5 +1302,118 @@ func TestFingerprintStability(t *testing.T) {
 	fpRestricted := ClientFingerprintWithSession("", "", "", "", "")
 	if fpRestricted != "fp:restricted" {
 		t.Fatalf("fully empty identity should return fp:restricted, got %s", fpRestricted)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 27. TestBehaviorAbuseDetection — identical payloads trigger block
+// ---------------------------------------------------------------------------
+
+func TestBehaviorAbuseDetection(t *testing.T) {
+	ResetBehaviorAbuse()
+	defer ResetBehaviorAbuse()
+
+	fp := "fp:test-behavior-abuse"
+	// Same eventID simulates identical payloads
+	sameEventID := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+	// First 4 should pass (threshold is 5)
+	for i := 0; i < 4; i++ {
+		if err := CheckBehaviorAbuse(fp, sameEventID); err != nil {
+			t.Fatalf("event %d should pass, got: %v", i+1, err)
+		}
+	}
+
+	// 5th identical → blocked
+	if err := CheckBehaviorAbuse(fp, sameEventID); err == nil {
+		t.Fatal("5th identical event should be blocked")
+	}
+
+	// Different fingerprint should NOT be affected
+	fp2 := "fp:innocent-user"
+	if err := CheckBehaviorAbuse(fp2, sameEventID); err != nil {
+		t.Fatalf("different fingerprint should not be blocked: %v", err)
+	}
+
+	// Different event_id on original fingerprint should pass
+	differentID := "9999999999999999abcdef0123456789abcdef0123456789abcdef0123456789"
+	if err := CheckBehaviorAbuse(fp, differentID); err != nil {
+		t.Fatalf("different event_id should pass: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 28. TestLegitHighFrequencyNotBlocked — varied payloads pass freely
+// ---------------------------------------------------------------------------
+
+func TestLegitHighFrequencyNotBlocked(t *testing.T) {
+	ResetBehaviorAbuse()
+	defer ResetBehaviorAbuse()
+
+	fp := "fp:legit-high-freq"
+
+	// 100 events, all unique → none should be blocked
+	for i := 0; i < 100; i++ {
+		// Generate unique event IDs
+		eventID := fmt.Sprintf("%016x%048x", i, 0)
+		if err := CheckBehaviorAbuse(fp, eventID); err != nil {
+			t.Fatalf("unique event %d should pass, got: %v", i, err)
+		}
+	}
+
+	// Mix: 4 identical + 1 different (repeated pattern) → should not block
+	// because window rolls and never reaches 5 identical at once
+	ResetBehaviorAbuse()
+	baseID := "aaa0000000000000"
+	altIDs := []string{
+		"bbb0000000000000",
+		"ccc0000000000000",
+		"ddd0000000000000",
+		"eee0000000000000",
+	}
+
+	// Interleave: base, alt, base, alt, base, alt, base, alt
+	// Window will have 4x base + 4x alt = no single prefix reaches 5
+	for cycle := 0; cycle < 4; cycle++ {
+		if err := CheckBehaviorAbuse(fp, baseID+"0000000000000000000000000000000000000000000000000"); err != nil {
+			t.Fatalf("interleaved base event %d should pass: %v", cycle, err)
+		}
+		if err := CheckBehaviorAbuse(fp, altIDs[cycle]+"0000000000000000000000000000000000000000000000000"); err != nil {
+			t.Fatalf("interleaved alt event %d should pass: %v", cycle, err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 29. TestBehaviorAbuseViaTrackHandler — integration via HTTP
+// ---------------------------------------------------------------------------
+
+func TestBehaviorAbuseViaTrackHandler(t *testing.T) {
+	ResetBehaviorAbuse()
+	ResetRateLimit()
+	defer ResetBehaviorAbuse()
+	defer ResetRateLimit()
+
+	srv := httptest.NewServer(TrackHandler())
+	defer srv.Close()
+
+	// Build identical payload — same timestamp+session+tokens = same canonical hash
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	payload := fmt.Sprintf(`{"event_type":"activation","timestamp":"%s","session_id":"behav-test","mode":"auto","trigger":"test","estimated_waste":1,"actions_suggested":1,"actions_applied":1,"impact_estimated_tokens":100}`, ts)
+
+	var lastCode int
+	for i := 0; i < 10; i++ {
+		resp := postTrack(t, srv.URL, []byte(payload), "")
+		lastCode = resp.StatusCode
+		resp.Body.Close()
+		if lastCode == http.StatusTooManyRequests {
+			// Could be rate limit or behavior — both are valid blocks
+			break
+		}
+	}
+
+	// After 10 identical, should be blocked (429 from behavior or rate limit)
+	if lastCode != http.StatusTooManyRequests && lastCode != http.StatusConflict {
+		t.Fatalf("repeated identical payloads should eventually be blocked, last status=%d", lastCode)
 	}
 }

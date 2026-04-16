@@ -46,6 +46,7 @@ var _allowedPrefixes = []string{
 	"orbit_real_usage_alive",                     // security: real usage liveness (1/0)
 	"orbit_tracking_token_bucket_rejected_total", // security: token bucket rejections
 	"orbit_tracking_rejected_total",              // security: unified rejection metric {reason}
+	"orbit_behavior_abuse_total",                 // security: behavior abuse detection counter
 }
 
 // ---------------------------------------------------------------------------

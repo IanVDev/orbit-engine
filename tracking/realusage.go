@@ -213,6 +213,20 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
+		// 6b. Behavior abuse detection — repeated-payload heuristic
+		if err := CheckBehaviorAbuse(fingerprint, eventID); err != nil {
+			behaviorAbuseTotal.Inc()
+			IncrementRejected(RejectReasonBehavior)
+			rejectionLog(RejectReasonBehavior, fingerprint, eventID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    err.Error(),
+				"event_id": eventID,
+			})
+			return
+		}
+
 		// 7. Replay hard lock for critical events (24h persistent dedup)
 		if IsCritical(event) {
 			if err := CheckCriticalDedup(eventID); err != nil {
