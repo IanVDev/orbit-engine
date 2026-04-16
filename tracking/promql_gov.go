@@ -26,16 +26,16 @@ const _forbiddenPrefix = "orbit_skill_"
 // _allowedPrefixes lists metric prefixes that ARE safe for production use.
 // Queries referencing only these will pass validation.
 var _allowedPrefixes = []string{
-	"orbit:",                          // recording rules (orbit:tokens_saved_total:prod, etc.)
-	"orbit_seed_mode",                 // governance gauge
-	"orbit_tracking_up",               // liveness gauge
-	"orbit_instance_id",               // instance identity
-	"orbit_last_event_timestamp",      // freshness gauge
-	"orbit_gateway_",                  // gateway self-observability (infra, not skill data)
-	"orbit_heartbeat_total",           // process liveness heartbeat counter
-	"orbit_real_usage_total",          // total valid events ingested (all real usage)
-	"orbit_skill_activation_total",    // SkillRouter decision metric {reason, phase}
-	"orbit_last_real_usage_timestamp", // freshness gauge for real_usage_client events
+	"orbit:",                                     // recording rules (orbit:tokens_saved_total:prod, etc.)
+	"orbit_seed_mode",                            // governance gauge
+	"orbit_tracking_up",                          // liveness gauge
+	"orbit_instance_id",                          // instance identity
+	"orbit_last_event_timestamp",                 // freshness gauge
+	"orbit_gateway_",                             // gateway self-observability (infra, not skill data)
+	"orbit_heartbeat_total",                      // process liveness heartbeat counter
+	"orbit_real_usage_total",                     // total valid events ingested (all real usage)
+	"orbit_skill_activation_total",               // SkillRouter decision metric {reason, phase}
+	"orbit_last_real_usage_timestamp",            // freshness gauge for real_usage_client events
 	"orbit_tracking_dedup_blocked_total",         // security: dedup rejections
 	"orbit_tracking_hmac_failures_total",         // security: HMAC auth failures
 	"orbit_tracking_cleanup_total",               // security: cleanup evictions

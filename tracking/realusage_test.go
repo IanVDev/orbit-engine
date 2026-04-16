@@ -30,7 +30,7 @@ import (
 // TestRealUsageClientEndToEnd validates the full real-usage ingestion pipeline.
 func TestRealUsageClientEndToEnd(t *testing.T) {
 	// ── Isolated registry (does not touch prometheus.DefaultRegisterer) ──
-	ResetRateLimit() // clears token buckets + dedup
+	ResetRateLimit()  // clears token buckets + dedup
 	SetHMACSecret("") // ensure HMAC is disabled for this test
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
