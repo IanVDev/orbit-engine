@@ -49,6 +49,16 @@ node_modules/
 package-lock.json
 yarn.lock
 
+# --- SSH credentials and keys (NEVER commit) ---
+*.pem
+*.key
+*.pub
+id_rsa
+id_ed25519
+ssh_config
+.ssh/
+deploy/ssh_config          # rendered config (contains host/user)
+
 # --- Logs ---
 *.log
 
