@@ -11,6 +11,7 @@ global:
 # Raw orbit_skill_* are FORBIDDEN outside of rule definitions.
 rule_files:
   - "orbit_rules.yml"
+  - "deploy/prometheus-alerts-security.yml"
 
 scrape_configs:
   # ── Production server (:9100) ─────────────────────────────────────────

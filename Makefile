@@ -105,7 +105,49 @@ orbit-check:
 test-orbit-check:
 	@bash tests/test_orbit_check.sh
 
-# ── Cleanup ──────────────────────────────────────────────────────────
+# ── Grafana Dashboards ───────────────────────────────────────────────
+
+# Valida o JSON do dashboard de segurança (requer python3)
+validate-dashboard-security:
+	@python3 -c "import json,sys; d=json.load(open('deploy/grafana-dashboard-security.json')); panels=[p for p in d['panels'] if p['type']!='row']; print(f'Dashboard valido: {len(panels)} paineis, uid={d[\"uid\"]}'); [print(f'  id={p[\"id\"]:2d}  {p[\"type\"]:12s}  {p[\"title\"]}') for p in panels]"
+
+# Valida a sintaxe YAML das regras de alerta de segurança (requer pyyaml)
+validate-alerts-security:
+	@python3 -c "import sys; import yaml; data=yaml.safe_load(open('deploy/prometheus-alerts-security.yml')); rules=[r for g in data.get('groups',[]) for r in g.get('rules',[])]; print(f'Alertas validos: {len(rules)} regras'); [print(f'  {r[\"alert\"]}  ({r[\"labels\"][\"severity\"]})') for r in rules]" 2>/dev/null || python3 -c "import json; print('pyyaml nao instalado — validando apenas JSON do dashboard')"
+
+# Importa dashboards Grafana via API HTTP
+# Uso: GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<token> make import-dashboards
+# Gera token em Grafana: Configuration → API Tokens → Create token (role: Admin)
+import-dashboards:
+	@bash scripts/import-grafana-dashboards.sh
+
+# Inicia stack de observabilidade: Prometheus + Grafana (docker-compose)
+# Requer Docker e docker-compose instalados
+# Acesso: Prometheus em http://localhost:9090, Grafana em http://localhost:3000 (admin/admin)
+obs-up:
+	@docker-compose up -d && echo "✅ Stack iniciada: Prometheus (9090) + Grafana (3000)" && sleep 3 && curl -s http://localhost:3000/api/health | grep -q '"ok"' && echo "✅ Grafana pronto para importar dashboards"
+
+# Para a stack de observabilidade
+obs-down:
+	@docker-compose down && echo "✅ Stack parada"
+
+# Logs em tempo real da stack de observabilidade
+obs-logs:
+	@docker-compose logs -f
+
+# Importa dashboards após stack estar rodando
+obs-import: obs-up
+	@echo "Aguardando Grafana ficar pronto..." && sleep 5
+	@GRAFANA_TOKEN=$$(bash scripts/generate-grafana-token.sh || echo "") && \
+	if [ -z "$$GRAFANA_TOKEN" ]; then \
+		echo "⚠️  Token não gerado automaticamente — use:"; \
+		echo "  GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<seu_token> make import-dashboards"; \
+	else \
+		GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=$$GRAFANA_TOKEN make import-dashboards; \
+	fi
+
+# ── Cleanup ──────────────────────────────────────────────────────────────
 
 clean:
 	cd tracking && go clean -testcache
+

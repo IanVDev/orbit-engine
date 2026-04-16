@@ -13,8 +13,11 @@ import (
 )
 
 func main() {
-	// Register metrics on the default Prometheus registry.
+	// Register core metrics on the default Prometheus registry.
 	tracking.RegisterMetrics(prometheus.DefaultRegisterer)
+	// Register security metrics (rejected_total, behavior_abuse_total, security_mode, etc.)
+	// Must be called after RegisterMetrics so the registry is initialized.
+	tracking.RegisterSecurityMetrics(prometheus.DefaultRegisterer)
 	tracking.SetSeedMode(false) // orbit_seed_mode = 0 → production
 
 	// Heartbeat: increments orbit_heartbeat_total every 15s.
