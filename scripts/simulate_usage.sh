@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # simulate_usage.sh — Injeta eventos reais no /track usando decisões do SkillRouter.
-# Para cada turno do fixture, roda SkillRouter.evaluate(); só POSTa turnos ativados.
-# Valida métricas críticas em /metrics e simula ataques para gerar rejected_total.
+# Modo default (source=fixture): só POSTa turnos que o router ativou.
+# Modo --shadow-mode (source=real_shadow): POSTa TODOS os turnos com
+# activation_possible=<bool> — observa o router sem impactar execução.
 #
-# Uso: ./scripts/simulate_usage.sh [--fixtures PATH]
+# Uso: ./scripts/simulate_usage.sh [--fixtures PATH] [--shadow-mode]
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,13 +13,21 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRACKING="http://127.0.0.1:9100"
 GW="http://127.0.0.1:9091"
 FIXTURES="${SCRIPT_DIR}/fixtures/activation_turns.jsonl"
+SHADOW_MODE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --fixtures) FIXTURES="$2"; shift 2 ;;
-    *) echo "uso: $0 [--fixtures PATH]" >&2; exit 2 ;;
+    --fixtures)    FIXTURES="$2"; shift 2 ;;
+    --shadow-mode) SHADOW_MODE=1; shift 1 ;;
+    *) echo "uso: $0 [--fixtures PATH] [--shadow-mode]" >&2; exit 2 ;;
   esac
 done
+
+if [[ "${SHADOW_MODE}" -eq 1 ]]; then
+  SOURCE_TAG="real_shadow"
+else
+  SOURCE_TAG="fixture"
+fi
 
 RUN_SESSION="sim-$(date +%s)"
 FAILURES=0
@@ -31,6 +40,7 @@ echo "════════════════════════�
 echo "  orbit-engine — simulação via SkillRouter real"
 echo "  run:      ${RUN_SESSION}"
 echo "  fixtures: ${FIXTURES}"
+echo "  source:   ${SOURCE_TAG}"
 echo "══════════════════════════════════════════════"
 echo ""
 
@@ -65,12 +75,18 @@ echo "  suprimidos:        ${SUPPRESSED_TURNS}"
 if [[ "${TOTAL_TURNS}" -eq 0 ]]; then
   echo "  ❌ fail-closed: nenhum turno no fixture"; exit 1
 fi
-if [[ "${ACTIVATED_TURNS}" -eq 0 ]]; then
+if [[ "${SHADOW_MODE}" -eq 0 && "${ACTIVATED_TURNS}" -eq 0 ]]; then
   echo "  ❌ fail-closed: nenhuma ativação real (router não discrimina — ainda laboratório)"; exit 1
 fi
 
-# ── Injetar SOMENTE decisões ativadas no /track ──────────────────────
-echo ""; echo "── POSTando turnos ativados em /track..."
+# ── Emitir eventos para /track ──────────────────────────────────────
+#   Modo default: só turnos ativados, source=fixture
+#   Modo shadow:  TODOS os turnos, source=real_shadow, activation_possible=<bool>
+if [[ "${SHADOW_MODE}" -eq 1 ]]; then
+  echo ""; echo "── POSTando observações de shadow em /track..."
+else
+  echo ""; echo "── POSTando turnos ativados em /track..."
+fi
 POSTED_OK=0
 POSTED_FAIL=0
 TOTAL_TOKENS=0
@@ -78,7 +94,7 @@ i=0
 while IFS= read -r decision; do
   i=$((i+1))
   activated=$(printf '%s' "${decision}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('activated', False))")
-  if [[ "${activated}" != "True" ]]; then
+  if [[ "${SHADOW_MODE}" -eq 0 && "${activated}" != "True" ]]; then
     continue
   fi
 
@@ -104,9 +120,21 @@ print(tokens)
   TOTAL_TOKENS=$((TOTAL_TOKENS + TOKENS))
   TS=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
 
+  # activation_possible só é enviado em shadow mode (reflete decisão do router).
+  if [[ "${SHADOW_MODE}" -eq 1 ]]; then
+    if [[ "${activated}" == "True" ]]; then
+      AP_JSON='true'
+    else
+      AP_JSON='false'
+    fi
+  else
+    AP_JSON='null'
+  fi
+
   PAYLOAD=$(python3 -c '
 import json, sys
-print(json.dumps({
+ap = sys.argv[7]
+ev = {
   "event_type": "activation",
   "timestamp": sys.argv[1],
   "session_id": sys.argv[2],
@@ -118,14 +146,22 @@ print(json.dumps({
   "impact_estimated_tokens": int(sys.argv[4]),
   "activation_reason": sys.argv[5],
   "activation_phase": sys.argv[6],
-}))' "${TS}" "${SESSION_ID}" "${WASTE}" "${TOKENS}" "${REASON}" "${PHASE}")
+  "source": sys.argv[8],
+}
+if ap != "null":
+  ev["activation_possible"] = (ap == "true")
+print(json.dumps(ev))' "${TS}" "${SESSION_ID}" "${WASTE}" "${TOKENS}" "${REASON}" "${PHASE}" "${AP_JSON}" "${SOURCE_TAG}")
 
   resp=$(curl -s -X POST "${TRACKING}/track" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}")
   status=$(echo "${resp}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','?'))" 2>/dev/null || echo "erro")
   if [ "${status}" = "ok" ]; then
-    pass "turno ${i} [${SESSION_ID}] reason=${REASON} phase=${PHASE} tokens=${TOKENS}"
+    if [[ "${SHADOW_MODE}" -eq 1 ]]; then
+      pass "turno ${i} [${SESSION_ID}] source=${SOURCE_TAG} activation_possible=${AP_JSON} reason=${REASON}"
+    else
+      pass "turno ${i} [${SESSION_ID}] reason=${REASON} phase=${PHASE} tokens=${TOKENS}"
+    fi
     POSTED_OK=$((POSTED_OK+1))
   else
     fail "turno ${i} [${SESSION_ID}] resp=[${resp}]"
@@ -135,7 +171,7 @@ print(json.dumps({
 done < "${DECISIONS_FILE}"
 
 if [[ "${POSTED_OK}" -eq 0 ]]; then
-  echo "  ❌ fail-closed: nenhum evento ativado chegou ao tracking pipeline"; exit 1
+  echo "  ❌ fail-closed: nenhum evento chegou ao tracking pipeline"; exit 1
 fi
 
 # real_activation_rate: qualidade de discriminação do router no fixture.
@@ -143,7 +179,7 @@ REAL_ACTIVATION_RATE=$(python3 -c "print(f'{${ACTIVATED_TURNS}/${TOTAL_TURNS}:.3
 echo ""
 echo "── real_activation_rate (router side) ──"
 echo "  ${ACTIVATED_TURNS}/${TOTAL_TURNS} = ${REAL_ACTIVATION_RATE}"
-echo "  posted: ${POSTED_OK} ok / ${POSTED_FAIL} fail"
+echo "  source=${SOURCE_TAG}  posted: ${POSTED_OK} ok / ${POSTED_FAIL} fail"
 
 # ── Simular ataque: payloads inválidos para gerar rejected_total ─────
 echo ""; echo "── Simulando rejeições (ataque)..."
