@@ -1,0 +1,32 @@
+# SSH config template for orbit-engine EC2 access
+#
+# Usage:
+#   export ORBIT_EC2_HOST=<ec2-public-dns>
+#   export ORBIT_EC2_USER=<non-root user, e.g. ubuntu or ec2-user>
+#   export ORBIT_SSH_KEY=<path to .pem, e.g. ~/keys/orbit.pem>
+#   envsubst < deploy/ssh_config.template > ~/.ssh/config.d/orbit-engine
+#
+# NEVER commit the rendered file — it is blocked by .gitignore.
+# NEVER set User=root.
+
+Host orbit-ec2
+    HostName          ${ORBIT_EC2_HOST}
+    User              ${ORBIT_EC2_USER}
+    IdentityFile      ${ORBIT_SSH_KEY}
+    IdentitiesOnly    yes
+
+    # Harden the connection
+    ServerAliveInterval   30
+    ServerAliveCountMax   3
+    ConnectTimeout        10
+    StrictHostKeyChecking accept-new
+
+    # Disable agent/X11 forwarding (attack surface reduction)
+    ForwardAgent      no
+    ForwardX11        no
+
+    # Use only strong algorithms
+    KexAlgorithms     curve25519-sha256,ecdh-sha2-nistp521
+    Ciphers           aes256-gcm@openssh.com,chacha20-poly1305@openssh.com
+    MACs              hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+    HostKeyAlgorithms ecdsa-sha2-nistp521,ssh-ed25519
