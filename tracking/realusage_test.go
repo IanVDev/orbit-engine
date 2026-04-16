@@ -1,15 +1,17 @@
 // realusage_test.go — End-to-end validation of real usage ingestion.
 //
 // Tests the full pipeline:
-//   RealUsageClient → POST /track → TrackSkillEvent → Prometheus metrics
+//
+//	RealUsageClient → POST /track → TrackSkillEvent → Prometheus metrics
 //
 // All three contract assertions are verified:
-//   1. event_accepted:         POST /track returns 200 {"status":"ok"}
-//   2. metrics_incremented:    orbit_real_usage_total and orbit_skill_activations_total > 0
-//   3. appears_in_metrics:     GET /metrics contains the expected metric names
+//  1. event_accepted:         POST /track returns 200 {"status":"ok"}
+//  2. metrics_incremented:    orbit_real_usage_total and orbit_skill_activations_total > 0
+//  3. appears_in_metrics:     GET /metrics contains the expected metric names
 //
 // Run:
-//   cd tracking && go test -run TestRealUsageClient -v
+//
+//	cd tracking && go test -run TestRealUsageClient -v
 package tracking
 
 import (
@@ -28,7 +30,8 @@ import (
 // TestRealUsageClientEndToEnd validates the full real-usage ingestion pipeline.
 func TestRealUsageClientEndToEnd(t *testing.T) {
 	// ── Isolated registry (does not touch prometheus.DefaultRegisterer) ──
-	ResetRateLimit()
+	ResetRateLimit() // clears token buckets + dedup
+	SetHMACSecret("") // ensure HMAC is disabled for this test
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		skillActivationsTotal,
@@ -131,10 +134,10 @@ func TestEstimateTokens(t *testing.T) {
 		text string
 		want int64
 	}{
-		{"", 1},          // minimum 1
-		{"abc", 1},       // 3/4 → 0, clamped to 1
-		{"abcd", 1},      // 4/4 → 1
-		{"abcdefgh", 2},  // 8/4 → 2
+		{"", 1},                                // minimum 1
+		{"abc", 1},                             // 3/4 → 0, clamped to 1
+		{"abcd", 1},                            // 4/4 → 1
+		{"abcdefgh", 2},                        // 8/4 → 2
 		{"The capital of France is Paris.", 7}, // 31/4 → 7
 	}
 	for _, c := range cases {

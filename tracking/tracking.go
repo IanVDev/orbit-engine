@@ -423,12 +423,7 @@ var (
 		},
 	)
 
-	// sessionRateLimit tracks the last event timestamp per session_id
-	// for server-side rate limiting. Protected by rateMu.
-	sessionRateLimit    = make(map[string]time.Time)
-	rateMu              sync.Mutex
-	rateLimitPerSession = 2 * time.Second // minimum interval between events per session
-	rateLimitDisabled   bool              // testing only — disables rate limit checks
+	// (Rate limiting is now handled by token buckets in security.go)
 )
 
 // registerOnce ensures metrics are registered exactly once.
@@ -542,9 +537,10 @@ func TrackSkillEvent(event SkillEvent) error {
 		return err
 	}
 
-	// 1b. Rate limit per session_id — reject bursts from the same session.
-	if err := checkRateLimit(event.SessionID); err != nil {
+	// 1b. Token bucket rate limit per session_id — reject bursts.
+	if err := CheckTokenBucket(event.SessionID); err != nil {
 		skillTrackingFailuresTotal.Inc()
+		trackingBucketRejected.Inc()
 		log.Printf("[WARN] rate limited session %s: %v", event.SessionID, err)
 		return err
 	}
@@ -598,36 +594,20 @@ func TrackSkillEvent(event SkillEvent) error {
 	return nil
 }
 
-// checkRateLimit enforces a minimum interval between events for the same session_id.
-// Fail-closed: if rate limit is exceeded, returns an error.
+// checkRateLimit is a compatibility shim — now delegates to CheckTokenBucket.
+// Kept only for documentation; callers use CheckTokenBucket directly.
 func checkRateLimit(sessionID string) error {
-	rateMu.Lock()
-	defer rateMu.Unlock()
-	if rateLimitDisabled {
-		return nil
-	}
-	now := time.Now()
-	if last, ok := sessionRateLimit[sessionID]; ok {
-		if now.Sub(last) < rateLimitPerSession {
-			return fmt.Errorf("tracking: rate limited — session %s sent events too fast (min interval %v)",
-				sessionID, rateLimitPerSession)
-		}
-	}
-	sessionRateLimit[sessionID] = now
-	return nil
+	return CheckTokenBucket(sessionID)
 }
 
-// ResetRateLimit clears the rate limit state. For testing ONLY.
+// ResetRateLimit clears all rate limit state (token buckets + dedup).
+// For testing ONLY.
 func ResetRateLimit() {
-	rateMu.Lock()
-	defer rateMu.Unlock()
-	sessionRateLimit = make(map[string]time.Time)
-	rateLimitDisabled = false
+	ResetTokenBuckets()
+	ResetDedup()
 }
 
 // DisableRateLimit disables rate limiting entirely. For testing ONLY.
 func DisableRateLimit() {
-	rateMu.Lock()
-	defer rateMu.Unlock()
-	rateLimitDisabled = true
+	DisableTokenBuckets()
 }

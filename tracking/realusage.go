@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -116,14 +117,59 @@ func (c *RealUsageClient) TrackPromptUsage(ctx context.Context, input, output st
 
 // TrackHandler returns the http.HandlerFunc for POST /track.
 // Exported so the production server and tests share one implementation.
+//
+// Security pipeline (fail-closed):
+//  1. Method check (POST only)
+//  2. Read raw body → compute deterministic event_id
+//  3. Validate HMAC signature (X-Orbit-Signature) if configured
+//  4. Dedup check (5-min window on event_id)
+//  5. Decode JSON → validate → TrackSkillEvent
+//  6. Set orbit_real_usage_alive = 1 on success
 func TrackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+
+		// 1. Read raw body for deterministic event_id and HMAC
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
+			return
+		}
+
+		// 2. Compute deterministic event_id
+		eventID := ComputeEventID(rawBody)
+
+		// 3. HMAC authentication (fail-closed when configured)
+		signature := r.Header.Get("X-Orbit-Signature")
+		if err := ValidateHMAC(rawBody, signature); err != nil {
+			trackingHMACFailures.Inc()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    err.Error(),
+				"event_id": eventID,
+			})
+			return
+		}
+
+		// 4. Dedup check (reject replayed events)
+		if err := CheckDedup(eventID); err != nil {
+			trackingDedupBlocked.Inc()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    err.Error(),
+				"event_id": eventID,
+			})
+			return
+		}
+
+		// 5. Decode JSON and process
 		var event SkillEvent
-		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		if err := json.Unmarshal(rawBody, &event); err != nil {
 			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 			return
 		}
@@ -136,8 +182,15 @@ func TrackHandler() http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
+
+		// 6. Success — mark alive and respond
+		SetRealUsageAlive()
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":   "ok",
+			"event_id": eventID,
+		})
 	}
 }

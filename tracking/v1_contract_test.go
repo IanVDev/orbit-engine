@@ -359,9 +359,10 @@ func TestV1ContractComplete(t *testing.T) {
 		}
 	})
 
-	// ── CONTRACT: rate limit blocks rapid events from same session ───
+	// ── CONTRACT: rate limit blocks burst events from same session ───
 
 	t.Run("rate_limit_blocks_rapid_events", func(t *testing.T) {
+		ResetRateLimit() // ensure clean token bucket state
 		rlSession := "rate-limit-test-" + time.Now().Format("150405.000")
 		rlEvent := SkillEvent{
 			EventType:            "activation",
@@ -374,17 +375,20 @@ func TestV1ContractComplete(t *testing.T) {
 			ActionsApplied:       1,
 			ImpactEstimatedToken: 100,
 		}
-		// First event should succeed
-		if err := TrackSkillEvent(rlEvent); err != nil {
-			t.Fatalf("first event should succeed: %v", err)
+		// First 5 events should succeed (token bucket capacity=5)
+		for i := 0; i < 5; i++ {
+			rlEvent.Timestamp = NowUTC()
+			if err := TrackSkillEvent(rlEvent); err != nil {
+				t.Fatalf("event %d should succeed (within bucket capacity): %v", i+1, err)
+			}
 		}
-		// Immediate second event from same session should be rate limited
+		// 6th event from same session should be rate limited (bucket exhausted)
 		rlEvent.Timestamp = NowUTC()
 		err := TrackSkillEvent(rlEvent)
 		if err == nil {
-			t.Fatal("CONTRACT VIOLATION: rapid second event was NOT rate limited")
+			t.Fatal("CONTRACT VIOLATION: burst beyond capacity was NOT rate limited")
 		}
-		t.Logf("rate limit correctly blocked rapid event: %v", err)
+		t.Logf("rate limit correctly blocked burst event: %v", err)
 	})
 }
 

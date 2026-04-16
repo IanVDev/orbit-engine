@@ -23,8 +23,11 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -94,6 +97,7 @@ class SkillTrackingClient:
         session_id: str,
         mode: str = "auto",
         timeout_seconds: float = 5.0,
+        hmac_secret: Optional[str] = None,
     ) -> None:
         if not tracking_url:
             raise ValueError("tracking_url is required (fail-closed)")
@@ -107,6 +111,12 @@ class SkillTrackingClient:
         self._mode = mode
         self._timeout = timeout_seconds
         self._events_sent: int = 0
+        # HMAC secret: from parameter, env var, or disabled (backward compat)
+        self._hmac_secret: Optional[bytes] = None
+        if hmac_secret:
+            self._hmac_secret = hmac_secret.encode("utf-8")
+        elif os.environ.get("ORBIT_HMAC_SECRET"):
+            self._hmac_secret = os.environ["ORBIT_HMAC_SECRET"].encode("utf-8")
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -208,11 +218,18 @@ class SkillTrackingClient:
         """POST the event to the tracking server. Fail-closed."""
         payload = json.dumps(event).encode("utf-8")
 
+        headers = {"Content-Type": "application/json"}
+
+        # Sign payload with HMAC-SHA256 if secret is configured
+        if self._hmac_secret:
+            sig = hmac.new(self._hmac_secret, payload, hashlib.sha256).hexdigest()
+            headers["X-Orbit-Signature"] = sig
+
         try:
             req = urllib.request.Request(
                 self._track_url,
                 data=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:

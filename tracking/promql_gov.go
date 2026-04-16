@@ -36,6 +36,11 @@ var _allowedPrefixes = []string{
 	"orbit_real_usage_total",          // total valid events ingested (all real usage)
 	"orbit_skill_activation_total",    // SkillRouter decision metric {reason, phase}
 	"orbit_last_real_usage_timestamp", // freshness gauge for real_usage_client events
+	"orbit_tracking_dedup_blocked_total",         // security: dedup rejections
+	"orbit_tracking_hmac_failures_total",         // security: HMAC auth failures
+	"orbit_tracking_cleanup_total",               // security: cleanup evictions
+	"orbit_real_usage_alive",                     // security: real usage liveness (1/0)
+	"orbit_tracking_token_bucket_rejected_total", // security: token bucket rejections
 }
 
 // ---------------------------------------------------------------------------
