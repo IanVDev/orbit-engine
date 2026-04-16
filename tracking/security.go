@@ -9,6 +9,12 @@
 //  6. orbit_real_usage_alive gauge (1 or 0)
 //  7. Unified rejection metric orbit_tracking_rejected_total{reason}
 //  8. HMAC mandatory in production (ORBIT_ENV=production)
+//  9. Semantic validation gate (session_id, timestamp, payload)
+//
+// 10. Replay hard lock for critical events (persistent dedup beyond 5-min)
+// 11. Client fingerprint hardening (client_id + IP + UA + Accept-Language + salt)
+// 12. Structured rejection logging
+// 13. Cardinality protection (no dynamic labels)
 //
 // Design: fail-closed everywhere. Unknown state → reject.
 // No external dependencies beyond crypto/hmac (stdlib).
@@ -21,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sort"
 	"sync"
@@ -337,13 +344,178 @@ func DisableTokenBuckets() {
 }
 
 // ---------------------------------------------------------------------------
+// 9. Semantic Validation Gate
+// ---------------------------------------------------------------------------
+
+// ValidateSemantic performs deep semantic checks on a pre-parsed SkillEvent
+// before it enters the dedup/tracking pipeline. Fail-closed: any violation
+// returns an error and the event MUST be rejected (HTTP 400).
+//
+// Checks:
+//   - session_id must be non-empty
+//   - timestamp must not be zero
+//   - timestamp must not be in the future (>60s tolerance for clock skew)
+//   - raw payload must not be empty/whitespace
+func ValidateSemantic(event SkillEvent, rawBody []byte) error {
+	if event.SessionID == "" {
+		return fmt.Errorf("semantic: session_id is required")
+	}
+	if event.Timestamp.IsZero() {
+		return fmt.Errorf("semantic: timestamp is required")
+	}
+	// Future guard — 60s tolerance for clock skew
+	now := time.Now().UTC()
+	if event.Timestamp.Time.After(now.Add(60 * time.Second)) {
+		return fmt.Errorf("semantic: timestamp is in the future (%s > now+60s)",
+			event.Timestamp.Time.Format(time.RFC3339))
+	}
+	// Payload must contain meaningful content
+	if len(rawBody) == 0 {
+		return fmt.Errorf("semantic: payload body is empty")
+	}
+	trimmed := string(rawBody)
+	for _, c := range trimmed {
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			return nil // found non-whitespace → valid
+		}
+	}
+	return fmt.Errorf("semantic: payload body is whitespace-only")
+}
+
+// ---------------------------------------------------------------------------
+// 10. Replay Hard Lock (persistent dedup for critical events)
+// ---------------------------------------------------------------------------
+
+// criticalDedupTTL is the TTL for critical event dedup entries.
+// Critical events are never allowed to replay, even after the 5-min window.
+const criticalDedupTTL = 24 * time.Hour
+
+var (
+	criticalDedupMap = make(map[string]time.Time)
+	criticalDedupMu  sync.Mutex
+)
+
+// IsCritical returns true if the event is critical and must be
+// permanently deduplicated (beyond the 5-min window). Critical events
+// include activations with high token impact.
+func IsCritical(event SkillEvent) bool {
+	return event.EventType == "activation" && event.ImpactEstimatedToken >= 100
+}
+
+// CheckCriticalDedup checks the persistent dedup map for critical events.
+// Returns nil if the event_id is new, or an error if it was already seen
+// within the criticalDedupTTL window (24h).
+func CheckCriticalDedup(eventID string) error {
+	criticalDedupMu.Lock()
+	defer criticalDedupMu.Unlock()
+
+	now := time.Now()
+	if seen, ok := criticalDedupMap[eventID]; ok {
+		if now.Sub(seen) < criticalDedupTTL {
+			return fmt.Errorf("security: critical event replay blocked (event_id %s, seen %v ago, TTL=%v)",
+				eventID[:16], now.Sub(seen).Round(time.Millisecond), criticalDedupTTL)
+		}
+		// TTL expired — allow and refresh
+	}
+	criticalDedupMap[eventID] = now
+	return nil
+}
+
+// ResetCriticalDedup clears the critical dedup map. For testing ONLY.
+func ResetCriticalDedup() {
+	criticalDedupMu.Lock()
+	defer criticalDedupMu.Unlock()
+	criticalDedupMap = make(map[string]time.Time)
+}
+
+// ---------------------------------------------------------------------------
+// 11. Client Fingerprint Hardening
+// ---------------------------------------------------------------------------
+
+// fingerprintSalt is a server-side salt for client fingerprinting.
+// Loaded from ORBIT_FINGERPRINT_SALT env, or falls back to a default.
+var fingerprintSalt string
+
+func init() {
+	if s := os.Getenv("ORBIT_FINGERPRINT_SALT"); s != "" {
+		fingerprintSalt = s
+	} else {
+		fingerprintSalt = "orbit-engine-default-salt-v1"
+	}
+}
+
+// ClientFingerprint produces a hardened client identity by combining
+// client_id + IP + User-Agent + Accept-Language + server-side salt.
+// The result is a hex-encoded SHA-256 hash, safe for use as a bucket key.
+// This is strictly more secure than ClientIdentity because it includes
+// Accept-Language and the salt, making fingerprint forgery much harder.
+// The remote address is normalised to IP-only (port stripped) so that
+// ephemeral source ports do not fragment the fingerprint space.
+func ClientFingerprint(clientID, remoteAddr, userAgent, acceptLanguage string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	data := fmt.Sprintf("%s|%s|%s|%s|%s", clientID, host, userAgent, acceptLanguage, fingerprintSalt)
+	h := sha256.Sum256([]byte(data))
+	return "fp:" + hex.EncodeToString(h[:16])
+}
+
+// SetFingerprintSalt overrides the salt at runtime. For testing ONLY.
+func SetFingerprintSalt(salt string) {
+	fingerprintSalt = salt
+}
+
+// ---------------------------------------------------------------------------
+// 12. Structured Rejection Logging
+// ---------------------------------------------------------------------------
+
+// rejectionLog emits a structured JSON log line for every rejection.
+// Fields: rejected_reason, client_fingerprint, event_id, timestamp.
+// This is mandatory for all rejection paths in the pipeline.
+func rejectionLog(reason, fingerprint, eventID string) {
+	entry := map[string]string{
+		"rejected_reason":    reason,
+		"client_fingerprint": fingerprint,
+		"event_id":           eventID,
+		"timestamp":          time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	line, _ := json.Marshal(entry)
+	log.Printf("[REJECTED] %s", line)
+}
+
+// ---------------------------------------------------------------------------
+// 13. Cardinality Protection — forbidden label names
+// ---------------------------------------------------------------------------
+
+// _highCardinalityLabels are label names that MUST NEVER appear on any
+// Prometheus metric. They would create unbounded cardinality and crash
+// Prometheus storage.
+var _highCardinalityLabels = []string{
+	"client_id",
+	"session_id",
+	"event_id",
+	"event_hash",
+	"fingerprint",
+}
+
+// HighCardinalityLabels returns the list of forbidden label names.
+// Exported for use in governance validation and tests.
+func HighCardinalityLabels() []string {
+	cp := make([]string, len(_highCardinalityLabels))
+	copy(cp, _highCardinalityLabels)
+	return cp
+}
+
+// ---------------------------------------------------------------------------
 // 5. Automatic Cleanup (TTL 1h)
 // ---------------------------------------------------------------------------
 
 const sessionTTL = 1 * time.Hour
 
 // CleanupExpiredState removes entries older than sessionTTL from dedup map
-// and session buckets. Returns counts of evicted entries.
+// and session buckets, plus entries from the critical dedup map beyond
+// criticalDedupTTL. Returns counts of evicted entries.
 func CleanupExpiredState() (dedupEvicted, bucketsEvicted int) {
 	now := time.Now()
 
@@ -367,6 +539,16 @@ func CleanupExpiredState() (dedupEvicted, bucketsEvicted int) {
 		}
 	}
 	bucketMu.Unlock()
+
+	// Critical dedup map cleanup
+	criticalDedupMu.Lock()
+	for id, seen := range criticalDedupMap {
+		if now.Sub(seen) > criticalDedupTTL {
+			delete(criticalDedupMap, id)
+			dedupEvicted++
+		}
+	}
+	criticalDedupMu.Unlock()
 
 	return dedupEvicted, bucketsEvicted
 }
@@ -453,6 +635,8 @@ const (
 	RejectReasonDedup     = "dedup"
 	RejectReasonRateLimit = "rate_limit"
 	RejectReasonInvalid   = "invalid"
+	RejectReasonSemantic  = "invalid_semantic"
+	RejectReasonReplay    = "critical_replay"
 )
 
 // IncrementRejected increments both the legacy per-type counter and the

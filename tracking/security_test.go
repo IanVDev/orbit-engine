@@ -8,6 +8,7 @@ package tracking
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -791,6 +792,8 @@ func TestSecurityTrackHandlerRateLimit(t *testing.T) {
 	_ = newSecurityTestRegistry()
 	SetHMACSecret("")
 	ResetDedup()
+	ResetCriticalDedup()
+	ResetTokenBuckets()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/track", TrackHandler())
@@ -836,4 +839,340 @@ func TestSecurityGovernanceAllowsRejectedMetric(t *testing.T) {
 	if err := ValidatePromQLStrict(`rate(orbit_tracking_rejected_total{reason="hmac"}[5m])`); err != nil {
 		t.Errorf("governance rejected orbit_tracking_rejected_total with label: %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 17. Semantic Validation Gate
+// ---------------------------------------------------------------------------
+
+func TestSemanticValidation(t *testing.T) {
+	_ = newSecurityTestRegistry()
+	SetHMACSecret("")
+	ResetDedup()
+	ResetCriticalDedup()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/track", TrackHandler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	t.Run("missing session_id returns 400", func(t *testing.T) {
+		ResetDedup()
+		ResetCriticalDedup()
+		ResetTokenBuckets()
+		ev := SkillEvent{
+			EventType:            "activation",
+			Timestamp:            NowUTC(),
+			SessionID:            "", // empty → semantic fail
+			Mode:                 "auto",
+			Trigger:              "test",
+			ImpactEstimatedToken: 10,
+		}
+		body, _ := json.Marshal(ev)
+		resp := postTrack(t, srv.URL, body, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 400 for missing session_id, got %d: %s", resp.StatusCode, string(b))
+		}
+	})
+
+	t.Run("future timestamp returns 400", func(t *testing.T) {
+		ResetDedup()
+		ResetCriticalDedup()
+		ResetTokenBuckets()
+		// Construct event with timestamp 5 minutes in the future
+		futureTime := FlexTime{Time: time.Now().UTC().Add(5 * time.Minute)}
+		ev := SkillEvent{
+			EventType:            "activation",
+			Timestamp:            futureTime,
+			SessionID:            "semantic-future-test",
+			Mode:                 "auto",
+			Trigger:              "test",
+			ImpactEstimatedToken: 10,
+		}
+		body, _ := json.Marshal(ev)
+		resp := postTrack(t, srv.URL, body, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 400 for future timestamp, got %d: %s", resp.StatusCode, string(b))
+		}
+	})
+
+	t.Run("valid event passes semantic gate", func(t *testing.T) {
+		ResetDedup()
+		ResetCriticalDedup()
+		ResetTokenBuckets()
+		body, _ := securityTestEvent("semantic-valid-test")
+		resp := postTrack(t, srv.URL, body, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(b))
+		}
+	})
+
+	t.Run("unit ValidateSemantic checks", func(t *testing.T) {
+		// Empty session_id
+		ev := SkillEvent{SessionID: "", Timestamp: NowUTC()}
+		if err := ValidateSemantic(ev, []byte(`{"x":1}`)); err == nil {
+			t.Fatal("expected error for empty session_id")
+		}
+		// Zero timestamp
+		ev2 := SkillEvent{SessionID: "s1"}
+		if err := ValidateSemantic(ev2, []byte(`{"x":1}`)); err == nil {
+			t.Fatal("expected error for zero timestamp")
+		}
+		// Empty body
+		ev3 := SkillEvent{SessionID: "s1", Timestamp: NowUTC()}
+		if err := ValidateSemantic(ev3, []byte{}); err == nil {
+			t.Fatal("expected error for empty body")
+		}
+		// Whitespace-only body
+		if err := ValidateSemantic(ev3, []byte("   \n\t  ")); err == nil {
+			t.Fatal("expected error for whitespace-only body")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 18. Replay Hard Lock — critical events blocked after 5-min window
+// ---------------------------------------------------------------------------
+
+func TestReplayAfterWindow(t *testing.T) {
+	ResetDedup()
+	ResetCriticalDedup()
+
+	// Critical event (activation with high tokens)
+	ev := SkillEvent{
+		EventType:            "activation",
+		Timestamp:            NowUTC(),
+		SessionID:            "replay-test-sess",
+		Mode:                 "auto",
+		ImpactEstimatedToken: 500, // >= 100 → critical
+	}
+	body, _ := json.Marshal(ev)
+	eventID := ComputeEventID(body)
+
+	if !IsCritical(ev) {
+		t.Fatal("event should be classified as critical")
+	}
+
+	// First: accepted by critical dedup
+	if err := CheckCriticalDedup(eventID); err != nil {
+		t.Fatalf("first critical event should be accepted: %v", err)
+	}
+	// Also record in standard dedup
+	if err := CheckDedup(eventID); err != nil {
+		t.Fatalf("first standard dedup should accept: %v", err)
+	}
+
+	// Simulate standard dedup window expiry (>5 min) but within critical TTL (24h)
+	dedupMu.Lock()
+	dedupMap[eventID] = time.Now().Add(-dedupWindow - time.Minute)
+	dedupMu.Unlock()
+
+	// Standard dedup would allow it (outside 5-min window)
+	if err := CheckDedup(eventID); err != nil {
+		t.Fatalf("standard dedup should allow after window: %v", err)
+	}
+
+	// But critical dedup MUST block it (within 24h)
+	if err := CheckCriticalDedup(eventID); err == nil {
+		t.Fatal("critical dedup should BLOCK replay even after 5-min window")
+	}
+
+	// Non-critical event should NOT be in critical dedup
+	nonCritical := SkillEvent{
+		EventType:            "activation",
+		SessionID:            "non-crit",
+		Timestamp:            NowUTC(),
+		Mode:                 "auto",
+		ImpactEstimatedToken: 10, // < 100 → not critical
+	}
+	if IsCritical(nonCritical) {
+		t.Fatal("low-impact event should NOT be critical")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 19. Flood with valid HMAC — rate limiter must kick in
+// ---------------------------------------------------------------------------
+
+func TestFloodWithValidHMAC(t *testing.T) {
+	_ = newSecurityTestRegistry()
+	secret := "flood-test-hmac-secret!!"
+	SetHMACSecret(secret)
+	defer SetHMACSecret("")
+	ResetDedup()
+	ResetCriticalDedup()
+	ResetTokenBuckets()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/track", TrackHandler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	got429 := false
+	for i := 0; i < int(bucketCapacity)+5; i++ {
+		ev := SkillEvent{
+			EventType:            "activation",
+			Timestamp:            NowUTC(),
+			SessionID:            fmt.Sprintf("flood-sess-%d", i),
+			Mode:                 "auto",
+			Trigger:              "test",
+			EstimatedWaste:       10.0,
+			ActionsSuggested:     1,
+			ActionsApplied:       1,
+			ImpactEstimatedToken: 50, // not critical, avoids critical dedup
+		}
+		body, _ := json.Marshal(ev)
+		sig := ComputeHMACHex(body, []byte(secret))
+
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/track", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Orbit-Signature", sig)
+		// Same fingerprint for all requests (same IP, UA, etc. from httptest)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i, err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			got429 = true
+			resp.Body.Close()
+			break
+		}
+		resp.Body.Close()
+	}
+
+	if !got429 {
+		t.Fatal("flood with valid HMAC should eventually trigger 429 rate limit")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 20. No High-Cardinality Labels
+// ---------------------------------------------------------------------------
+
+func TestNoHighCardinalityLabels(t *testing.T) {
+	// Verify that forbidden labels are rejected by governance
+	forbidden := HighCardinalityLabels()
+	if len(forbidden) == 0 {
+		t.Fatal("HighCardinalityLabels should return non-empty list")
+	}
+
+	for _, label := range forbidden {
+		query := fmt.Sprintf(`orbit_tracking_rejected_total{%s="some_value"}`, label)
+		if err := ValidatePromQLStrict(query); err == nil {
+			t.Errorf("governance should reject query with high-cardinality label %q: %s", label, query)
+		}
+	}
+
+	// Verify that allowed labels pass
+	safeQuery := `orbit_tracking_rejected_total{reason="hmac"}`
+	if err := ValidatePromQLStrict(safeQuery); err != nil {
+		t.Errorf("governance should allow safe label selector: %v", err)
+	}
+
+	// Verify the actual metrics in security.go don't use forbidden labels
+	// by checking the trackingRejectedTotal label names
+	desc := make(chan *prometheus.Desc, 10)
+	go func() {
+		trackingRejectedTotal.Describe(desc)
+		close(desc)
+	}()
+	for d := range desc {
+		descStr := d.String()
+		for _, label := range forbidden {
+			if strings.Contains(descStr, `"`+label+`"`) {
+				t.Errorf("metric description contains forbidden label %q: %s", label, descStr)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 21. Client Fingerprint
+// ---------------------------------------------------------------------------
+
+func TestSecurityClientFingerprint(t *testing.T) {
+	SetFingerprintSalt("test-salt")
+	defer SetFingerprintSalt("orbit-engine-default-salt-v1")
+
+	// Same inputs → same fingerprint
+	fp1 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
+	fp2 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
+	if fp1 != fp2 {
+		t.Fatalf("same inputs should produce same fingerprint: %s != %s", fp1, fp2)
+	}
+
+	// Prefix must be "fp:"
+	if !strings.HasPrefix(fp1, "fp:") {
+		t.Fatalf("fingerprint should have fp: prefix, got %s", fp1)
+	}
+
+	// Different Accept-Language → different fingerprint
+	fp3 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "pt-BR")
+	if fp1 == fp3 {
+		t.Fatal("different Accept-Language should produce different fingerprint")
+	}
+
+	// Different salt → different fingerprint
+	SetFingerprintSalt("other-salt")
+	fp4 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
+	if fp1 == fp4 {
+		t.Fatal("different salt should produce different fingerprint")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 22. Replay Hard Lock via TrackHandler
+// ---------------------------------------------------------------------------
+
+func TestReplayHardLockViaHandler(t *testing.T) {
+	_ = newSecurityTestRegistry()
+	SetHMACSecret("")
+	ResetDedup()
+	ResetCriticalDedup()
+	ResetTokenBuckets()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/track", TrackHandler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	// Critical event
+	ev := SkillEvent{
+		EventType:            "activation",
+		Timestamp:            NowUTC(),
+		SessionID:            "hardlock-handler-test",
+		Mode:                 "auto",
+		Trigger:              "test",
+		ImpactEstimatedToken: 500, // critical
+	}
+	body, _ := json.Marshal(ev)
+
+	// First: accepted
+	resp1 := postTrack(t, srv.URL, body, "")
+	if resp1.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp1.Body)
+		t.Fatalf("first critical event should be 200, got %d: %s", resp1.StatusCode, string(b))
+	}
+	resp1.Body.Close()
+
+	// Expire standard dedup window to prove critical dedup catches it
+	eventID := ComputeEventID(body)
+	dedupMu.Lock()
+	dedupMap[eventID] = time.Now().Add(-dedupWindow - time.Minute)
+	dedupMu.Unlock()
+
+	// Replay: should be 409 due to critical dedup
+	ResetTokenBuckets() // reset rate limit so we can reach dedup
+	resp2 := postTrack(t, srv.URL, body, "")
+	if resp2.StatusCode != http.StatusConflict {
+		b, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("critical replay should be 409, got %d: %s", resp2.StatusCode, string(b))
+	}
+	resp2.Body.Close()
 }

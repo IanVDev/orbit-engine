@@ -602,11 +602,12 @@ func checkRateLimit(sessionID string) error {
 	return CheckTokenBucket("session:" + sessionID)
 }
 
-// ResetRateLimit clears all rate limit state (token buckets + dedup).
+// ResetRateLimit clears all rate limit state (token buckets + dedup + critical dedup).
 // For testing ONLY.
 func ResetRateLimit() {
 	ResetTokenBuckets()
 	ResetDedup()
+	ResetCriticalDedup()
 }
 
 // DisableRateLimit disables rate limiting entirely. For testing ONLY.

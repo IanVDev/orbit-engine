@@ -122,10 +122,14 @@ func (c *RealUsageClient) TrackPromptUsage(ctx context.Context, input, output st
 //  1. Method check (POST only)
 //  2. Read raw body → canonicalize → compute deterministic event_id
 //  3. Validate HMAC signature (X-Orbit-Signature) if configured
-//  4. Token bucket rate limit per client identity
-//  5. Dedup check (5-min window on event_id)
-//  6. Decode JSON → validate → TrackSkillEvent
-//  7. Set orbit_real_usage_alive = 1 on success
+//  4. Compute client fingerprint (hardened identity)
+//  5. Token bucket rate limit per client fingerprint
+//  6. Decode JSON → semantic validation gate
+//  7. Replay hard lock for critical events (persistent 24h dedup)
+//  8. Standard dedup check (5-min window on event_id)
+//  9. Validate → TrackSkillEvent
+//
+// 10. Set orbit_real_usage_alive = 1 on success
 func TrackHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -146,8 +150,12 @@ func TrackHandler() http.HandlerFunc {
 		// 3. HMAC authentication (fail-closed when configured)
 		signature := r.Header.Get("X-Orbit-Signature")
 		if err := ValidateHMAC(rawBody, signature); err != nil {
+			fingerprint := ClientFingerprint(
+				r.Header.Get("X-Orbit-Client-Id"), r.RemoteAddr,
+				r.Header.Get("User-Agent"), r.Header.Get("Accept-Language"))
 			trackingHMACFailures.Inc()
 			IncrementRejected(RejectReasonHMAC)
+			rejectionLog(RejectReasonHMAC, fingerprint, eventID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -157,20 +165,18 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 4. Token bucket rate limit per client identity
+		// 4. Compute hardened client fingerprint
 		clientID := r.Header.Get("X-Orbit-Client-Id")
 		remoteAddr := r.RemoteAddr
 		userAgent := r.Header.Get("User-Agent")
-		// Pre-parse session_id for bucket key fallback
-		var peek struct {
-			SessionID string `json:"session_id"`
-		}
-		_ = json.Unmarshal(rawBody, &peek)
-		bucketKey := ClientIdentity(clientID, remoteAddr, userAgent, peek.SessionID)
+		acceptLang := r.Header.Get("Accept-Language")
+		fingerprint := ClientFingerprint(clientID, remoteAddr, userAgent, acceptLang)
 
-		if err := CheckTokenBucket(bucketKey); err != nil {
+		// 5. Token bucket rate limit per client fingerprint
+		if err := CheckTokenBucket(fingerprint); err != nil {
 			trackingBucketRejected.Inc()
 			IncrementRejected(RejectReasonRateLimit)
+			rejectionLog(RejectReasonRateLimit, fingerprint, eventID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -180,10 +186,52 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 5. Dedup check (reject replayed events)
+		// 6. Decode JSON and semantic validation gate
+		var event SkillEvent
+		if err := json.Unmarshal(rawBody, &event); err != nil {
+			IncrementRejected(RejectReasonInvalid)
+			rejectionLog(RejectReasonInvalid, fingerprint, eventID)
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		if event.Timestamp.IsZero() {
+			event.Timestamp = NowUTC()
+		}
+
+		// Semantic gate — validates session_id, timestamp not-future, payload not-empty
+		if err := ValidateSemantic(event, rawBody); err != nil {
+			IncrementRejected(RejectReasonSemantic)
+			rejectionLog(RejectReasonSemantic, fingerprint, eventID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    err.Error(),
+				"event_id": eventID,
+			})
+			return
+		}
+
+		// 7. Replay hard lock for critical events (24h persistent dedup)
+		if IsCritical(event) {
+			if err := CheckCriticalDedup(eventID); err != nil {
+				trackingDedupBlocked.Inc()
+				IncrementRejected(RejectReasonReplay)
+				rejectionLog(RejectReasonReplay, fingerprint, eventID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error":    err.Error(),
+					"event_id": eventID,
+				})
+				return
+			}
+		}
+
+		// 8. Standard dedup check (reject replayed events within 5-min window)
 		if err := CheckDedup(eventID); err != nil {
 			trackingDedupBlocked.Inc()
 			IncrementRejected(RejectReasonDedup)
+			rejectionLog(RejectReasonDedup, fingerprint, eventID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -193,25 +241,17 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 6. Decode JSON and process
-		var event SkillEvent
-		if err := json.Unmarshal(rawBody, &event); err != nil {
-			IncrementRejected(RejectReasonInvalid)
-			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
-			return
-		}
-		if event.Timestamp.IsZero() {
-			event.Timestamp = NowUTC()
-		}
+		// 9. Validate and process
 		if err := TrackSkillEvent(event); err != nil {
 			IncrementRejected(RejectReasonInvalid)
+			rejectionLog(RejectReasonInvalid, fingerprint, eventID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
 
-		// 7. Success — mark alive and respond
+		// 10. Success — mark alive and respond
 		SetRealUsageAlive()
 
 		w.Header().Set("Content-Type", "application/json")

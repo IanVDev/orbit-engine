@@ -7,6 +7,10 @@
 //
 // ValidatePromQL enforces this policy at the string level — no external
 // PromQL parser is required, keeping dependencies minimal.
+//
+// Cardinality protection: ValidatePromQLStrict also rejects queries that
+// use high-cardinality label names (client_id, session_id, event_id, etc.)
+// as label selectors, preventing unbounded series creation.
 package tracking
 
 import (
@@ -130,6 +134,9 @@ func ValidatePromQL(query string) error {
 //   - If the query references any "orbit" identifier that is NOT in the
 //     allowed list, it is rejected. This catches typos and future metrics
 //     that haven't been added to governance yet.
+//   - If the query uses any high-cardinality label name (client_id,
+//     session_id, event_id, etc.) as a label selector, it is rejected.
+//     This prevents unbounded series creation in Prometheus.
 //
 // Use this for CI/CD pipeline checks.
 func ValidatePromQLStrict(query string) error {
@@ -139,6 +146,25 @@ func ValidatePromQLStrict(query string) error {
 	}
 
 	trimmed := strings.TrimSpace(query)
+
+	// Cardinality protection: reject queries using forbidden label names.
+	for _, label := range HighCardinalityLabels() {
+		// Look for patterns like: label_name= or label_name!= or label_name=~
+		patterns := []string{
+			label + "=",
+			label + "!",
+			label + "~",
+		}
+		for _, p := range patterns {
+			if strings.Contains(trimmed, p) {
+				return &PromQLViolation{
+					Query:   query,
+					Reason:  fmt.Sprintf("high-cardinality label %q is forbidden in queries — it would create unbounded series", label),
+					Snippet: p,
+				}
+			}
+		}
+	}
 
 	// Scan for any "orbit_" token that isn't in the allowed list.
 	// We iterate through all occurrences of "orbit_" in the string.
