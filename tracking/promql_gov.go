@@ -48,6 +48,8 @@ var _allowedPrefixes = []string{
 	"orbit_tracking_rejected_total",              // security: unified rejection metric {reason}
 	"orbit_behavior_abuse_total",                 // security: behavior abuse detection counter
 	"orbit_behavior_abuse_ratio",                 // security: behavior abuse similarity ratio gauge
+	"orbit_security_mode",                        // security: active security mode gauge {mode}
+	"orbit_security_mode_reason",                 // security: reason for current mode transition
 }
 
 // ---------------------------------------------------------------------------

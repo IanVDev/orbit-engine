@@ -473,6 +473,8 @@ func TestSecurityMetricsExist(t *testing.T) {
 	trackingBucketRejected.Inc()
 	realUsageAlive.Set(1)
 	IncrementRejected(RejectReasonHMAC)
+	securityModeGauge.WithLabelValues("normal").Set(1)
+	securityModeReasonGauge.WithLabelValues("abuse_ratio_normal").Set(1)
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -493,6 +495,8 @@ func TestSecurityMetricsExist(t *testing.T) {
 		"orbit_tracking_rejected_total",
 		"orbit_behavior_abuse_total",
 		"orbit_behavior_abuse_ratio",
+		"orbit_security_mode",
+		"orbit_security_mode_reason",
 	}
 	for _, name := range expected {
 		if !fm[name] {
@@ -515,6 +519,8 @@ func TestSecurityGovernanceAllowsMetrics(t *testing.T) {
 		"orbit_tracking_rejected_total",
 		"orbit_behavior_abuse_total",
 		"orbit_behavior_abuse_ratio",
+		"orbit_security_mode",
+		"orbit_security_mode_reason",
 	}
 	for _, m := range metrics {
 		if err := ValidatePromQLStrict(m); err != nil {
@@ -1550,4 +1556,140 @@ func TestThresholdByConfidence(t *testing.T) {
 			t.Fatalf("with empty fp, confidence should be Low, got %d", c)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// 32. TestEnterElevatedMode — abuse_ratio > 0.1 triggers ELEVATED
+// ---------------------------------------------------------------------------
+
+func TestEnterElevatedMode(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	// Below threshold → NORMAL
+	mode := EvaluateSecurityMode(0.05)
+	if mode != ModeNormal {
+		t.Fatalf("expected NORMAL at ratio=0.05, got %s", SecurityModeName(mode))
+	}
+
+	// Above 0.1 → ELEVATED
+	mode = EvaluateSecurityMode(0.15)
+	if mode != ModeElevated {
+		t.Fatalf("expected ELEVATED at ratio=0.15, got %s", SecurityModeName(mode))
+	}
+	if GetSecurityMode() != ModeElevated {
+		t.Fatal("GetSecurityMode should return ELEVATED")
+	}
+
+	// Verify rate limit capacity is reduced 50%
+	cap := EffectiveRateLimitCapacity(ModeElevated)
+	if cap != 2.5 {
+		t.Fatalf("ELEVATED capacity should be 2.5, got %.1f", cap)
+	}
+
+	// Verify behavior threshold is reduced by 1
+	if EffectiveBehaviorThreshold(5, ModeElevated) != 4 {
+		t.Fatal("ELEVATED should reduce threshold by 1 (5→4)")
+	}
+	if EffectiveBehaviorThreshold(3, ModeElevated) != 2 {
+		t.Fatal("ELEVATED should reduce threshold by 1 (3→2)")
+	}
+	if EffectiveBehaviorThreshold(1, ModeElevated) != 1 {
+		t.Fatal("ELEVATED should not reduce threshold below 1")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 33. TestEnterLockdownMode — abuse_ratio > 0.3 triggers LOCKDOWN
+// ---------------------------------------------------------------------------
+
+func TestEnterLockdownMode(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	mode := EvaluateSecurityMode(0.5)
+	if mode != ModeLockdown {
+		t.Fatalf("expected LOCKDOWN at ratio=0.5, got %s", SecurityModeName(mode))
+	}
+	if GetSecurityMode() != ModeLockdown {
+		t.Fatal("GetSecurityMode should return LOCKDOWN")
+	}
+
+	// Verify rate limit capacity is reduced 80%
+	cap := EffectiveRateLimitCapacity(ModeLockdown)
+	if cap != 1.0 {
+		t.Fatalf("LOCKDOWN capacity should be 1.0, got %.1f", cap)
+	}
+
+	// Verify behavior threshold is reduced by 2
+	if EffectiveBehaviorThreshold(5, ModeLockdown) != 3 {
+		t.Fatal("LOCKDOWN should reduce threshold by 2 (5→3)")
+	}
+	if EffectiveBehaviorThreshold(2, ModeLockdown) != 1 {
+		t.Fatal("LOCKDOWN should not reduce threshold below 1")
+	}
+
+	// Verify low-confidence fingerprints are blocked
+	if !ShouldBlockLowConfidence(ModeLockdown, ConfidenceLow) {
+		t.Fatal("LOCKDOWN should block low-confidence fingerprints")
+	}
+	if ShouldBlockLowConfidence(ModeLockdown, ConfidenceMedium) {
+		t.Fatal("LOCKDOWN should NOT block medium-confidence fingerprints")
+	}
+	if ShouldBlockLowConfidence(ModeLockdown, ConfidenceHigh) {
+		t.Fatal("LOCKDOWN should NOT block high-confidence fingerprints")
+	}
+	if ShouldBlockLowConfidence(ModeNormal, ConfidenceLow) {
+		t.Fatal("NORMAL should NOT block low-confidence fingerprints")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 34. TestRecoverToNormal — mode returns to NORMAL when abuse ratio drops
+// ---------------------------------------------------------------------------
+
+func TestRecoverToNormal(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	// Escalate to LOCKDOWN
+	EvaluateSecurityMode(0.5)
+	if GetSecurityMode() != ModeLockdown {
+		t.Fatal("should be LOCKDOWN")
+	}
+
+	// Drop to ELEVATED range
+	mode := EvaluateSecurityMode(0.2)
+	if mode != ModeElevated {
+		t.Fatalf("expected ELEVATED at ratio=0.2, got %s", SecurityModeName(mode))
+	}
+
+	// Drop to NORMAL range
+	mode = EvaluateSecurityMode(0.05)
+	if mode != ModeNormal {
+		t.Fatalf("expected NORMAL at ratio=0.05, got %s", SecurityModeName(mode))
+	}
+	if GetSecurityMode() != ModeNormal {
+		t.Fatal("GetSecurityMode should return NORMAL after recovery")
+	}
+
+	// Verify NORMAL has default capacity and threshold
+	if EffectiveRateLimitCapacity(ModeNormal) != 5.0 {
+		t.Fatal("NORMAL capacity should be 5.0")
+	}
+	if EffectiveBehaviorThreshold(5, ModeNormal) != 5 {
+		t.Fatal("NORMAL should not adjust threshold")
+	}
+
+	// Edge: exact boundary (0.1) → NORMAL (need > 0.1 for ELEVATED)
+	mode = EvaluateSecurityMode(0.1)
+	if mode != ModeNormal {
+		t.Fatalf("exact 0.1 should be NORMAL (need > 0.1 for ELEVATED), got %s", SecurityModeName(mode))
+	}
+
+	// Edge: exact boundary (0.3) → ELEVATED (need > 0.3 for LOCKDOWN)
+	mode = EvaluateSecurityMode(0.3)
+	if mode != ModeElevated {
+		t.Fatalf("exact 0.3 should be ELEVATED (need > 0.3 for LOCKDOWN), got %s", SecurityModeName(mode))
+	}
 }

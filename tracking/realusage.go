@@ -174,8 +174,25 @@ func TrackHandler() http.HandlerFunc {
 		acceptLang := r.Header.Get("Accept-Language")
 		fingerprint := ClientFingerprint(clientID, clientIP, userAgent, acceptLang)
 
-		// 5. Token bucket rate limit per client fingerprint
-		if err := CheckTokenBucket(fingerprint); err != nil {
+		// 4b. Security Mode evaluation — adapts enforcement based on abuse ratio
+		confidence := ClassifyConfidence(clientID, fingerprint)
+		secMode := EvaluateSecurityMode(getCurrentAbuseRatio())
+
+		// LOCKDOWN: block low-confidence fingerprints immediately (fail-closed)
+		if ShouldBlockLowConfidence(secMode, confidence) {
+			IncrementRejected("security_mode_lockdown")
+			rejectionLog("security_mode_lockdown", fingerprint, eventID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    "blocked: security lockdown active for low-confidence clients",
+				"event_id": eventID,
+			})
+			return
+		}
+
+		// 5. Token bucket rate limit per client fingerprint (mode-adjusted)
+		if err := CheckTokenBucketWithMode(fingerprint, secMode); err != nil {
 			trackingBucketRejected.Inc()
 			IncrementRejected(RejectReasonRateLimit)
 			rejectionLog(RejectReasonRateLimit, fingerprint, eventID)

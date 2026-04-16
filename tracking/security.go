@@ -16,6 +16,7 @@
 // 12. Structured rejection logging
 // 13. Cardinality protection (no dynamic labels)
 // 14. Behavior abuse detection (repeated-payload heuristic)
+// 15. Security Mode (automatic NORMAL → ELEVATED → LOCKDOWN based on abuse ratio)
 //
 // Design: fail-closed everywhere. Unknown state → reject.
 // No external dependencies beyond crypto/hmac (stdlib).
@@ -324,6 +325,45 @@ func CheckTokenBucket(key string) error {
 	if !tb.allow(now) {
 		return fmt.Errorf("tracking: token bucket exhausted for %s (capacity=%.0f, refill=%.1f/s)",
 			key, bucketCapacity, bucketRefillRate)
+	}
+	return nil
+}
+
+// CheckTokenBucketWithMode enforces token-bucket rate limiting with a
+// security-mode-adjusted capacity. New buckets are created with effectiveCap;
+// existing buckets have their capacity dynamically reduced.
+func CheckTokenBucketWithMode(key string, mode SecurityMode) error {
+	effectiveCap := EffectiveRateLimitCapacity(mode)
+
+	bucketMu.Lock()
+	defer bucketMu.Unlock()
+
+	if bucketDisabled {
+		return nil
+	}
+
+	now := bucketTimeNow()
+	tb, ok := sessionBuckets[key]
+	if !ok {
+		tb = &tokenBucket{
+			tokens:     effectiveCap,
+			lastRefill: now,
+			capacity:   effectiveCap,
+			refillRate: bucketRefillRate,
+		}
+		sessionBuckets[key] = tb
+	} else {
+		// Dynamically adjust capacity for existing buckets
+		tb.capacity = effectiveCap
+		if tb.tokens > effectiveCap {
+			tb.tokens = effectiveCap
+		}
+	}
+	bucketLastAccess[key] = now
+
+	if !tb.allow(now) {
+		return fmt.Errorf("tracking: token bucket exhausted for %s (capacity=%.0f, refill=%.1f/s)",
+			key, effectiveCap, bucketRefillRate)
 	}
 	return nil
 }
@@ -796,6 +836,9 @@ func CheckBehaviorAbuse(fingerprint, eventID string, payloadLen int, clientID st
 	confidence := ClassifyConfidence(clientID, fingerprint)
 	threshold := behaviorThresholdFor(confidence)
 
+	// Apply security mode adjustment (ELEVATED/LOCKDOWN → stricter)
+	threshold = EffectiveBehaviorThreshold(threshold, GetSecurityMode())
+
 	behaviorMu.Lock()
 	defer behaviorMu.Unlock()
 
@@ -832,6 +875,11 @@ func CheckBehaviorAbuse(fingerprint, eventID string, payloadLen int, clientID st
 	// Compute ratio for gauge (even if not blocked)
 	ratio := float64(matches) / float64(limit)
 	behaviorAbuseRatio.Set(ratio)
+	// Only feed global abuse ratio when window has enough samples to be meaningful.
+	// This prevents a single event (1/1=1.0) from escalating security mode.
+	if limit >= 5 {
+		setCurrentAbuseRatio(ratio)
+	}
 
 	if matches >= threshold {
 		// Structured log with full context
@@ -874,6 +922,8 @@ func ResetBehaviorAbuse() {
 	behaviorMu.Lock()
 	behaviorMap = make(map[string]*behaviorWindow)
 	behaviorMu.Unlock()
+	setCurrentAbuseRatio(0)
+	ResetSecurityMode()
 }
 
 // CleanupBehaviorState evicts stale behavior windows. Called by CleanupExpiredState.
@@ -889,6 +939,191 @@ func CleanupBehaviorState() int {
 		}
 	}
 	return evicted
+}
+
+// ---------------------------------------------------------------------------
+// 15. Security Mode — automatic escalation based on abuse ratio
+// ---------------------------------------------------------------------------
+//
+// Three modes: NORMAL → ELEVATED → LOCKDOWN.
+// Transitions are driven by the current behaviorAbuseRatio gauge:
+//   abuse_ratio > 0.3 → LOCKDOWN
+//   abuse_ratio > 0.1 → ELEVATED
+//   abuse_ratio ≤ 0.1 → NORMAL   (recovery)
+//
+// Effects:
+//   ELEVATED  — rate limit capacity reduced 50%, behavior threshold reduced by 1
+//   LOCKDOWN  — rate limit capacity reduced 80%, low-confidence fingerprints blocked
+//
+// Design: fail-closed, no external deps, deterministic, O(1) per evaluation.
+
+// SecurityMode represents the current security posture.
+type SecurityMode int
+
+const (
+	ModeNormal SecurityMode = iota
+	ModeElevated
+	ModeLockdown
+)
+
+// Security mode thresholds (abuse ratio → mode).
+const (
+	elevatedThreshold = 0.1
+	lockdownThreshold = 0.3
+)
+
+var (
+	securityModeMu      sync.RWMutex
+	currentSecurityMode SecurityMode = ModeNormal
+
+	// securityModeTimeNow allows deterministic testing.
+	securityModeTimeNow = time.Now
+)
+
+// SecurityModeName returns the string label for a given mode.
+func SecurityModeName(m SecurityMode) string {
+	switch m {
+	case ModeElevated:
+		return "elevated"
+	case ModeLockdown:
+		return "lockdown"
+	default:
+		return "normal"
+	}
+}
+
+// GetSecurityMode returns the current security mode (safe for concurrent use).
+func GetSecurityMode() SecurityMode {
+	securityModeMu.RLock()
+	defer securityModeMu.RUnlock()
+	return currentSecurityMode
+}
+
+// EvaluateSecurityMode reads the current abuse ratio and transitions the
+// security mode accordingly. Returns the new mode. Safe for concurrent use.
+// Call this on every request — it is O(1) with no allocations on no-change path.
+func EvaluateSecurityMode(abuseRatio float64) SecurityMode {
+	var newMode SecurityMode
+	switch {
+	case abuseRatio > lockdownThreshold:
+		newMode = ModeLockdown
+	case abuseRatio > elevatedThreshold:
+		newMode = ModeElevated
+	default:
+		newMode = ModeNormal
+	}
+
+	securityModeMu.Lock()
+	prev := currentSecurityMode
+	currentSecurityMode = newMode
+	securityModeMu.Unlock()
+
+	// Emit log + update metrics only on transition
+	if newMode != prev {
+		securityModeLog(prev, newMode, abuseRatio)
+		updateSecurityModeMetrics(newMode, abuseRatio)
+	}
+
+	return newMode
+}
+
+// EffectiveRateLimitCapacity returns the adjusted token bucket capacity
+// based on the current security mode.
+//
+//	NORMAL   → bucketCapacity (5.0)
+//	ELEVATED → bucketCapacity * 0.5  (50% reduction)
+//	LOCKDOWN → bucketCapacity * 0.2  (80% reduction)
+func EffectiveRateLimitCapacity(mode SecurityMode) float64 {
+	switch mode {
+	case ModeElevated:
+		return bucketCapacity * 0.5
+	case ModeLockdown:
+		return bucketCapacity * 0.2
+	default:
+		return bucketCapacity
+	}
+}
+
+// EffectiveBehaviorThreshold returns the adjusted behavior abuse threshold.
+// In ELEVATED mode, threshold is reduced by 1 (more aggressive detection).
+// In LOCKDOWN mode, threshold is reduced by 2 (minimum 1).
+func EffectiveBehaviorThreshold(base int, mode SecurityMode) int {
+	switch mode {
+	case ModeElevated:
+		if base > 1 {
+			return base - 1
+		}
+		return 1
+	case ModeLockdown:
+		if base > 2 {
+			return base - 2
+		}
+		return 1
+	default:
+		return base
+	}
+}
+
+// ShouldBlockLowConfidence returns true when LOCKDOWN is active and the
+// fingerprint has low confidence. Fail-closed: block.
+func ShouldBlockLowConfidence(mode SecurityMode, confidence FingerprintConfidence) bool {
+	return mode == ModeLockdown && confidence == ConfidenceLow
+}
+
+// securityModeLog emits structured JSON on every mode transition.
+func securityModeLog(prev, next SecurityMode, abuseRatio float64) {
+	entry := map[string]interface{}{
+		"type":        "security_mode_change",
+		"from":        SecurityModeName(prev),
+		"to":          SecurityModeName(next),
+		"abuse_ratio": abuseRatio,
+		"timestamp":   securityModeTimeNow().UTC().Format(time.RFC3339Nano),
+	}
+	line, _ := json.Marshal(entry)
+	log.Printf("[SECURITY_MODE] %s", line)
+}
+
+// updateSecurityModeMetrics sets the orbit_security_mode gauge vector and reason.
+func updateSecurityModeMetrics(mode SecurityMode, abuseRatio float64) {
+	// Reset all mode labels to 0, set active to 1
+	for _, m := range []string{"normal", "elevated", "lockdown"} {
+		securityModeGauge.WithLabelValues(m).Set(0)
+	}
+	securityModeGauge.WithLabelValues(SecurityModeName(mode)).Set(1)
+
+	reason := "abuse_ratio_normal"
+	switch mode {
+	case ModeElevated:
+		reason = fmt.Sprintf("abuse_ratio_elevated(%.3f>%.1f)", abuseRatio, elevatedThreshold)
+	case ModeLockdown:
+		reason = fmt.Sprintf("abuse_ratio_lockdown(%.3f>%.1f)", abuseRatio, lockdownThreshold)
+	}
+	securityModeReasonGauge.WithLabelValues(reason).Set(1)
+}
+
+// ResetSecurityMode resets the security mode to NORMAL. For testing ONLY.
+func ResetSecurityMode() {
+	securityModeMu.Lock()
+	currentSecurityMode = ModeNormal
+	securityModeMu.Unlock()
+}
+
+// getCurrentAbuseRatio reads the latest abuse ratio stored by CheckBehaviorAbuse.
+// We track it as an atomic-like variable alongside the gauge to avoid reading
+// from Prometheus internals.
+var currentAbuseRatio float64
+var abuseRatioMu sync.RWMutex
+
+func setCurrentAbuseRatio(r float64) {
+	abuseRatioMu.Lock()
+	currentAbuseRatio = r
+	abuseRatioMu.Unlock()
+}
+
+func getCurrentAbuseRatio() float64 {
+	abuseRatioMu.RLock()
+	defer abuseRatioMu.RUnlock()
+	return currentAbuseRatio
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,6 +1268,25 @@ var (
 				"High values indicate potential abuse patterns building up.",
 		},
 	)
+
+	// orbit_security_mode{mode}: active security mode (1 for active, 0 for inactive).
+	securityModeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "orbit_security_mode",
+			Help: "Active security mode: normal, elevated, or lockdown. " +
+				"Exactly one label value is 1 at any time.",
+		},
+		[]string{"mode"},
+	)
+
+	// orbit_security_mode_reason{reason}: human-readable reason for current mode.
+	securityModeReasonGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "orbit_security_mode_reason",
+			Help: "Reason for the current security mode transition.",
+		},
+		[]string{"reason"},
+	)
 )
 
 // RejectReason constants for the unified rejection metric.
@@ -1063,6 +1317,8 @@ func RegisterSecurityMetrics(reg prometheus.Registerer) {
 		trackingRejectedTotal,
 		behaviorAbuseTotal,
 		behaviorAbuseRatio,
+		securityModeGauge,
+		securityModeReasonGauge,
 	)
 }
 

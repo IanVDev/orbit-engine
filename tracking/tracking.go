@@ -608,6 +608,8 @@ func ResetRateLimit() {
 	ResetTokenBuckets()
 	ResetDedup()
 	ResetCriticalDedup()
+	ResetBehaviorAbuse()
+	ResetSecurityMode()
 }
 
 // DisableRateLimit disables rate limiting entirely. For testing ONLY.
