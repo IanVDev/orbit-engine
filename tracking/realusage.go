@@ -213,8 +213,8 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 6b. Behavior abuse detection — repeated-payload heuristic
-		if err := CheckBehaviorAbuse(fingerprint, eventID); err != nil {
+		// 6b. Behavior abuse detection — similarity-aware, adaptive threshold
+		if err := CheckBehaviorAbuse(fingerprint, eventID, len(rawBody), clientID); err != nil {
 			behaviorAbuseTotal.Inc()
 			IncrementRejected(RejectReasonBehavior)
 			rejectionLog(RejectReasonBehavior, fingerprint, eventID)

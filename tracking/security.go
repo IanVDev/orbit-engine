@@ -681,32 +681,94 @@ func HighCardinalityLabels() []string {
 }
 
 // ---------------------------------------------------------------------------
-// 14. Behavior Abuse Detection — repeated-payload heuristic
+// 14. Behavior Abuse Detection v2 — similarity-aware, adaptive threshold
 // ---------------------------------------------------------------------------
 //
-// Detects abusive patterns without deep inspection:
-//   - Identical payloads (same hash prefix) within a sliding window
-//   - Low entropy: many near-identical events from the same fingerprint
+// Detects abusive patterns using a composite similarity key:
+//   similarityKey = prefix(eventID, 8) + "|" + sizeBucket(payloadLen)
 //
-// The sliding window is per-fingerprint and holds the last N event hashes.
-// If K out of N hashes share the same 16-byte prefix, the client is blocked.
+// Size buckets: 0-127, 128-255, 256-511, 512-1023, 1024-2047, 2048+
+// This catches attackers who make minor variations (timestamps, IDs) while
+// keeping the same payload structure and approximate size.
 //
-// Parameters (tuned for fail-closed safety, not throughput):
+// Threshold adapts to fingerprint confidence:
+//   High   (has client_id)         → 5 identical similarity keys
+//   Medium (has IP + UA, no cid)   → 4
+//   Low    (restricted fingerprint)→ 3
+//
+// Parameters:
 //   behaviorWindowSize = 20 events retained per fingerprint
-//   behaviorThreshold  = 5  identical hashes within window → block
 //   behaviorTTL        = 2 min inactivity → evict window
-//
-// Reason: "behavior_abuse" in orbit_tracking_rejected_total.
 
 const (
 	behaviorWindowSize = 20
-	behaviorThreshold  = 5
 	behaviorTTL        = 2 * time.Minute
 )
 
-// behaviorWindow holds the most recent event hash prefixes for one client.
+// FingerprintConfidence levels determine behavior abuse thresholds.
+type FingerprintConfidence int
+
+const (
+	ConfidenceLow    FingerprintConfidence = iota // fp:restricted or empty
+	ConfidenceMedium                              // IP+UA only, no client_id
+	ConfidenceHigh                                // has X-Orbit-Client-Id
+)
+
+// behaviorThresholdFor returns the abuse threshold for a given confidence.
+func behaviorThresholdFor(c FingerprintConfidence) int {
+	switch c {
+	case ConfidenceHigh:
+		return 5
+	case ConfidenceMedium:
+		return 4
+	default:
+		return 3
+	}
+}
+
+// ClassifyConfidence returns the fingerprint confidence based on clientID
+// and fingerprint value. Exported for testing.
+func ClassifyConfidence(clientID, fingerprint string) FingerprintConfidence {
+	if clientID != "" {
+		return ConfidenceHigh
+	}
+	if fingerprint == "fp:restricted" || fingerprint == "" {
+		return ConfidenceLow
+	}
+	return ConfidenceMedium
+}
+
+// sizeBucket returns a coarse size bucket string for a payload length.
+// Buckets: "0-127", "128-255", "256-511", "512-1023", "1024-2047", "2048+"
+func sizeBucket(payloadLen int) string {
+	switch {
+	case payloadLen < 128:
+		return "0-127"
+	case payloadLen < 256:
+		return "128-255"
+	case payloadLen < 512:
+		return "256-511"
+	case payloadLen < 1024:
+		return "512-1023"
+	case payloadLen < 2048:
+		return "1024-2047"
+	default:
+		return "2048+"
+	}
+}
+
+// similarityKey builds the composite key from event hash prefix + size bucket.
+func similarityKey(eventID string, payloadLen int) string {
+	prefix := eventID
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	return prefix + "|" + sizeBucket(payloadLen)
+}
+
+// behaviorWindow holds the most recent similarity keys for one client.
 type behaviorWindow struct {
-	hashes   [behaviorWindowSize]string
+	keys     [behaviorWindowSize]string
 	count    int       // total events ever (mod ring for position)
 	lastSeen time.Time // for TTL eviction
 }
@@ -719,17 +781,20 @@ var (
 // RejectReasonBehavior is the rejection reason for behavior abuse.
 const RejectReasonBehavior = "behavior_abuse"
 
-// CheckBehaviorAbuse records the event hash prefix for the given fingerprint
+// CheckBehaviorAbuse records the similarity key for the given fingerprint
 // and returns an error if the heuristic detects abusive repetition.
-// The hashPrefix should be the first 16 hex chars of the event_id (8 bytes).
+//
+// Parameters:
+//   - fingerprint: client identity hash
+//   - eventID: SHA-256 hex of canonical payload
+//   - payloadLen: raw body length in bytes
+//   - clientID: X-Orbit-Client-Id header (for confidence classification)
 //
 // Safe for concurrent use. Fail-closed: any internal inconsistency → reject.
-func CheckBehaviorAbuse(fingerprint, eventID string) error {
-	// Use first 16 hex chars as the comparison prefix (8 bytes of SHA-256).
-	prefix := eventID
-	if len(prefix) > 16 {
-		prefix = prefix[:16]
-	}
+func CheckBehaviorAbuse(fingerprint, eventID string, payloadLen int, clientID string) error {
+	key := similarityKey(eventID, payloadLen)
+	confidence := ClassifyConfidence(clientID, fingerprint)
+	threshold := behaviorThresholdFor(confidence)
 
 	behaviorMu.Lock()
 	defer behaviorMu.Unlock()
@@ -749,25 +814,59 @@ func CheckBehaviorAbuse(fingerprint, eventID string) error {
 
 	// Insert into ring buffer
 	pos := w.count % behaviorWindowSize
-	w.hashes[pos] = prefix
+	w.keys[pos] = key
 	w.count++
 
-	// Count how many entries in the window match this prefix
+	// Count how many entries in the window match this key
 	matches := 0
 	limit := behaviorWindowSize
 	if w.count < behaviorWindowSize {
 		limit = w.count
 	}
 	for i := 0; i < limit; i++ {
-		if w.hashes[i] == prefix {
+		if w.keys[i] == key {
 			matches++
 		}
 	}
 
-	if matches >= behaviorThreshold {
-		return fmt.Errorf("behavior abuse detected: %d/%d identical events in window", matches, limit)
+	// Compute ratio for gauge (even if not blocked)
+	ratio := float64(matches) / float64(limit)
+	behaviorAbuseRatio.Set(ratio)
+
+	if matches >= threshold {
+		// Structured log with full context
+		behaviorAbuseLog(fingerprint, key, matches, threshold, confidence)
+		return fmt.Errorf("behavior abuse detected: %d/%d similar events (threshold=%d, confidence=%s)",
+			matches, limit, threshold, confidenceName(confidence))
 	}
 	return nil
+}
+
+// confidenceName returns a human-readable name for log output.
+func confidenceName(c FingerprintConfidence) string {
+	switch c {
+	case ConfidenceHigh:
+		return "high"
+	case ConfidenceMedium:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// behaviorAbuseLog emits a structured JSON log for behavior abuse detections.
+func behaviorAbuseLog(fingerprint, simKey string, count, threshold int, confidence FingerprintConfidence) {
+	entry := map[string]interface{}{
+		"type":           "behavior_abuse",
+		"fingerprint":    fingerprint,
+		"similarity_key": simKey,
+		"match_count":    count,
+		"threshold":      threshold,
+		"confidence":     confidenceName(confidence),
+		"timestamp":      time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	line, _ := json.Marshal(entry)
+	log.Printf("[BEHAVIOR_ABUSE] %s", line)
 }
 
 // ResetBehaviorAbuse clears all behavior tracking state. For testing ONLY.
@@ -924,6 +1023,16 @@ var (
 			Help: "Total events rejected by behavior abuse detection (repeated-payload heuristic).",
 		},
 	)
+
+	// orbit_behavior_abuse_ratio: current highest similarity ratio in behavior windows.
+	// Range 0.0–1.0. Useful for dashboard visualization of abuse pressure.
+	behaviorAbuseRatio = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_behavior_abuse_ratio",
+			Help: "Current similarity ratio of the most recent behavior check (0.0–1.0). " +
+				"High values indicate potential abuse patterns building up.",
+		},
+	)
 )
 
 // RejectReason constants for the unified rejection metric.
@@ -953,6 +1062,7 @@ func RegisterSecurityMetrics(reg prometheus.Registerer) {
 		trackingBucketRejected,
 		trackingRejectedTotal,
 		behaviorAbuseTotal,
+		behaviorAbuseRatio,
 	)
 }
 

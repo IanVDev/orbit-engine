@@ -492,6 +492,7 @@ func TestSecurityMetricsExist(t *testing.T) {
 		"orbit_tracking_token_bucket_rejected_total",
 		"orbit_tracking_rejected_total",
 		"orbit_behavior_abuse_total",
+		"orbit_behavior_abuse_ratio",
 	}
 	for _, name := range expected {
 		if !fm[name] {
@@ -513,6 +514,7 @@ func TestSecurityGovernanceAllowsMetrics(t *testing.T) {
 		"orbit_tracking_token_bucket_rejected_total",
 		"orbit_tracking_rejected_total",
 		"orbit_behavior_abuse_total",
+		"orbit_behavior_abuse_ratio",
 	}
 	for _, m := range metrics {
 		if err := ValidatePromQLStrict(m); err != nil {
@@ -1314,30 +1316,32 @@ func TestBehaviorAbuseDetection(t *testing.T) {
 	defer ResetBehaviorAbuse()
 
 	fp := "fp:test-behavior-abuse"
-	// Same eventID simulates identical payloads
+	// Same eventID + same size simulates identical payloads
 	sameEventID := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	payloadLen := 200 // falls in 128-255 bucket
 
-	// First 4 should pass (threshold is 5)
+	// High confidence (has clientID) → threshold 5
+	// First 4 should pass
 	for i := 0; i < 4; i++ {
-		if err := CheckBehaviorAbuse(fp, sameEventID); err != nil {
+		if err := CheckBehaviorAbuse(fp, sameEventID, payloadLen, "my-client"); err != nil {
 			t.Fatalf("event %d should pass, got: %v", i+1, err)
 		}
 	}
 
-	// 5th identical → blocked
-	if err := CheckBehaviorAbuse(fp, sameEventID); err == nil {
-		t.Fatal("5th identical event should be blocked")
+	// 5th identical → blocked (threshold=5 for high confidence)
+	if err := CheckBehaviorAbuse(fp, sameEventID, payloadLen, "my-client"); err == nil {
+		t.Fatal("5th identical event should be blocked at high confidence")
 	}
 
 	// Different fingerprint should NOT be affected
 	fp2 := "fp:innocent-user"
-	if err := CheckBehaviorAbuse(fp2, sameEventID); err != nil {
+	if err := CheckBehaviorAbuse(fp2, sameEventID, payloadLen, "my-client"); err != nil {
 		t.Fatalf("different fingerprint should not be blocked: %v", err)
 	}
 
 	// Different event_id on original fingerprint should pass
 	differentID := "9999999999999999abcdef0123456789abcdef0123456789abcdef0123456789"
-	if err := CheckBehaviorAbuse(fp, differentID); err != nil {
+	if err := CheckBehaviorAbuse(fp, differentID, payloadLen, "my-client"); err != nil {
 		t.Fatalf("different event_id should pass: %v", err)
 	}
 }
@@ -1352,11 +1356,11 @@ func TestLegitHighFrequencyNotBlocked(t *testing.T) {
 
 	fp := "fp:legit-high-freq"
 
-	// 100 events, all unique → none should be blocked
+	// 100 events, all with unique prefix(8) → none should be blocked
 	for i := 0; i < 100; i++ {
-		// Generate unique event IDs
-		eventID := fmt.Sprintf("%016x%048x", i, 0)
-		if err := CheckBehaviorAbuse(fp, eventID); err != nil {
+		// Each event gets a unique 8-char prefix so similarity keys differ
+		eventID := fmt.Sprintf("%08x%056d", i, 0)
+		if err := CheckBehaviorAbuse(fp, eventID, i*64, "cid"); err != nil {
 			t.Fatalf("unique event %d should pass, got: %v", i, err)
 		}
 	}
@@ -1375,10 +1379,10 @@ func TestLegitHighFrequencyNotBlocked(t *testing.T) {
 	// Interleave: base, alt, base, alt, base, alt, base, alt
 	// Window will have 4x base + 4x alt = no single prefix reaches 5
 	for cycle := 0; cycle < 4; cycle++ {
-		if err := CheckBehaviorAbuse(fp, baseID+"0000000000000000000000000000000000000000000000000"); err != nil {
+		if err := CheckBehaviorAbuse(fp, baseID+"0000000000000000000000000000000000000000000000000", 200, "cid"); err != nil {
 			t.Fatalf("interleaved base event %d should pass: %v", cycle, err)
 		}
-		if err := CheckBehaviorAbuse(fp, altIDs[cycle]+"0000000000000000000000000000000000000000000000000"); err != nil {
+		if err := CheckBehaviorAbuse(fp, altIDs[cycle]+"0000000000000000000000000000000000000000000000000", 200, "cid"); err != nil {
 			t.Fatalf("interleaved alt event %d should pass: %v", cycle, err)
 		}
 	}
@@ -1416,4 +1420,134 @@ func TestBehaviorAbuseViaTrackHandler(t *testing.T) {
 	if lastCode != http.StatusTooManyRequests && lastCode != http.StatusConflict {
 		t.Fatalf("repeated identical payloads should eventually be blocked, last status=%d", lastCode)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 30. TestBehaviorAbuseWithMinorVariation — similar payloads (same prefix + size bucket)
+// ---------------------------------------------------------------------------
+
+func TestBehaviorAbuseWithMinorVariation(t *testing.T) {
+	ResetBehaviorAbuse()
+	defer ResetBehaviorAbuse()
+
+	fp := "fp:variation-test"
+
+	// Generate event IDs that share the first 8 hex chars but differ after.
+	// This simulates payloads with minor timestamp/ID variations but same structure.
+	// All have payloadLen in same bucket (128-255).
+	basePrefix := "deadbeef"
+
+	for i := 0; i < 4; i++ {
+		// Same first 8 chars, different suffix → same similarity key
+		eventID := fmt.Sprintf("%s%056x", basePrefix, i)
+		// payload lengths 150, 160, 170, 180 → all in bucket "128-255"
+		if err := CheckBehaviorAbuse(fp, eventID, 150+i*10, "my-cid"); err != nil {
+			t.Fatalf("variation event %d should pass (high confidence, threshold=5): %v", i, err)
+		}
+	}
+
+	// 5th with same prefix + same size bucket → blocked at high confidence (threshold=5)
+	eventID5 := fmt.Sprintf("%s%056x", basePrefix, 99)
+	if err := CheckBehaviorAbuse(fp, eventID5, 200, "my-cid"); err == nil {
+		t.Fatal("5th similar event should be blocked (same prefix + same size bucket)")
+	}
+
+	// Different prefix but same size bucket → should pass (resets nothing)
+	ResetBehaviorAbuse()
+	for i := 0; i < 4; i++ {
+		// Each has a UNIQUE prefix → no buildup
+		eventID := fmt.Sprintf("%08x%056x", i, 0)
+		if err := CheckBehaviorAbuse(fp, eventID, 200, "my-cid"); err != nil {
+			t.Fatalf("unique-prefix event %d should pass: %v", i, err)
+		}
+	}
+
+	// Same prefix but different size buckets → different similarity keys → should pass
+	ResetBehaviorAbuse()
+	sizes := []int{50, 150, 300, 600, 1200, 3000} // each in a different bucket
+	for i, sz := range sizes {
+		eventID := fmt.Sprintf("%s%056x", basePrefix, i)
+		if err := CheckBehaviorAbuse(fp, eventID, sz, "my-cid"); err != nil {
+			t.Fatalf("different-bucket event %d (size=%d) should pass: %v", i, sz, err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 31. TestThresholdByConfidence — adaptive threshold per confidence level
+// ---------------------------------------------------------------------------
+
+func TestThresholdByConfidence(t *testing.T) {
+	eventID := "cafebabe0000000000000000000000000000000000000000000000000000000"
+	payloadLen := 200
+
+	// ── Low confidence (fp:restricted, no clientID) → threshold=3 ──
+	t.Run("low_confidence_threshold_3", func(t *testing.T) {
+		ResetBehaviorAbuse()
+		defer ResetBehaviorAbuse()
+
+		fp := "fp:restricted"
+		// 2 should pass
+		for i := 0; i < 2; i++ {
+			if err := CheckBehaviorAbuse(fp, eventID, payloadLen, ""); err != nil {
+				t.Fatalf("low-confidence event %d should pass: %v", i, err)
+			}
+		}
+		// 3rd → blocked
+		if err := CheckBehaviorAbuse(fp, eventID, payloadLen, ""); err == nil {
+			t.Fatal("3rd event at low confidence should be blocked (threshold=3)")
+		}
+	})
+
+	// ── Medium confidence (has IP+UA, no clientID) → threshold=4 ──
+	t.Run("medium_confidence_threshold_4", func(t *testing.T) {
+		ResetBehaviorAbuse()
+		defer ResetBehaviorAbuse()
+
+		fp := "fp:abcd1234abcd1234abcd1234abcd1234" // not restricted
+		// 3 should pass
+		for i := 0; i < 3; i++ {
+			if err := CheckBehaviorAbuse(fp, eventID, payloadLen, ""); err != nil {
+				t.Fatalf("medium-confidence event %d should pass: %v", i, err)
+			}
+		}
+		// 4th → blocked
+		if err := CheckBehaviorAbuse(fp, eventID, payloadLen, ""); err == nil {
+			t.Fatal("4th event at medium confidence should be blocked (threshold=4)")
+		}
+	})
+
+	// ── High confidence (has clientID) → threshold=5 ──
+	t.Run("high_confidence_threshold_5", func(t *testing.T) {
+		ResetBehaviorAbuse()
+		defer ResetBehaviorAbuse()
+
+		fp := "fp:abcd1234abcd1234abcd1234abcd1234"
+		// 4 should pass
+		for i := 0; i < 4; i++ {
+			if err := CheckBehaviorAbuse(fp, eventID, payloadLen, "real-client-id"); err != nil {
+				t.Fatalf("high-confidence event %d should pass: %v", i, err)
+			}
+		}
+		// 5th → blocked
+		if err := CheckBehaviorAbuse(fp, eventID, payloadLen, "real-client-id"); err == nil {
+			t.Fatal("5th event at high confidence should be blocked (threshold=5)")
+		}
+	})
+
+	// ── Verify ClassifyConfidence directly ──
+	t.Run("classify_confidence", func(t *testing.T) {
+		if c := ClassifyConfidence("cid-123", "fp:anything"); c != ConfidenceHigh {
+			t.Fatalf("with clientID, confidence should be High, got %d", c)
+		}
+		if c := ClassifyConfidence("", "fp:some-hash"); c != ConfidenceMedium {
+			t.Fatalf("without clientID + normal fp, confidence should be Medium, got %d", c)
+		}
+		if c := ClassifyConfidence("", "fp:restricted"); c != ConfidenceLow {
+			t.Fatalf("with restricted fp, confidence should be Low, got %d", c)
+		}
+		if c := ClassifyConfidence("", ""); c != ConfidenceLow {
+			t.Fatalf("with empty fp, confidence should be Low, got %d", c)
+		}
+	})
 }
