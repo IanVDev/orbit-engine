@@ -387,6 +387,16 @@ var (
 			Help: "Monotonically increasing counter incremented every 15s. Absence or stale rate means process is dead.",
 		},
 	)
+
+	// orbit_real_usage_total: incremented for every valid event successfully
+	// processed by TrackSkillEvent. Represents total real usage ingested by
+	// this tracking server instance (not simulated, not failed).
+	realUsageTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "orbit_real_usage_total",
+			Help: "Total valid skill events successfully processed by TrackSkillEvent.",
+		},
+	)
 )
 
 // registerOnce ensures metrics are registered exactly once.
@@ -424,6 +434,7 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			lastEventTimestampGauge,
 			skillActivationLatency,
 			heartbeatTotal,
+			realUsageTotal,
 		)
 		// Process is alive → tracking_up = 1.
 		// seed_mode stays 0 (production default) until SetSeedMode(true).
@@ -526,6 +537,9 @@ func TrackSkillEvent(event SkillEvent) error {
 	// 4. Update freshness gauge — PromQL can detect staleness via:
 	//    time() - orbit_last_event_timestamp > threshold
 	lastEventTimestampGauge.Set(float64(time.Now().Unix()))
+
+	// 5. Count every successfully processed event.
+	realUsageTotal.Inc()
 
 	return nil
 }

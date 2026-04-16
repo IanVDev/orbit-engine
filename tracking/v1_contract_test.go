@@ -36,6 +36,7 @@ func TestV1ContractComplete(t *testing.T) {
 		lastEventTimestampGauge,
 		skillActivationLatency,
 		heartbeatTotal,
+		realUsageTotal,
 	)
 
 	// Simulate one heartbeat tick so the counter is non-zero in gathered output.
@@ -114,6 +115,7 @@ func TestV1ContractComplete(t *testing.T) {
 		{"orbit_last_event_timestamp", dto.MetricType_GAUGE, &positive},
 		{"orbit_skill_activation_latency_seconds", dto.MetricType_HISTOGRAM, nil},
 		{"orbit_heartbeat_total", dto.MetricType_COUNTER, nil},
+		{"orbit_real_usage_total", dto.MetricType_COUNTER, nil},
 	}
 
 	for _, c := range contract {
@@ -207,11 +209,14 @@ func TestV1ContractComplete(t *testing.T) {
 			"orbit:sessions_total:prod",
 			"orbit:event_staleness_seconds:prod",
 			"orbit:seed_contamination",
+			"orbit:real_usage_total:prod",
 			"orbit_seed_mode",
 			"orbit_tracking_up",
 			"orbit_instance_id",
 			"orbit_last_event_timestamp",
 			"orbit_gateway_requests_total",
+			"orbit_heartbeat_total",
+			"orbit_real_usage_total",
 		}
 		for _, q := range allowedQueries {
 			if err := ValidatePromQLStrict(q); err != nil {

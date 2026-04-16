@@ -87,6 +87,11 @@ groups:
       - record: orbit:heartbeat_rate:prod
         expr: rate(orbit_heartbeat_total{env="prod"}[1m])
 
+      # ── real usage total (prod) ────────────────────────────────────
+      # Total valid events ingested. rate == 0 means no real usage tracked.
+      - record: orbit:real_usage_total:prod
+        expr: orbit_real_usage_total{env="prod"}
+
   # ── Alerting rules: operational safety ─────────────────────────────
   - name: orbit_alerts
     interval: 15s
