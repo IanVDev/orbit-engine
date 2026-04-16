@@ -28,6 +28,34 @@ class Model(str, Enum):
     OPUS = "opus"
 
 
+# ── Model Control ────────────────────────────────────────────────────
+
+class ModelControl(str, Enum):
+    """Explicit permission policy for model overrides.
+
+    Design: fail-closed. Unknown values raise ValueError at construction time
+    so the process refuses to start rather than silently allowing overrides.
+
+    locked  — never change the model (default / most restrictive).
+    auto    — apply existing heuristics; overrides are permitted.
+    suggest — compute what would change, return suggestion, do NOT override.
+    """
+    LOCKED  = "locked"
+    AUTO    = "auto"
+    SUGGEST = "suggest"
+
+    @classmethod
+    def parse(cls, value: str) -> "ModelControl":
+        """Fail-closed parser. Raises ValueError for unknown strings."""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            valid = ", ".join(m.value for m in cls)
+            raise ValueError(
+                f"model_control: unknown value {value!r} — valid values are {valid}"
+            )
+
+
 # Pricing per 1M tokens (USD). Update when Anthropic changes prices.
 MODEL_PRICING = {
     Model.SONNET: {"input": 3.00, "output": 15.00},
@@ -77,6 +105,7 @@ class RoutingRequest:
     force_opus: bool = False           # explicit override [opus]
     context_tokens: int = 0            # pre-counted if available
     previous_sonnet_failure: bool = False  # this task already failed on Sonnet
+    model_control: ModelControl = ModelControl.LOCKED  # override policy (default: locked)
 
 
 @dataclass
@@ -89,12 +118,18 @@ class RoutingDecision:
     escalation_score: int = 0
     escalation_reasons: list[str] = field(default_factory=list)
     estimated_cost: Optional[CostEstimate] = None
+    # model_control fields — populated when an override was evaluated.
+    model_control: ModelControl = ModelControl.LOCKED
+    model_override_requested: Optional[str] = None   # model that would have been chosen
+    model_override_applied: bool = False              # True only when control=auto + override
+    model_override_reason: Optional[str] = None      # why the override was/wasn't applied
+    model_override_confidence: float = 0.0           # 0.0–1.0
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "model": self.model.value,
             "blocked": self.blocked,
             "block_reason": self.block_reason,
@@ -105,6 +140,16 @@ class RoutingDecision:
             ),
             "timestamp": self.timestamp,
         }
+        # Only include override fields when relevant (reduces log noise).
+        if self.model_override_requested is not None:
+            d.update({
+                "model_control": self.model_control.value,
+                "model_override_requested": self.model_override_requested,
+                "model_override_applied": self.model_override_applied,
+                "model_override_reason": self.model_override_reason,
+                "model_override_confidence": self.model_override_confidence,
+            })
+        return d
 
 
 @dataclass
@@ -227,6 +272,7 @@ class ModelRouter:
                 model=Model.SONNET,
                 blocked=True,
                 block_reason="empty prompt (fail-closed)",
+                model_control=req.model_control,
             )
             self._log_decision(req, decision)
             return decision
@@ -243,6 +289,7 @@ class ModelRouter:
                 block_reason=(
                     f"context exceeds limit ({input_tokens:,} > {MAX_CONTEXT_TOKENS:,})"
                 ),
+                model_control=req.model_control,
             )
             self._log_decision(req, decision)
             return decision
@@ -276,8 +323,36 @@ class ModelRouter:
             score += 1
             reasons.append("critical_task_keywords")
 
-        # Choose model.
-        chosen = Model.OPUS if score >= ESCALATION_THRESHOLD else Model.SONNET
+        # Choose model based on score (before model_control enforcement).
+        heuristic_choice = Model.OPUS if score >= ESCALATION_THRESHOLD else Model.SONNET
+
+        # ── Model Control enforcement ────────────────────────────────────
+        chosen, override_decision = self._apply_model_control(
+            req, heuristic_choice, score, reasons
+        )
+        # If locked and override was attempted, log and return blocked.
+        # suggest mode does NOT block — it suppresses the override silently.
+        is_locked_block = (
+            not override_decision["allowed"]
+            and override_decision["override_attempted"]
+            and req.model_control == ModelControl.LOCKED
+        )
+        if is_locked_block:
+            decision = RoutingDecision(
+                model=Model.SONNET,
+                blocked=True,
+                block_reason=f"model_override_blocked: {override_decision['reason']}",
+                escalation_score=score,
+                escalation_reasons=reasons,
+                model_control=req.model_control,
+                model_override_requested=heuristic_choice.value,
+                model_override_applied=False,
+                model_override_reason=override_decision["reason"],
+                model_override_confidence=override_decision["confidence"],
+            )
+            self._log_decision(req, decision)
+            self._emit_override_log(req, decision, heuristic_choice)
+            return decision
 
         # Estimate cost for chosen model.
         estimate = self._estimate_cost(chosen, input_tokens, output_tokens)
@@ -304,6 +379,7 @@ class ModelRouter:
                         escalation_score=score,
                         escalation_reasons=reasons,
                         estimated_cost=estimate,
+                        model_control=req.model_control,
                     )
                     self._log_decision(req, decision)
                     return decision
@@ -318,6 +394,7 @@ class ModelRouter:
                     escalation_score=score,
                     escalation_reasons=reasons,
                     estimated_cost=estimate,
+                    model_control=req.model_control,
                 )
                 self._log_decision(req, decision)
                 return decision
@@ -341,9 +418,84 @@ class ModelRouter:
             escalation_score=score,
             escalation_reasons=reasons,
             estimated_cost=estimate,
+            model_control=req.model_control,
+            model_override_requested=heuristic_choice.value if heuristic_choice != chosen else None,
+            model_override_applied=override_decision["applied"],
+            model_override_reason=override_decision["reason"] if override_decision["override_attempted"] else None,
+            model_override_confidence=override_decision["confidence"],
         )
         self._log_decision(req, decision)
+        if override_decision["override_attempted"]:
+            self._emit_override_log(req, decision, heuristic_choice)
         return decision
+
+    def _apply_model_control(
+        self,
+        req: RoutingRequest,
+        heuristic_choice: Model,
+        score: int,
+        reasons: list[str],
+    ) -> tuple[Model, dict]:
+        """
+        Enforce the model_control policy.
+
+        Returns (chosen_model, override_info_dict).
+
+        override_info_dict keys:
+          override_attempted: bool  — True when heuristic would change model
+          allowed:            bool  — True when control permits the change
+          applied:            bool  — True when override actually took effect
+          reason:             str   — human-readable explanation
+          confidence:         float — 0.0–1.0 routing certainty
+        """
+        # Baseline model is always Sonnet.
+        would_change = heuristic_choice != Model.SONNET
+
+        if not would_change:
+            # No override needed — pass-through regardless of control.
+            return heuristic_choice, {
+                "override_attempted": False,
+                "allowed": True,
+                "applied": False,
+                "reason": "no_override_required",
+                "confidence": 1.0,
+            }
+
+        ctrl = req.model_control
+
+        if ctrl == ModelControl.LOCKED:
+            # Fail-closed: never change the model.
+            return Model.SONNET, {
+                "override_attempted": True,
+                "allowed": False,
+                "applied": False,
+                "reason": "blocked_by_locked_control",
+                "confidence": 1.0,
+            }
+
+        if ctrl == ModelControl.AUTO:
+            # Heuristics apply; override is permitted.
+            return heuristic_choice, {
+                "override_attempted": True,
+                "allowed": True,
+                "applied": True,
+                "reason": "override_permitted_by_auto_control",
+                "confidence": 1.0,
+            }
+
+        if ctrl == ModelControl.SUGGEST:
+            # Compute what would change but do not apply — return Sonnet.
+            return Model.SONNET, {
+                "override_attempted": True,
+                "allowed": False,
+                "applied": False,
+                "reason": "override_suppressed_suggest_only",
+                "confidence": 0.8,
+            }
+
+        # Unknown control value — should never reach here after parse validation,
+        # but guard defensively (fail-closed).
+        raise ValueError(f"model_control: unknown control {ctrl!r} in _apply_model_control")
 
     # ── Helpers ──────────────────────────────────────────────────
 
@@ -387,6 +539,31 @@ class ModelRouter:
             "prompt_tokens_estimated": (
                 req.context_tokens or self._estimate_tokens(req.prompt)
             ),
+            "model_control": req.model_control.value,
             **decision.to_dict(),
         }
         self._decisions_log.append(entry)
+
+    def _emit_override_log(
+        self, req: RoutingRequest, decision: RoutingDecision, heuristic_choice: Model
+    ) -> None:
+        """Emit a structured JSONL log line for every model override evaluation."""
+        entry = {
+            "timestamp": decision.timestamp,
+            "event": "model_override",
+            "session_id": req.session_id,
+            "task_id": req.task_id,
+            "control": req.model_control.value,
+            "from": Model.SONNET.value,        # baseline (before any change)
+            "to": heuristic_choice.value,       # what heuristics requested
+            "chosen": decision.model.value,     # what was actually used
+            "reason": decision.model_override_reason or "no_override",
+            "confidence": decision.model_override_confidence,
+            "override_applied": decision.model_override_applied,
+            "override_allowed": decision.model_override_applied or (
+                decision.model_control == ModelControl.AUTO
+            ),
+        }
+        # Structured JSONL — same format as other orbit-engine log events.
+        import sys
+        print(json.dumps(entry), file=sys.stderr, flush=True)

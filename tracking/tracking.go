@@ -122,6 +122,12 @@ type SkillEvent struct {
 	// SkillRouter decision metadata (optional — set by real_usage_client).
 	ActivationReason string `json:"activation_reason,omitempty"` // first signal from SkillRouter
 	ActivationPhase  string `json:"activation_phase,omitempty"`  // exploration | analysis | consolidation
+	// Model control fields (optional — used by TrackHandlerWithControl).
+	// ModelFrom is the current model; ModelTo is the requested override target.
+	// If ModelFrom == ModelTo or either is empty, no override is requested.
+	ModelFrom     string `json:"model_from,omitempty"`
+	ModelTo       string `json:"model_to,omitempty"`
+	ModelOverride string `json:"model_override,omitempty"` // reason for the override (informational)
 }
 
 // Validate returns an error if required fields are missing.
@@ -592,6 +598,10 @@ func TrackSkillEvent(event SkillEvent) error {
 
 	// 5. Count every successfully processed event.
 	realUsageTotal.Inc()
+
+	// 6. Record user-perceived value from suggestion engagement data.
+	//    Fail-closed: if classification is not possible (no suggestions), nothing happens.
+	RecordEventValue(event)
 
 	return nil
 }

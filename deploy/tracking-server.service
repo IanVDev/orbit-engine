@@ -1,0 +1,43 @@
+[Unit]
+Description=orbit-engine Tracking Server (fail-closed)
+Documentation=https://github.com/IanVDev/orbit-engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orbit
+Group=orbit
+
+# Fail-closed: restart forever, never leave tracking without a live server.
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
+
+# Binary path — deploy script installs versioned binary here.
+ExecStart=/usr/local/bin/tracking-server \
+    --model-control=locked \
+    --token-budget-session=100000 \
+    --token-budget-call=10000
+
+# Structured logging to journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tracking-server
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Environment — secrets and config, never committed.
+EnvironmentFile=-/etc/orbit-engine/tracking.env
+
+[Install]
+WantedBy=multi-user.target

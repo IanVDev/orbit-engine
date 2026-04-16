@@ -151,3 +151,41 @@ obs-import: obs-up
 clean:
 	cd tracking && go clean -testcache
 
+
+# ── Artifact build (para deploy soberano) ────────────────────────────────────
+#
+# Produz um binário versionado com commit SHA, versão e timestamp embutidos.
+# Usado pelo CI/CD para publicar artefatos no bucket de deploy.
+#
+# Uso:
+#   make build-artifact                 → usa commit atual
+#   VERSION=1.2.0 make build-artifact  → especifica versão
+#
+# Variáveis:
+#   VERSION   versão semântica  (padrão: 0.0.0)
+#   GOOS      sistema alvo      (padrão: local)
+#   GOARCH    arquitetura alvo  (padrão: local)
+
+VERSION ?= 0.0.0
+COMMIT  := $(shell git rev-parse --short HEAD)
+BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOS   ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+ARTIFACT_NAME := tracking-server-$(COMMIT)-$(GOOS)-$(GOARCH)
+
+.PHONY: build-artifact
+
+build-artifact:
+	@echo "══ build-artifact ══"
+	@echo "  commit:  $(COMMIT)"
+	@echo "  version: $(VERSION)"
+	@echo "  target:  $(GOOS)/$(GOARCH)"
+	@echo "  output:  tracking/$(ARTIFACT_NAME)"
+	cd tracking && go build \
+		-ldflags "-X main.CommitSHA=$(COMMIT) -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)" \
+		-o $(ARTIFACT_NAME) \
+		./cmd/main.go
+	shasum -a 256 tracking/$(ARTIFACT_NAME) > tracking/$(ARTIFACT_NAME).sha256
+	@echo "  sha256:  $$(cat tracking/$(ARTIFACT_NAME).sha256 | cut -c1-16)..."
+	@echo "✅ Artifact pronto: tracking/$(ARTIFACT_NAME)"
+	@echo "   Checksum:        tracking/$(ARTIFACT_NAME).sha256"

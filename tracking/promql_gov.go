@@ -51,6 +51,19 @@ var _allowedPrefixes = []string{
 	"orbit_security_mode",                        // security: active security mode gauge {mode}
 	"orbit_security_mode_reason",                 // security: reason for current mode transition
 	"orbit_security_mode_transitions_total",      // security: mode transition counter {from, to}
+	// Value-observability metrics (user-perceived value layer)
+	"orbit_user_perceived_value_total",     // value: perceived value events {level}
+	"orbit_user_returned_total",            // value: retention signal {fingerprint} (pseudonymous)
+	"orbit_user_accepted_suggestion_total", // value: suggestion accepted counter
+	"orbit_user_ignored_suggestion_total",  // value: suggestion ignored counter
+	"orbit_user_ignore_reason_total",       // value: inferred ignore reason {reason}
+	// Model-control metrics (override governance layer)
+	"orbit_model_override_total", // model-ctrl: override attempts {from, to, control, allowed}
+	"orbit_model_control_mode",   // model-ctrl: active control mode gauge {mode}
+	// Execution-governance metrics (exec-gov layer — runs before model_control)
+	"orbit_exec_gov_blocked_total",               // exec-gov: blocked verdicts {block_rule}
+	"orbit_exec_gov_allowed_total",               // exec-gov: allowed verdicts
+	"orbit_exec_gov_validation_duration_seconds", // exec-gov: validation latency histogram
 }
 
 // ---------------------------------------------------------------------------

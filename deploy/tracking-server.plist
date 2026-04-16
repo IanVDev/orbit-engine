@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd service for tracking-server (desenvolvimento local).
+  Instalar: cp tracking-server.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/tracking-server.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.orbit-engine.tracking-server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/tracking-server</string>
+    <string>--model-control=locked</string>
+    <string>--token-budget-session=100000</string>
+    <string>--token-budget-call=10000</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/usr/local/var/orbit-engine</string>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/orbit-engine/tracking-server.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/orbit-engine/tracking-server.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ORBIT_ENV</key>
+    <string>development</string>
+  </dict>
+</dict>
+</plist>
