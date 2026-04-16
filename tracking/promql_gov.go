@@ -64,6 +64,18 @@ var _allowedPrefixes = []string{
 	"orbit_exec_gov_blocked_total",               // exec-gov: blocked verdicts {block_rule}
 	"orbit_exec_gov_allowed_total",               // exec-gov: allowed verdicts
 	"orbit_exec_gov_validation_duration_seconds", // exec-gov: validation latency histogram
+	// Token-budget metrics (cost-governor layer)
+	"orbit_token_spent_total",        // budget: tokens consumed {session_id}
+	"orbit_token_per_call",           // budget: per-call token histogram (buckets, sum, count)
+	"orbit_token_budget_remaining",   // budget: remaining budget gauge
+	"orbit_token_allowed_total",      // budget: calls within budget {block_reason}
+	"orbit_token_blocked_total",      // budget: calls blocked {block_reason}
+	"orbit_token_usage_ratio",        // budget: used/max ratio gauge
+	// Token-reconcile metrics (actual-vs-estimated layer)
+	"orbit_token_actual_total",       // reconcile: actual tokens consumed {session_id}
+	"orbit_token_estimation_error",   // reconcile: estimation error gauge (actual-estimated)
+	// Reconcile auth metrics
+	"orbit_reconcile_auth_rejected_total", // reconcile-auth: rejected requests {reason}
 }
 
 // ---------------------------------------------------------------------------

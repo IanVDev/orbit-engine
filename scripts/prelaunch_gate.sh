@@ -4,19 +4,33 @@
 # Este script é o ÚNICO ponto de entrada para qualquer decisão de lançamento.
 # Se ele passar, o sistema está pronto. Se falhar, o sistema não lança.
 #
-# O script falha imediatamente (set -e) na primeira etapa que não passar.
-# Ordem importa: cada etapa é prerequisito da próxima.
+# Pipeline (ordem obrigatória — cada etapa é pré-requisito da próxima):
+#   0. Deploy soberano AURYA (deploy_tracking.sh) + /v1/runtime
+#   1. Health check dos serviços
+#   2. Contract tests (go test)
+#   3. Validação de artefatos estáticos
+#   4. Fault injection
+#   5. Python tests (run_tests.py)
+#   6. Observability integrity check --strict
+#   7. Missão de validação operacional
+#   8. Checklist de launch readiness
 #
 # Uso:
 #   ./scripts/prelaunch_gate.sh                    # gate completo
 #   ./scripts/prelaunch_gate.sh --smoke            # versão rápida (1h missão)
+#   ./scripts/prelaunch_gate.sh --skip-deploy      # pula deploy (serviço já está no ar)
 #   ./scripts/prelaunch_gate.sh --skip-mission     # pula missão (CI rápido)
 #   ./scripts/prelaunch_gate.sh --skip-faults      # pula fault injection
 #
 # Variáveis de ambiente:
-#   TRACKING_HOST  host:porta do tracking server (padrão: 127.0.0.1:9100)
-#   GATEWAY_HOST   host:porta do gateway (padrão: 127.0.0.1:9091)
-#   MISSION_HOURS  duração da missão em horas (padrão: 24, smoke: 1)
+#   TRACKING_HOST          host:porta do tracking server (padrão: 127.0.0.1:9100)
+#   GATEWAY_HOST           host:porta do gateway (padrão: 127.0.0.1:9091)
+#   MISSION_HOURS          duração da missão em horas (padrão: 24, smoke: 1)
+#   ORBIT_ENV              production | development (passado ao deploy_tracking.sh)
+#   ORBIT_ARTIFACT_URL     URL do artefato (s3:// ou https://) — obrigatório em prod
+#   ORBIT_ARTIFACT_SHA256  SHA-256 esperado do artefato
+#   ORBIT_EXPECTED_COMMIT  Commit SHA esperado no binário
+#   ORBIT_LOCAL_BINARY     Binário local (apenas em development)
 
 set -eo pipefail
 
@@ -27,6 +41,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRACKING_HOST="${TRACKING_HOST:-127.0.0.1:9100}"
 GATEWAY_HOST="${GATEWAY_HOST:-127.0.0.1:9091}"
 
+SKIP_DEPLOY=0
 SKIP_MISSION=0
 SKIP_FAULTS=0
 SMOKE=0
@@ -35,6 +50,7 @@ MISSION_HOURS="${MISSION_HOURS:-24}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --smoke)         SMOKE=1; MISSION_HOURS=1; shift ;;
+    --skip-deploy)   SKIP_DEPLOY=1; shift ;;
     --skip-mission)  SKIP_MISSION=1; shift ;;
     --skip-faults)   SKIP_FAULTS=1; shift ;;
     *) echo "Argumento desconhecido: $1"; exit 1 ;;
@@ -53,6 +69,13 @@ NC='\033[0m'
 GATE_PASS=0
 GATE_FAIL=0
 GATE_LOG="${REPO_ROOT}/prelaunch_gate.log"
+
+# ── Estado do sumário final ───────────────────────────────────────────
+SUMMARY_COMMIT="(não executado)"
+SUMMARY_HEALTH="(não executado)"
+SUMMARY_RECONCILE="(não executado)"
+SUMMARY_OBSERVABILITY="(não executado)"
+SUMMARY_TESTS="(não executado)"
 
 _header() {
   echo ""
@@ -107,20 +130,76 @@ echo "smoke=${SMOKE} skip_mission=${SKIP_MISSION} skip_faults=${SKIP_FAULTS}" >>
 _header "orbit-engine — PRELAUNCH GATE"
 echo ""
 echo -e "  Início: ${START_TS}"
-echo -e "  Modo:   $([ "$SMOKE" -eq 1 ] && echo 'SMOKE (1h)' || echo 'COMPLETO (${MISSION_HOURS}h)')"
+echo -e "  Modo:   $([ "$SMOKE" -eq 1 ] && echo 'SMOKE (1h)' || echo "COMPLETO (${MISSION_HOURS}h)")"
 echo -e "  Log:    ${GATE_LOG}"
 echo ""
+
+# ════════════════════════════════════════════════════════════════════
+# ETAPA 0 — Deploy soberano AURYA + validação de runtime
+# ════════════════════════════════════════════════════════════════════
+
+_header "ETAPA 0 / 8 — Deploy Soberano AURYA"
+
+DEPLOY_SCRIPT="${SCRIPT_DIR}/deploy_tracking.sh"
+[[ -x "${DEPLOY_SCRIPT}" ]] || _abort "deploy_tracking.sh não encontrado ou sem permissão execute: ${DEPLOY_SCRIPT}"
+
+if [[ "${SKIP_DEPLOY}" -eq 1 ]]; then
+  _warn "deploy pulado via --skip-deploy — assumindo binário já instalado e serviço no ar"
+  SUMMARY_COMMIT="(deploy pulado)"
+  SUMMARY_RECONCILE="(deploy pulado)"
+else
+  _step "Executando deploy_tracking.sh..."
+  # Herda todas as variáveis ORBIT_* do ambiente corrente.
+  # Fail-closed: qualquer falha no deploy aborta o gate imediatamente.
+  if ! "${DEPLOY_SCRIPT}"; then
+    _abort "deploy_tracking.sh falhou — gate abortado antes do primeiro health check"
+  fi
+  _pass "deploy_tracking.sh concluído"
+
+  # ── Validação /v1/runtime ─────────────────────────────────────────
+  _step "Validando /v1/runtime..."
+  RUNTIME_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+    "http://${TRACKING_HOST}/v1/runtime" 2>/dev/null || echo "000")
+
+  if [[ "${RUNTIME_STATUS}" != "200" ]]; then
+    _abort "/v1/runtime retornou HTTP ${RUNTIME_STATUS} — binário não expõe endpoint de runtime"
+  fi
+
+  RUNTIME_BODY=$(curl -s --max-time 5 "http://${TRACKING_HOST}/v1/runtime" 2>/dev/null || echo "{}")
+  ACTUAL_COMMIT=$(echo "${RUNTIME_BODY}" | python3 -c \
+    "import json,sys; d=json.load(sys.stdin); print(d.get('commit',''))" 2>/dev/null || echo "")
+  ACTUAL_VERSION=$(echo "${RUNTIME_BODY}" | python3 -c \
+    "import json,sys; d=json.load(sys.stdin); print(d.get('version',''))" 2>/dev/null || echo "")
+  ACTUAL_MODEL=$(echo "${RUNTIME_BODY}" | python3 -c \
+    "import json,sys; d=json.load(sys.stdin); print(d.get('model_control',''))" 2>/dev/null || echo "")
+
+  EXPECTED_COMMIT="${ORBIT_EXPECTED_COMMIT:-}"
+  if [[ -n "${EXPECTED_COMMIT}" ]]; then
+    if [[ "${ACTUAL_COMMIT}" == "${EXPECTED_COMMIT}" ]]; then
+      _pass "/v1/runtime commit validado: ${ACTUAL_COMMIT}"
+    else
+      _abort "/v1/runtime commit mismatch — esperado=${EXPECTED_COMMIT} binário=${ACTUAL_COMMIT}"
+    fi
+  else
+    _warn "/v1/runtime: ORBIT_EXPECTED_COMMIT não definido — commit não validado (actual: ${ACTUAL_COMMIT})"
+  fi
+
+  SUMMARY_COMMIT="${ACTUAL_COMMIT:-desconhecido}"
+  SUMMARY_RECONCILE="version=${ACTUAL_VERSION} model_control=${ACTUAL_MODEL}"
+fi
 
 # ════════════════════════════════════════════════════════════════════
 # ETAPA 1 — Health check dos serviços
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 1 / 6 — Health Check dos Serviços"
+_header "ETAPA 1 / 8 — Health Check dos Serviços"
 
 _step "Verificando tracking server (${TRACKING_HOST})"
 if curl -sf "http://${TRACKING_HOST}/health" >/dev/null 2>&1; then
   _pass "tracking server responde em /health"
+  SUMMARY_HEALTH="OK"
 else
+  SUMMARY_HEALTH="FAIL"
   _abort "tracking server não responde em http://${TRACKING_HOST}/health — suba o servidor antes de rodar o gate"
 fi
 
@@ -142,7 +221,7 @@ fi
 # ETAPA 2 — Contract tests (gate anti-regressão)
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 2 / 6 — Contract Tests (go test)"
+_header "ETAPA 2 / 8 — Contract Tests (go test)"
 
 _step "Rodando TestV1ContractComplete e TestV1GatewayMetricsContract"
 cd "${REPO_ROOT}/tracking"
@@ -150,7 +229,6 @@ cd "${REPO_ROOT}/tracking"
 TEST_OUTPUT=$(go test ./... -run "TestV1ContractComplete|TestV1GatewayMetricsContract" -v -count=1 2>&1)
 TEST_EXIT=$?
 
-# Contar subtests
 SUBTESTS_PASS=$(echo "$TEST_OUTPUT" | grep -c "--- PASS:" || true)
 SUBTESTS_FAIL=$(echo "$TEST_OUTPUT" | grep -c "--- FAIL:" || true)
 
@@ -181,7 +259,7 @@ _pass "suite completa passou"
 # ETAPA 3 — Validação de artefatos estáticos
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 3 / 6 — Validação de Artefatos Estáticos"
+_header "ETAPA 3 / 8 — Validação de Artefatos Estáticos"
 
 _step "Validando orbit_rules.yml"
 if command -v promtool >/dev/null 2>&1; then
@@ -239,7 +317,7 @@ fi
 # ETAPA 4 — Fault injection (gates detectam falhas reais)
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 4 / 6 — Fault Injection"
+_header "ETAPA 4 / 8 — Fault Injection"
 
 if [ "$SKIP_FAULTS" -eq 1 ]; then
   _warn "Fault injection pulado via --skip-faults"
@@ -267,10 +345,63 @@ else
 fi
 
 # ════════════════════════════════════════════════════════════════════
-# ETAPA 5 — Missão de validação contínua
+# ETAPA 5 — Python tests (run_tests.py)
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 5 / 6 — Missão de Validação Operacional (${MISSION_HOURS}h)"
+_header "ETAPA 5 / 8 — Python Tests (run_tests.py)"
+
+_step "Rodando tests/run_tests.py"
+cd "${REPO_ROOT}"
+
+PYTHON_TESTS_OUTPUT=$(python3 "${REPO_ROOT}/tests/run_tests.py" 2>&1)
+PYTHON_TESTS_EXIT=$?
+
+echo "${PYTHON_TESTS_OUTPUT}"
+
+PYTHON_PASS=$(echo "${PYTHON_TESTS_OUTPUT}" | grep -c "✅" || true)
+PYTHON_FAIL=$(echo "${PYTHON_TESTS_OUTPUT}" | grep -c "❌" || true)
+
+if [ "${PYTHON_TESTS_EXIT}" -ne 0 ] || [ "${PYTHON_FAIL}" -gt 0 ]; then
+  SUMMARY_TESTS="FAIL (${PYTHON_FAIL} falha(s))"
+  _abort "python tests falharam: ${PYTHON_FAIL} HARD assert(s) — ver output acima"
+fi
+
+SUMMARY_TESTS="PASS (${PYTHON_PASS} ok)"
+_pass "python tests: ${PYTHON_PASS} passou, ${PYTHON_FAIL} falhou"
+
+# ════════════════════════════════════════════════════════════════════
+# ETAPA 6 — Observability integrity check --strict (obrigatório)
+# ════════════════════════════════════════════════════════════════════
+
+_header "ETAPA 6 / 8 — Observability Integrity Check (--strict)"
+
+OBS_SCRIPT="${SCRIPT_DIR}/observability_integrity_check.sh"
+[[ -x "${OBS_SCRIPT}" ]] || _abort "observability_integrity_check.sh não encontrado: ${OBS_SCRIPT}"
+
+_step "Executando observability_integrity_check.sh --strict..."
+# --strict: warnings também são fatais. Zero tolerância pós-deploy.
+OBS_OUTPUT=$("${OBS_SCRIPT}" --strict 2>&1)
+OBS_EXIT=$?
+
+echo "${OBS_OUTPUT}"
+
+OBS_PASS=$(echo "${OBS_OUTPUT}" | grep -c "\[✓\]" || true)
+OBS_FAIL=$(echo "${OBS_OUTPUT}" | grep -c "\[✗\]" || true)
+OBS_WARN=$(echo "${OBS_OUTPUT}" | grep -c "\[~\]" || true)
+
+if [ "${OBS_EXIT}" -ne 0 ]; then
+  SUMMARY_OBSERVABILITY="FAIL (${OBS_FAIL} crítico(s), ${OBS_WARN} warning(s) em --strict)"
+  _abort "observability integrity check falhou — dados de produção não são confiáveis"
+fi
+
+SUMMARY_OBSERVABILITY="PASS (${OBS_PASS} ok, ${OBS_WARN} warnings)"
+_pass "observability --strict: ${OBS_PASS} pass, ${OBS_FAIL} fail, ${OBS_WARN} warn"
+
+# ════════════════════════════════════════════════════════════════════
+# ETAPA 7 — Missão de validação contínua
+# ════════════════════════════════════════════════════════════════════
+
+_header "ETAPA 7 / 8 — Missão de Validação Operacional (${MISSION_HOURS}h)"
 
 if [ "$SKIP_MISSION" -eq 1 ]; then
   _warn "Missão pulada via --skip-mission"
@@ -279,7 +410,6 @@ else
   _step "Rodando scripts/mission_24h.sh (MISSION_HOURS=${MISSION_HOURS})"
   cd "${REPO_ROOT}"
 
-  # Converte horas para minutos para o script de missão
   MISSION_MINUTES=$((MISSION_HOURS * 60))
 
   if bash "${SCRIPT_DIR}/mission_24h.sh" --duration "${MISSION_MINUTES}"; then
@@ -288,7 +418,6 @@ else
     _abort "missão falhou — sistema não sobreviveu à validação contínua"
   fi
 
-  # Verificar o log da missão para failures
   if [ -f "${REPO_ROOT}/mission_log.jsonl" ]; then
     MISSION_FAILURES=$(python3 -c "
 import json
@@ -316,10 +445,10 @@ print(failures)
 fi
 
 # ════════════════════════════════════════════════════════════════════
-# ETAPA 6 — Checklist de launch readiness (confirmação manual)
+# ETAPA 8 — Checklist de launch readiness (confirmação manual)
 # ════════════════════════════════════════════════════════════════════
 
-_header "ETAPA 6 / 6 — Launch Readiness Checklist"
+_header "ETAPA 8 / 8 — Launch Readiness Checklist"
 
 echo ""
 echo -e "  ${BOLD}Confirme cada item manualmente antes de prosseguir:${NC}"
@@ -344,10 +473,7 @@ for i in "${!CHECKLIST[@]}"; do
   n=$((i + 1))
   item="${CHECKLIST[$i]}"
 
-  # Itens 1-9 já foram verificados automaticamente acima
-  # Item 10 (seed contamination) verificamos via gateway
   if [ "$n" -eq 7 ]; then
-    # Alertmanager: verificação automática
     if curl -sf "http://127.0.0.1:9093/-/healthy" >/dev/null 2>&1; then
       echo -e "  [${n}/10] ${GREEN}✅ AUTO${NC} — ${item}"
       echo "[AUTO-PASS] ${item}" >> "${GATE_LOG}"
@@ -359,7 +485,6 @@ for i in "${!CHECKLIST[@]}"; do
       ALL_CONFIRMED=0
     fi
   elif [ "$n" -eq 10 ]; then
-    # Seed contamination: verificação automática via gateway
     SEED_VAL=$(curl -s "http://${GATEWAY_HOST}/api/v1/query?query=orbit:seed_contamination" 2>/dev/null | \
       python3 -c "
 import json, sys
@@ -381,7 +506,6 @@ except:
       ALL_CONFIRMED=0
     fi
   else
-    # Itens verificados pelas etapas anteriores
     echo -e "  [${n}/10] ${GREEN}✅ AUTO${NC} — ${item}"
     echo "[AUTO-PASS] ${item}" >> "${GATE_LOG}"
   fi
@@ -398,13 +522,22 @@ ELAPSED_MIN=$(( ELAPSED / 60 ))
 
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
+echo -e "${BOLD}  Sumário de Lançamento${NC}"
+echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  Tempo total: ${ELAPSED_MIN} minutos"
-echo -e "  Gates PASS:  ${GATE_PASS}"
-echo -e "  Gates FAIL:  ${GATE_FAIL}"
+echo -e "  Commit          : ${SUMMARY_COMMIT}"
+echo -e "  Health          : ${SUMMARY_HEALTH}"
+echo -e "  Reconcile       : ${SUMMARY_RECONCILE}"
+echo -e "  Observability   : ${SUMMARY_OBSERVABILITY}"
+echo -e "  Tests (Python)  : ${SUMMARY_TESTS}"
+echo ""
+echo -e "  Tempo total     : ${ELAPSED_MIN} minutos"
+echo -e "  Gates PASS      : ${GATE_PASS}"
+echo -e "  Gates FAIL      : ${GATE_FAIL}"
 echo ""
 
 echo "prelaunch_gate ended at ${END_TS} — pass=${GATE_PASS} fail=${GATE_FAIL}" >> "${GATE_LOG}"
+echo "summary commit=${SUMMARY_COMMIT} health=${SUMMARY_HEALTH} obs=${SUMMARY_OBSERVABILITY} tests=${SUMMARY_TESTS}" >> "${GATE_LOG}"
 
 if [ "$GATE_FAIL" -gt 0 ] || [ "$ALL_CONFIRMED" -eq 0 ]; then
   echo -e "${RED}${BOLD}  🔴 VEREDITO: NO-GO${NC}"
