@@ -150,8 +150,10 @@ func TrackHandler() http.HandlerFunc {
 		// 3. HMAC authentication (fail-closed when configured)
 		signature := r.Header.Get("X-Orbit-Signature")
 		if err := ValidateHMAC(rawBody, signature); err != nil {
+			// Pre-decode: no session_id available yet, use basic fingerprint
+			clientIP := ExtractClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"))
 			fingerprint := ClientFingerprint(
-				r.Header.Get("X-Orbit-Client-Id"), r.RemoteAddr,
+				r.Header.Get("X-Orbit-Client-Id"), clientIP,
 				r.Header.Get("User-Agent"), r.Header.Get("Accept-Language"))
 			trackingHMACFailures.Inc()
 			IncrementRejected(RejectReasonHMAC)
@@ -165,12 +167,12 @@ func TrackHandler() http.HandlerFunc {
 			return
 		}
 
-		// 4. Compute hardened client fingerprint
+		// 4. Extract real client IP (proxy-aware) and compute pre-decode fingerprint
 		clientID := r.Header.Get("X-Orbit-Client-Id")
-		remoteAddr := r.RemoteAddr
+		clientIP := ExtractClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"))
 		userAgent := r.Header.Get("User-Agent")
 		acceptLang := r.Header.Get("Accept-Language")
-		fingerprint := ClientFingerprint(clientID, remoteAddr, userAgent, acceptLang)
+		fingerprint := ClientFingerprint(clientID, clientIP, userAgent, acceptLang)
 
 		// 5. Token bucket rate limit per client fingerprint
 		if err := CheckTokenBucket(fingerprint); err != nil {

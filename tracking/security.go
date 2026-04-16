@@ -12,7 +12,7 @@
 //  9. Semantic validation gate (session_id, timestamp, payload)
 //
 // 10. Replay hard lock for critical events (persistent dedup beyond 5-min)
-// 11. Client fingerprint hardening (client_id + IP + UA + Accept-Language + salt)
+// 11. Client fingerprint v2 (proxy-aware, NAT-safe, anti-spoof)
 // 12. Structured rejection logging
 // 13. Cardinality protection (no dynamic labels)
 //
@@ -429,12 +429,17 @@ func ResetCriticalDedup() {
 }
 
 // ---------------------------------------------------------------------------
-// 11. Client Fingerprint Hardening
+// 11. Client Fingerprint Hardening (v2 — proxy-aware, NAT-safe)
 // ---------------------------------------------------------------------------
 
 // fingerprintSalt is a server-side salt for client fingerprinting.
 // Loaded from ORBIT_FINGERPRINT_SALT env, or falls back to a default.
 var fingerprintSalt string
+
+// trustedProxyCIDRs is the list of CIDR ranges whose X-Forwarded-For header
+// is considered trustworthy. Loaded from ORBIT_TRUSTED_PROXIES env
+// (comma-separated CIDRs). If empty, XFF is always ignored (fail-closed).
+var trustedProxyCIDRs []*net.IPNet
 
 func init() {
 	if s := os.Getenv("ORBIT_FINGERPRINT_SALT"); s != "" {
@@ -442,21 +447,188 @@ func init() {
 	} else {
 		fingerprintSalt = "orbit-engine-default-salt-v1"
 	}
+	loadTrustedProxies()
+}
+
+// loadTrustedProxies parses ORBIT_TRUSTED_PROXIES (comma-separated CIDRs)
+// into trustedProxyCIDRs. Example: "10.0.0.0/8,172.16.0.0/12,127.0.0.1/32"
+func loadTrustedProxies() {
+	raw := os.Getenv("ORBIT_TRUSTED_PROXIES")
+	if raw == "" {
+		return
+	}
+	for _, cidr := range splitAndTrim(raw) {
+		if cidr == "" {
+			continue
+		}
+		// If bare IP (no mask), add /32 or /128
+		if !containsSlash(cidr) {
+			if net.ParseIP(cidr) != nil {
+				if net.ParseIP(cidr).To4() != nil {
+					cidr += "/32"
+				} else {
+					cidr += "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Printf("[SECURITY] ignoring invalid trusted proxy CIDR %q: %v", cidr, err)
+			continue
+		}
+		trustedProxyCIDRs = append(trustedProxyCIDRs, ipNet)
+	}
+	if len(trustedProxyCIDRs) > 0 {
+		log.Printf("[SECURITY] trusted proxies loaded: %d CIDR(s)", len(trustedProxyCIDRs))
+	}
+}
+
+func splitAndTrim(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ',' {
+			p := s[start:i]
+			// trim spaces
+			for len(p) > 0 && p[0] == ' ' {
+				p = p[1:]
+			}
+			for len(p) > 0 && p[len(p)-1] == ' ' {
+				p = p[:len(p)-1]
+			}
+			parts = append(parts, p)
+			start = i + 1
+		}
+	}
+	return parts
+}
+
+func containsSlash(s string) bool {
+	for _, c := range s {
+		if c == '/' {
+			return true
+		}
+	}
+	return false
+}
+
+// isTrustedProxy returns true if the given IP (from RemoteAddr) is within
+// any configured trusted proxy CIDR. Fail-closed: if no proxies are
+// configured, always returns false.
+func isTrustedProxy(remoteAddr string) bool {
+	if len(trustedProxyCIDRs) == 0 {
+		return false
+	}
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range trustedProxyCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractClientIP determines the real client IP from the request.
+//
+// Strategy (fail-closed):
+//   - If the direct peer (RemoteAddr) is a trusted proxy AND X-Forwarded-For
+//     is present, use the left-most (client) IP from XFF.
+//   - Otherwise, use RemoteAddr (strip port).
+//   - If XFF contains a non-parseable IP, fall back to RemoteAddr.
+//
+// This prevents spoofing: an attacker cannot set X-Forwarded-For unless
+// their request actually traverses a trusted proxy.
+func ExtractClientIP(remoteAddr, xForwardedFor string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+
+	if xForwardedFor == "" || !isTrustedProxy(remoteAddr) {
+		return host
+	}
+
+	// XFF format: "client, proxy1, proxy2"
+	// Take the left-most IP (original client).
+	first := xForwardedFor
+	for i := 0; i < len(xForwardedFor); i++ {
+		if xForwardedFor[i] == ',' {
+			first = xForwardedFor[:i]
+			break
+		}
+	}
+	// Trim spaces
+	for len(first) > 0 && first[0] == ' ' {
+		first = first[1:]
+	}
+	for len(first) > 0 && first[len(first)-1] == ' ' {
+		first = first[:len(first)-1]
+	}
+
+	// Validate it's a real IP — fail-closed on garbage
+	if ip := net.ParseIP(first); ip != nil {
+		return first
+	}
+	// Garbage in XFF → fall back to direct peer
+	return host
+}
+
+// SetTrustedProxies overrides the trusted proxy list. For testing ONLY.
+func SetTrustedProxies(cidrs []*net.IPNet) {
+	trustedProxyCIDRs = cidrs
 }
 
 // ClientFingerprint produces a hardened client identity by combining
 // client_id + IP + User-Agent + Accept-Language + server-side salt.
 // The result is a hex-encoded SHA-256 hash, safe for use as a bucket key.
-// This is strictly more secure than ClientIdentity because it includes
-// Accept-Language and the salt, making fingerprint forgery much harder.
-// The remote address is normalised to IP-only (port stripped) so that
-// ephemeral source ports do not fragment the fingerprint space.
-func ClientFingerprint(clientID, remoteAddr, userAgent, acceptLanguage string) string {
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+//
+// v2 changes:
+//   - IP is expected to be already extracted (no port) via ExtractClientIP.
+//   - sessionID is used as a NAT fallback complement: when multiple distinct
+//     sessions share the same (ip, UA, lang) behind NAT, the session_id
+//     differentiates them, preventing one user from exhausting another's bucket.
+//   - If clientID is empty AND sessionID is empty, the fingerprint enters
+//     "restricted mode" — a shorter prefix is used, which maps all
+//     unidentified clients to a shared restrictive bucket (fail-closed).
+//
+// The result is ALWAYS a hash — never raw data — safe for metric labels.
+func ClientFingerprint(clientID, ip, userAgent, acceptLanguage string) string {
+	return ClientFingerprintWithSession(clientID, ip, userAgent, acceptLanguage, "")
+}
+
+// ClientFingerprintWithSession is the v2 fingerprint function that includes
+// session_id as NAT disambiguation. Use this in TrackHandler after decoding
+// the event body. The plain ClientFingerprint (without session) is used for
+// pre-decode rejection paths (HMAC failure, etc.).
+func ClientFingerprintWithSession(clientID, ip, userAgent, acceptLanguage, sessionID string) string {
+	// Normalise IP — strip port if caller passed host:port
+	host := ip
+	if h, _, err := net.SplitHostPort(ip); err == nil {
 		host = h
 	}
-	data := fmt.Sprintf("%s|%s|%s|%s|%s", clientID, host, userAgent, acceptLanguage, fingerprintSalt)
+
+	// Fail-closed: unidentifiable client → restricted bucket
+	if clientID == "" && sessionID == "" && host == "" {
+		return "fp:restricted"
+	}
+
+	var data string
+	if clientID != "" {
+		// Strong identity: client_id dominates
+		data = fmt.Sprintf("v2|cid:%s|ip:%s|ua:%s|lang:%s|salt:%s",
+			clientID, host, userAgent, acceptLanguage, fingerprintSalt)
+	} else {
+		// Weak identity: IP + UA + session_id for NAT disambiguation
+		data = fmt.Sprintf("v2|ip:%s|ua:%s|lang:%s|sess:%s|salt:%s",
+			host, userAgent, acceptLanguage, sessionID, fingerprintSalt)
+	}
 	h := sha256.Sum256([]byte(data))
 	return "fp:" + hex.EncodeToString(h[:16])
 }

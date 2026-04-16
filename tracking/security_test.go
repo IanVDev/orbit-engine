@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1100,9 +1101,9 @@ func TestSecurityClientFingerprint(t *testing.T) {
 	SetFingerprintSalt("test-salt")
 	defer SetFingerprintSalt("orbit-engine-default-salt-v1")
 
-	// Same inputs → same fingerprint
-	fp1 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
-	fp2 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
+	// Same inputs → same fingerprint (v2 compat: ClientFingerprint delegates to WithSession(""))
+	fp1 := ClientFingerprint("client-1", "1.2.3.4", "Mozilla/5.0", "en-US")
+	fp2 := ClientFingerprint("client-1", "1.2.3.4", "Mozilla/5.0", "en-US")
 	if fp1 != fp2 {
 		t.Fatalf("same inputs should produce same fingerprint: %s != %s", fp1, fp2)
 	}
@@ -1113,14 +1114,14 @@ func TestSecurityClientFingerprint(t *testing.T) {
 	}
 
 	// Different Accept-Language → different fingerprint
-	fp3 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "pt-BR")
+	fp3 := ClientFingerprint("client-1", "1.2.3.4", "Mozilla/5.0", "pt-BR")
 	if fp1 == fp3 {
 		t.Fatal("different Accept-Language should produce different fingerprint")
 	}
 
 	// Different salt → different fingerprint
 	SetFingerprintSalt("other-salt")
-	fp4 := ClientFingerprint("client-1", "1.2.3.4:5000", "Mozilla/5.0", "en-US")
+	fp4 := ClientFingerprint("client-1", "1.2.3.4", "Mozilla/5.0", "en-US")
 	if fp1 == fp4 {
 		t.Fatal("different salt should produce different fingerprint")
 	}
@@ -1175,4 +1176,129 @@ func TestReplayHardLockViaHandler(t *testing.T) {
 		t.Fatalf("critical replay should be 409, got %d: %s", resp2.StatusCode, string(b))
 	}
 	resp2.Body.Close()
+}
+
+// ---------------------------------------------------------------------------
+// 23. TestSameIPDifferentPorts — ephemeral ports MUST map to same bucket
+// ---------------------------------------------------------------------------
+
+func TestSameIPDifferentPorts(t *testing.T) {
+	SetFingerprintSalt("port-test-salt")
+	defer SetFingerprintSalt("orbit-engine-default-salt-v1")
+
+	fp1 := ClientFingerprint("", "10.0.0.1:49152", "Mozilla/5.0", "en-US")
+	fp2 := ClientFingerprint("", "10.0.0.1:55321", "Mozilla/5.0", "en-US")
+	fp3 := ClientFingerprint("", "10.0.0.1:1025", "Mozilla/5.0", "en-US")
+
+	if fp1 != fp2 || fp2 != fp3 {
+		t.Fatalf("same IP with different ports must yield same fingerprint: %s, %s, %s", fp1, fp2, fp3)
+	}
+
+	ip1 := ExtractClientIP("10.0.0.1:49152", "")
+	ip2 := ExtractClientIP("10.0.0.1:55321", "")
+	if ip1 != ip2 {
+		t.Fatalf("ExtractClientIP should strip ports: %s != %s", ip1, ip2)
+	}
+
+	fp4 := ClientFingerprint("", "10.0.0.1", "Mozilla/5.0", "en-US")
+	if fp1 != fp4 {
+		t.Fatalf("bare IP should match stripped IP: %s != %s", fp1, fp4)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 24. TestDifferentIPSameClientID — client_id differentiates
+// ---------------------------------------------------------------------------
+
+func TestDifferentIPSameClientID(t *testing.T) {
+	SetFingerprintSalt("cid-test-salt")
+	defer SetFingerprintSalt("orbit-engine-default-salt-v1")
+
+	fpA := ClientFingerprint("my-agent-42", "10.0.0.1:9999", "Mozilla/5.0", "en-US")
+	fpB := ClientFingerprint("my-agent-42", "10.0.0.1:1234", "Mozilla/5.0", "en-US")
+	if fpA != fpB {
+		t.Fatalf("same client_id + same IP + different ports must match: %s != %s", fpA, fpB)
+	}
+
+	fpX := ClientFingerprint("agent-A", "10.0.0.1", "Mozilla/5.0", "en-US")
+	fpY := ClientFingerprint("agent-B", "10.0.0.1", "Mozilla/5.0", "en-US")
+	if fpX == fpY {
+		t.Fatal("different client_ids on same IP must produce different fingerprints")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 25. TestProxyHeaderSpoof — X-Forwarded-For ignored from untrusted peers
+// ---------------------------------------------------------------------------
+
+func TestProxyHeaderSpoof(t *testing.T) {
+	origProxies := trustedProxyCIDRs
+	defer func() { trustedProxyCIDRs = origProxies }()
+
+	SetTrustedProxies(nil)
+
+	spoofedIP := ExtractClientIP("192.168.1.100:5000", "1.2.3.4, 10.0.0.1")
+	if spoofedIP != "192.168.1.100" {
+		t.Fatalf("without trusted proxies, XFF must be ignored: got %s, want 192.168.1.100", spoofedIP)
+	}
+
+	_, cidr, _ := net.ParseCIDR("192.168.1.100/32")
+	SetTrustedProxies([]*net.IPNet{cidr})
+
+	trustedIP := ExtractClientIP("192.168.1.100:5000", "1.2.3.4, 10.0.0.1")
+	if trustedIP != "1.2.3.4" {
+		t.Fatalf("with trusted proxy, should extract left-most XFF IP: got %s, want 1.2.3.4", trustedIP)
+	}
+
+	untrustedIP := ExtractClientIP("172.16.0.50:5000", "1.2.3.4, 10.0.0.1")
+	if untrustedIP != "172.16.0.50" {
+		t.Fatalf("non-trusted peer must have XFF ignored: got %s, want 172.16.0.50", untrustedIP)
+	}
+
+	garbageIP := ExtractClientIP("192.168.1.100:5000", "not-an-ip, 10.0.0.1")
+	if garbageIP != "192.168.1.100" {
+		t.Fatalf("garbage XFF should fall back to RemoteAddr: got %s, want 192.168.1.100", garbageIP)
+	}
+
+	emptyXFF := ExtractClientIP("192.168.1.100:5000", "")
+	if emptyXFF != "192.168.1.100" {
+		t.Fatalf("empty XFF should use RemoteAddr: got %s, want 192.168.1.100", emptyXFF)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 26. TestFingerprintStability — same inputs always produce same hash
+// ---------------------------------------------------------------------------
+
+func TestFingerprintStability(t *testing.T) {
+	SetFingerprintSalt("stability-salt-v1")
+	defer SetFingerprintSalt("orbit-engine-default-salt-v1")
+
+	reference := ClientFingerprintWithSession("client-x", "10.0.0.5", "TestAgent/1.0", "en-US", "sess-123")
+
+	for i := 0; i < 1000; i++ {
+		fp := ClientFingerprintWithSession("client-x", "10.0.0.5", "TestAgent/1.0", "en-US", "sess-123")
+		if fp != reference {
+			t.Fatalf("fingerprint unstable at iteration %d: got %s, want %s", i, fp, reference)
+		}
+	}
+
+	if !strings.HasPrefix(reference, "fp:") {
+		t.Fatalf("fingerprint must start with fp: prefix, got %s", reference)
+	}
+
+	if len(reference) != 3+32 {
+		t.Fatalf("fingerprint length wrong: got %d, want 35 (fp: + 32 hex)", len(reference))
+	}
+
+	fpNoSess := ClientFingerprintWithSession("", "10.0.0.5", "TestAgent/1.0", "en-US", "")
+	fpWithSess := ClientFingerprintWithSession("", "10.0.0.5", "TestAgent/1.0", "en-US", "sess-123")
+	if fpNoSess == fpWithSess {
+		t.Fatal("session_id should change fingerprint for NAT disambiguation")
+	}
+
+	fpRestricted := ClientFingerprintWithSession("", "", "", "", "")
+	if fpRestricted != "fp:restricted" {
+		t.Fatalf("fully empty identity should return fp:restricted, got %s", fpRestricted)
+	}
 }
