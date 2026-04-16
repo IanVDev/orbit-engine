@@ -145,3 +145,30 @@ ssh-config:
 	@chmod 600 ~/.ssh/config.d/orbit-engine
 	@echo "✅ SSH config written to ~/.ssh/config.d/orbit-engine"
 	@echo "   Add 'Include ~/.ssh/config.d/*' to the top of ~/.ssh/config if needed"
+
+# ── Sovereign validation ──────────────────────────────────────────────────────
+#
+# make orbit-check — runs all three validation stages in sequence:
+#   Stage 1: ssh-validate     (local key + connectivity)
+#   Stage 2: ssh-remote-validate (baseline environment)
+#   Stage 3: orbit_check_remote  (strict: port, /health 200, /metrics orbit_,
+#                                  sha256 of binary, orbit-gateway.service active)
+#
+# Fail-closed: exits 1 if ANY stage fails.
+# Prints a clear per-stage OK / FAIL summary.
+#
+# Required:
+#   ORBIT_EC2_HOST, ORBIT_EC2_USER, ORBIT_SSH_KEY
+#
+# Optional:
+#   ORBIT_SSH_PORT, ORBIT_PROJECT_DIR
+#   ORBIT_GATEWAY_BIN, ORBIT_GATEWAY_URL, ORBIT_GATEWAY_SHA256
+
+.PHONY: orbit-check
+
+orbit-check:
+	@echo "══ orbit-check — sovereign environment validation ══"
+	@[ -n "$(ORBIT_EC2_HOST)" ]  || (echo "ERROR: ORBIT_EC2_HOST not set"  && exit 1)
+	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set"  && exit 1)
+	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set"   && exit 1)
+	@bash scripts/orbit_check.sh
