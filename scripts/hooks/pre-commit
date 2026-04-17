@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# pre-commit — reject any staged file whose blob size exceeds 5MB.
+#
+# Reads the index (git cat-file -s :<path>) rather than the working
+# tree so local modifications cannot lie about size. Only ACMR paths
+# are inspected — deletions don't inflate the repo.
+#
+# Fail-closed: any offender aborts the commit with exit 1 and a clear
+# list of paths + sizes, plus the exact command to unstage.
+set -euo pipefail
+
+LIMIT_BYTES=5242880   # 5 MiB
+
+offenders=()
+while IFS= read -r -d '' path; do
+    size=$(git cat-file -s ":$path" 2>/dev/null || echo 0)
+    if (( size > LIMIT_BYTES )); then
+        offenders+=("$(printf '  %10d bytes  %s' "$size" "$path")")
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if (( ${#offenders[@]} > 0 )); then
+    {
+        echo "pre-commit: refused — ${#offenders[@]} staged file(s) exceed ${LIMIT_BYTES} bytes (5MB):"
+        printf '%s\n' "${offenders[@]}"
+        echo
+        echo "Fix: git restore --staged <file>   (or move to external storage)"
+    } >&2
+    exit 1
+fi
