@@ -36,6 +36,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	printSessionBanner(os.Args[1])
+
 	switch os.Args[1] {
 	case "quickstart":
 		fs := flag.NewFlagSet("quickstart", flag.ExitOnError)
@@ -79,11 +81,19 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "analyze":
+		_ = flag.NewFlagSet("analyze", flag.ExitOnError).Parse(os.Args[2:])
+		if err := runAnalyze(); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "doctor":
 		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
+		fix := fs.Bool("fix", false, "sugere/aplica correções para problemas detectados")
 		_ = fs.Parse(os.Args[2:])
-		if err := runDoctor(*strict); err != nil {
+		if err := runDoctor(*strict, *fix); err != nil {
 			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
 			os.Exit(1)
 		}
@@ -108,6 +118,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  quickstart    Jornada completa: init → run → proof → verify")
 	fmt.Fprintln(os.Stderr, "  run           Executa comando externo com geração de proof")
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
+	fmt.Fprintln(os.Stderr, "  analyze       Alerta silencioso: imprime apenas se risco >= HIGH")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")

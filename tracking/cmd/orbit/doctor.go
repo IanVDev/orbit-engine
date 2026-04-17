@@ -1,220 +1,394 @@
-// doctor.go — diagnóstico de instalação do orbit-engine CLI.
+// doctor.go — diagnóstico de ambiente do orbit-engine CLI.
 //
-// Detecta conflitos de PATH, binários duplicados e problemas de ordem.
-// Retorna exit 0 se tudo OK, exit 1 se --strict e houver WARNINGs.
+// Detecta:
+//   - conflitos de PATH / binários duplicados
+//   - binário em uso vs. caminho esperado (/usr/local/bin/orbit)
+//   - commit stamp de build ausente (binário não rastreável)
+//   - ORBIT_HMAC_SECRET ausente (WARNING em dev, CRITICAL em prod)
+//   - conectividade com tracking-server
+//
+// Exit codes:
+//   - 0  tudo OK (ou apenas WARNINGs sem --strict)
+//   - 1  qualquer check CRITICAL, ou WARNING com --strict
+//
+// Fail-closed: commit vazio e binário inconsistente são sempre CRITICAL.
 package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// expectedInstallPath é o destino canônico do binário `orbit`.
+const expectedInstallPath = "/usr/local/bin/orbit"
+
+// trackingHealthURL é onde o tracking-server expõe /health.
+const trackingHealthURL = "http://localhost:9100/health"
+
+// severity classifica cada check no relatório.
+type severity int
+
+const (
+	sevOK severity = iota
+	sevWarning
+	sevCritical
+)
+
+func (s severity) tag() string {
+	switch s {
+	case sevOK:
+		return "OK"
+	case sevWarning:
+		return "WARNING"
+	case sevCritical:
+		return "CRITICAL"
+	}
+	return "?"
+}
+
+func (s severity) glyph() string {
+	switch s {
+	case sevOK:
+		return "✅"
+	case sevWarning:
+		return "⚠️ "
+	case sevCritical:
+		return "❌"
+	}
+	return "?"
+}
+
+// check é um item do relatório estruturado.
+type check struct {
+	name     string
+	severity severity
+	detail   string
+	fixHint  string // comando/sugestão copiável para --fix
+}
 
 // doctorResult armazena o diagnóstico completo.
 type doctorResult struct {
-	currentBinary string   // caminho do binário sendo executado agora
-	selfPath      string   // os.Executable()
-	allFound      []string // todos os "orbit" encontrados no PATH
-	pathDirs      []string // diretórios do PATH, em ordem
-	orbitBinPos   int      // posição de ~/.orbit/bin no PATH (-1 se ausente)
-	localBinPos   int      // posição de ~/.local/bin no PATH (-1 se ausente)
-	warnings      []string // avisos não-fatais
-	errors        []string // problemas que impedem uso correto
+	currentBinary string
+	selfPath      string
+	allFound      []string
+	pathDirs      []string
+	orbitBinPos   int
+	localBinPos   int
+	checks        []check
+}
+
+func (r *doctorResult) add(name string, sev severity, detail, fixHint string) {
+	r.checks = append(r.checks, check{name: name, severity: sev, detail: detail, fixHint: fixHint})
+}
+
+func (r *doctorResult) counts() (ok, warn, crit int) {
+	for _, c := range r.checks {
+		switch c.severity {
+		case sevOK:
+			ok++
+		case sevWarning:
+			warn++
+		case sevCritical:
+			crit++
+		}
+	}
+	return
 }
 
 // runDoctor executa o diagnóstico e imprime o relatório.
-// Se strict==true, qualquer WARNING também causa exit 1.
-func runDoctor(strict bool) error {
+// strict: WARNINGs causam exit 1. fix: imprime/aplica correções.
+func runDoctor(strict, fix bool) error {
 	res := &doctorResult{orbitBinPos: -1, localBinPos: -1}
 
 	fmt.Println()
-	fmt.Println("🩺  orbit doctor — diagnóstico de instalação")
+	fmt.Println("🩺  orbit doctor — diagnóstico de ambiente")
 	fmt.Println("─────────────────────────────────────────────────")
 
-	// ── 1. Binário em execução ────────────────────────────────────────────
+	collectBinaryInfo(res)
+	collectPathInfo(res)
+	checkPathOrder(res)
+	checkUniqueOrbit(res)
+	checkActiveBinary(res)
+	checkExecutable(res)
+	checkExpectedInstallPath(res)
+	checkCommitStamp(res)
+	checkHMACSecret(res)
+	checkTrackingConnectivity(res)
+
+	printStructuredReport(res)
+
+	if fix {
+		printFixSuggestions(res)
+	}
+
+	return finalize(res, strict)
+}
+
+// ── collectors ───────────────────────────────────────────────────────────────
+
+func collectBinaryInfo(res *doctorResult) {
 	self, err := os.Executable()
 	if err != nil {
 		self = "(desconhecido)"
-	} else {
-		// Resolve symlinks para mostrar o caminho real.
-		if resolved, rErr := filepath.EvalSymlinks(self); rErr == nil {
-			self = resolved
-		}
+	} else if resolved, rErr := filepath.EvalSymlinks(self); rErr == nil {
+		self = resolved
 	}
 	res.selfPath = self
 
-	// which orbit — o que o shell resolveria
 	whichOut, whichErr := exec.Command("which", "orbit").Output()
 	if whichErr == nil {
 		res.currentBinary = strings.TrimSpace(string(whichOut))
 	} else {
-		res.currentBinary = "(orbit não encontrado no PATH)"
+		res.currentBinary = ""
 	}
 
-	printCheck("Binário em execução", res.selfPath)
-	printCheck("orbit no PATH (which)", res.currentBinary)
+	fmt.Printf("  Binário em execução     : %s\n", res.selfPath)
+	if res.currentBinary == "" {
+		fmt.Println("  orbit no PATH (which)   : (não encontrado)")
+	} else {
+		fmt.Printf("  orbit no PATH (which)   : %s\n", res.currentBinary)
+	}
+}
 
-	// ── 2. Scan completo do PATH ──────────────────────────────────────────
-	rawPath := os.Getenv("PATH")
-	res.pathDirs = filepath.SplitList(rawPath)
+func collectPathInfo(res *doctorResult) {
+	res.pathDirs = filepath.SplitList(os.Getenv("PATH"))
 	home, _ := os.UserHomeDir()
 
-	fmt.Println()
-	fmt.Println("  Ordem do PATH:")
 	for i, dir := range res.pathDirs {
-		marker := ""
 		normalized := normalizePath(dir, home)
-
-		if isOrbitBinDir(normalized, home) {
+		if isOrbitBinDir(normalized, home) && res.orbitBinPos == -1 {
 			res.orbitBinPos = i
-			marker = "  ← ~/.orbit/bin"
-		} else if isLocalBinDir(normalized, home) {
-			res.localBinPos = i
-			marker = "  ← ~/.local/bin"
 		}
-		fmt.Printf("    [%d] %s%s\n", i, dir, marker)
+		if isLocalBinDir(normalized, home) && res.localBinPos == -1 {
+			res.localBinPos = i
+		}
 	}
 
-	// ── 3. Todos os orbits no sistema ─────────────────────────────────────
-	fmt.Println()
-	fmt.Println("  Orbits encontrados no PATH:")
 	for _, dir := range res.pathDirs {
 		candidate := filepath.Join(dir, "orbit")
 		if _, statErr := os.Stat(candidate); statErr == nil {
 			res.allFound = append(res.allFound, candidate)
-			fmt.Printf("    • %s\n", candidate)
 		}
 	}
-	if len(res.allFound) == 0 {
-		fmt.Println("    (nenhum orbit encontrado)")
-	}
+}
 
-	// ── 4. Validações ─────────────────────────────────────────────────────
+// ── checks ───────────────────────────────────────────────────────────────────
+
+func checkPathOrder(res *doctorResult) {
+	if res.orbitBinPos == -1 {
+		res.add("~/.orbit/bin no PATH", sevWarning,
+			"ausente",
+			`export PATH="${HOME}/.orbit/bin:${PATH}"`)
+		return
+	}
+	res.add("~/.orbit/bin no PATH", sevOK,
+		fmt.Sprintf("posição [%d]", res.orbitBinPos), "")
+
+	if res.localBinPos != -1 && res.orbitBinPos > res.localBinPos {
+		res.add("Ordem ~/.orbit/bin < ~/.local/bin", sevWarning,
+			fmt.Sprintf("invertido: local=[%d] orbit=[%d]", res.localBinPos, res.orbitBinPos),
+			`export PATH="${HOME}/.orbit/bin:${PATH}"  # reposiciona à frente`)
+	}
+}
+
+func checkUniqueOrbit(res *doctorResult) {
+	switch {
+	case len(res.allFound) == 0:
+		res.add("Binários orbit no PATH", sevCritical,
+			"nenhum encontrado",
+			"reinstale: scripts/build_orbit.sh")
+	case len(res.allFound) == 1:
+		res.add("Binários orbit únicos", sevOK, res.allFound[0], "")
+	default:
+		dupes := strings.Join(res.allFound, ", ")
+		fixes := make([]string, 0, len(res.allFound)-1)
+		for _, p := range res.allFound[1:] {
+			fixes = append(fixes, "rm -f "+shellQuote(p))
+		}
+		res.add("Binários orbit únicos", sevWarning,
+			fmt.Sprintf("%d encontrados: %s", len(res.allFound), dupes),
+			strings.Join(fixes, " && "))
+	}
+}
+
+func checkActiveBinary(res *doctorResult) {
+	if res.currentBinary == "" {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	expectedDir := filepath.Join(home, ".orbit", "bin")
+	if res.orbitBinPos != -1 && !strings.HasPrefix(res.currentBinary, expectedDir) {
+		res.add("orbit ativo == ~/.orbit/bin/orbit", sevWarning,
+			fmt.Sprintf("resolveu para %s", res.currentBinary),
+			"verifique ordem do PATH")
+	}
+}
+
+func checkExecutable(res *doctorResult) {
+	if res.currentBinary == "" {
+		return
+	}
+	info, statErr := os.Stat(res.currentBinary)
+	if statErr != nil {
+		return
+	}
+	if info.Mode()&0o111 == 0 {
+		res.add("Permissão de execução", sevCritical,
+			"sem +x em "+res.currentBinary,
+			"chmod +x "+shellQuote(res.currentBinary))
+	}
+}
+
+// checkExpectedInstallPath compara o binário ativo com /usr/local/bin/orbit.
+// Inconsistência → CRITICAL (conforme fail-closed do requisito).
+func checkExpectedInstallPath(res *doctorResult) {
+	_, statErr := os.Stat(expectedInstallPath)
+	if statErr != nil {
+		res.add("Binário em "+expectedInstallPath, sevWarning,
+			"ausente",
+			"sudo install -m 0755 <build> "+expectedInstallPath)
+		return
+	}
+	if res.currentBinary == "" {
+		res.add("Binário em "+expectedInstallPath, sevWarning,
+			"existe, mas orbit não resolve via PATH", "")
+		return
+	}
+	// Resolve symlinks dos dois lados antes de comparar.
+	activeReal, _ := filepath.EvalSymlinks(res.currentBinary)
+	expectedReal, _ := filepath.EvalSymlinks(expectedInstallPath)
+	if activeReal == "" {
+		activeReal = res.currentBinary
+	}
+	if expectedReal == "" {
+		expectedReal = expectedInstallPath
+	}
+	if activeReal != expectedReal {
+		res.add("Binário ativo == "+expectedInstallPath, sevCritical,
+			fmt.Sprintf("ativo=%s esperado=%s", activeReal, expectedReal),
+			"realinhe o PATH ou reinstale em "+expectedInstallPath)
+		return
+	}
+	res.add("Binário ativo == "+expectedInstallPath, sevOK, activeReal, "")
+}
+
+// checkCommitStamp valida que o binário foi buildado com -ldflags injetando Commit.
+// Commit vazio/"unknown" → CRITICAL (fail-closed: binário não rastreável).
+func checkCommitStamp(res *doctorResult) {
+	c := strings.TrimSpace(Commit)
+	if c == "" || c == "unknown" {
+		res.add("Commit stamp (ldflags)", sevCritical,
+			fmt.Sprintf("Commit=%q — build sem -X main.Commit", Commit),
+			"rebuild: scripts/build_orbit.sh")
+		return
+	}
+	res.add("Commit stamp (ldflags)", sevOK,
+		fmt.Sprintf("commit=%s build=%s", Commit, BuildTime), "")
+}
+
+// checkHMACSecret: WARNING em dev, CRITICAL em prod.
+// Prod é detectado via ORBIT_ENV=prod ou ORBIT_ENV=production.
+func checkHMACSecret(res *doctorResult) {
+	if os.Getenv("ORBIT_HMAC_SECRET") != "" {
+		res.add("ORBIT_HMAC_SECRET", sevOK, "configurado", "")
+		return
+	}
+	env := strings.ToLower(os.Getenv("ORBIT_ENV"))
+	if env == "prod" || env == "production" {
+		res.add("ORBIT_HMAC_SECRET", sevCritical,
+			"ausente em ORBIT_ENV=prod",
+			`export ORBIT_HMAC_SECRET="<secret>"`)
+		return
+	}
+	res.add("ORBIT_HMAC_SECRET", sevWarning,
+		"ausente (modo dev)",
+		`export ORBIT_HMAC_SECRET="<secret>"`)
+}
+
+// checkTrackingConnectivity faz GET em /health com timeout curto.
+func checkTrackingConnectivity(res *doctorResult) {
+	probeHealth(res, trackingHealthURL, 2)
+}
+
+// probeHealth é a lógica testável por trás de checkTrackingConnectivity.
+// timeoutSec permite que testes usem valores pequenos sem bloquear CI.
+func probeHealth(res *doctorResult, url string, timeoutSec int) {
+	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		res.add("Tracking-server /health", sevCritical,
+			fmt.Sprintf("inacessível: %v", err),
+			"inicie o tracking-server em :9100")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		res.add("Tracking-server /health", sevCritical,
+			fmt.Sprintf("HTTP %d", resp.StatusCode),
+			"verifique logs do tracking-server")
+		return
+	}
+	res.add("Tracking-server /health", sevOK, "HTTP 200", "")
+}
+
+// ── output ───────────────────────────────────────────────────────────────────
+
+func printStructuredReport(res *doctorResult) {
 	fmt.Println()
 	fmt.Println("  Verificações:")
-
-	// 4a. ~/.orbit/bin no PATH
-	if res.orbitBinPos == -1 {
-		res.warnings = append(res.warnings,
-			"~/.orbit/bin não está no PATH — adicione: export PATH=\"${HOME}/.orbit/bin:${PATH}\"")
-		printWarn("~/.orbit/bin no PATH", "AUSENTE")
-	} else {
-		printOK("~/.orbit/bin no PATH", fmt.Sprintf("posição [%d]", res.orbitBinPos))
+	for _, c := range res.checks {
+		fmt.Printf("    %s  [%-8s] %-42s %s\n",
+			c.severity.glyph(), c.severity.tag(), c.name, c.detail)
 	}
 
-	// 4b. Ordem: ~/.orbit/bin deve vir antes de ~/.local/bin
-	if res.orbitBinPos != -1 && res.localBinPos != -1 {
-		if res.orbitBinPos < res.localBinPos {
-			printOK("~/.orbit/bin antes de ~/.local/bin",
-				fmt.Sprintf("[%d] < [%d]", res.orbitBinPos, res.localBinPos))
-		} else {
-			res.warnings = append(res.warnings,
-				fmt.Sprintf("~/.local/bin [%d] está antes de ~/.orbit/bin [%d] — "+
-					"outro binário pode ser executado em vez do orbit instalado",
-					res.localBinPos, res.orbitBinPos))
-			printWarn("~/.orbit/bin antes de ~/.local/bin",
-				fmt.Sprintf("INVERTIDO: ~/.local/bin=[%d] ~/.orbit/bin=[%d]",
-					res.localBinPos, res.orbitBinPos))
-		}
-	}
-
-	// 4c. Múltiplos orbits
-	if len(res.allFound) > 1 {
-		res.warnings = append(res.warnings,
-			fmt.Sprintf("%d binários orbit encontrados no PATH — o primeiro será usado: %s",
-				len(res.allFound), res.allFound[0]))
-		printWarn("Binários orbit únicos",
-			fmt.Sprintf("%d encontrados (possível conflito)", len(res.allFound)))
-	} else if len(res.allFound) == 1 {
-		printOK("Binários orbit únicos", "1 (sem conflito)")
-	} else {
-		printWarn("Binários orbit únicos", "nenhum encontrado")
-	}
-
-	// 4d. Binário ativo bate com ~/.orbit/bin
-	if res.currentBinary != "" && res.orbitBinPos != -1 {
-		expectedDir := filepath.Join(home, ".orbit", "bin")
-		if strings.HasPrefix(res.currentBinary, expectedDir) {
-			printOK("orbit ativo = ~/.orbit/bin/orbit", "✓")
-		} else {
-			res.warnings = append(res.warnings,
-				fmt.Sprintf("orbit ativo (%s) não é o de ~/.orbit/bin — verifique a ordem do PATH",
-					res.currentBinary))
-			printWarn("orbit ativo = ~/.orbit/bin/orbit",
-				fmt.Sprintf("resolveu para %s", res.currentBinary))
-		}
-	}
-
-	// 4e. Binário atual é executável e tem permissão
-	if res.currentBinary != "" && res.currentBinary != "(orbit não encontrado no PATH)" {
-		if info, statErr := os.Stat(res.currentBinary); statErr == nil {
-			if info.Mode()&0o111 != 0 {
-				printOK("Permissão de execução", "✓")
-			} else {
-				res.errors = append(res.errors,
-					fmt.Sprintf("orbit em %s não tem permissão de execução (chmod +x)", res.currentBinary))
-				printErr("Permissão de execução", "FALTANDO — execute: chmod +x "+res.currentBinary)
-			}
-		}
-	}
-
-	// ── 5. Resumo ─────────────────────────────────────────────────────────
+	ok, warn, crit := res.counts()
 	fmt.Println()
 	fmt.Println("─────────────────────────────────────────────────")
-
-	hasProblems := len(res.warnings) > 0 || len(res.errors) > 0
-
-	if len(res.errors) > 0 {
-		fmt.Printf("  ❌  %d erro(s) encontrado(s):\n", len(res.errors))
-		for _, e := range res.errors {
-			fmt.Printf("      → %s\n", e)
-		}
+	fmt.Printf("  Resumo: %d OK · %d WARNING · %d CRITICAL\n", ok, warn, crit)
+	if crit == 0 && warn == 0 {
+		fmt.Println("  ✅  Ambiente íntegro")
 	}
-	if len(res.warnings) > 0 {
-		fmt.Printf("  ⚠️   %d aviso(s):\n", len(res.warnings))
-		for _, w := range res.warnings {
-			fmt.Printf("      → %s\n", w)
-		}
-	}
-	if !hasProblems {
-		fmt.Println("  ✅  Tudo OK — instalação sem conflitos")
-	}
-
 	fmt.Println()
+}
 
-	// Fail-closed se --strict e houver qualquer aviso ou erro
-	if len(res.errors) > 0 {
-		return fmt.Errorf("doctor: %d erro(s) de instalação encontrado(s)", len(res.errors))
+func printFixSuggestions(res *doctorResult) {
+	var hints []check
+	for _, c := range res.checks {
+		if c.severity != sevOK && c.fixHint != "" {
+			hints = append(hints, c)
+		}
 	}
-	if strict && len(res.warnings) > 0 {
-		return fmt.Errorf("doctor --strict: %d aviso(s) encontrado(s)", len(res.warnings))
+	if len(hints) == 0 {
+		return
+	}
+	fmt.Println("  🔧  Sugestões (--fix):")
+	for _, c := range hints {
+		fmt.Printf("    # %s\n    %s\n", c.name, c.fixHint)
+	}
+	fmt.Println()
+	fmt.Println("  (--fix não executa comandos destrutivos automaticamente; copie e aplique.)")
+	fmt.Println()
+}
+
+// finalize decide o exit code conforme severidade acumulada.
+func finalize(res *doctorResult, strict bool) error {
+	_, warn, crit := res.counts()
+	if crit > 0 {
+		return fmt.Errorf("doctor: %d check(s) CRITICAL", crit)
+	}
+	if strict && warn > 0 {
+		return fmt.Errorf("doctor --strict: %d WARNING(s)", warn)
 	}
 	return nil
 }
 
-// ── helpers de output ────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-func printCheck(label, value string) {
-	fmt.Printf("  %-35s %s\n", label+":", value)
-}
-
-func printOK(label, detail string) {
-	fmt.Printf("    ✅  %-38s %s\n", label, detail)
-}
-
-func printWarn(label, detail string) {
-	fmt.Printf("    ⚠️   %-37s %s\n", label, detail)
-}
-
-func printErr(label, detail string) {
-	fmt.Printf("    ❌  %-38s %s\n", label, detail)
-}
-
-// ── helpers de PATH ──────────────────────────────────────────────────────────
-
-// normalizePath substitui o prefixo real do home por "~".
 func normalizePath(dir, home string) string {
 	if home == "" {
 		return dir
@@ -233,4 +407,12 @@ func isOrbitBinDir(normalized, home string) bool {
 func isLocalBinDir(normalized, home string) bool {
 	return normalized == "~/.local/bin" ||
 		normalized == filepath.Join(home, ".local", "bin")
+}
+
+// shellQuote faz quoting simples para sugestões copiáveis.
+func shellQuote(s string) string {
+	if !strings.ContainsAny(s, " '\"\\$`") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
