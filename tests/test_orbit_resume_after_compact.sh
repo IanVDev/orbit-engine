@@ -171,9 +171,11 @@ pass "case 9: <session_id> --ignore-intent → exit 0, Status: OK presente"
 OVERRIDES="$TMP/intent_overrides.jsonl"
 rm -f "$OVERRIDES"
 mk_intent "sess-intent-1" "task para rastrear bypass"
-OUT="$("$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$?
+OUT="$(unset ORBIT_AURYA_ENABLED; "$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$?
 [ "$RC" = "0" ] || fail_test "case 10: exit $RC (esperado 0)"
-echo "$OUT" | grep -q "intent ignorado manualmente" || fail_test "case 10: aviso de bypass ausente no output"
+echo "$OUT" | grep -q "execution override manual" || fail_test "case 10: aviso de bypass (execution override) ausente"
+echo "$OUT" | grep -q "orbit: modo local" || fail_test "case 10: mensagem de modo local ausente (default deve ser opt-out)"
+echo "$OUT" | grep -q "enviado para AURYA" && fail_test "case 10: mensagem AURYA nao deveria aparecer sem flag"
 [ -f "$OVERRIDES" ] || fail_test "case 10: intent_overrides.jsonl nao criado"
 python3 - "$OVERRIDES" <<'PY' || fail_test "case 10: log estruturado invalido"
 import json, sys
@@ -209,6 +211,24 @@ echo "$OUT_BYPASS" | grep -q "sess-intent-1" || fail_test "case 12: tabela ausen
 echo "$OUT_CLEAN"  | grep -q "sess-intent-1" || fail_test "case 12: tabela ausente sem intent"
 pass "case 12: bypass mantém exit 0 e tabela idêntica à execução limpa"
 
+# ---------------------------------------------------------------------------
+# case 13: ORBIT_AURYA_ENABLED=1 troca a mensagem de gating, preserva exit 0
+# e mantém o contrato interno do log (event=intent_ignored).
+# ---------------------------------------------------------------------------
+rm -f "$OVERRIDES"
+mk_intent "sess-intent-aurya" "task com flag AURYA ligada"
+OUT="$(ORBIT_AURYA_ENABLED=1 "$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$?
+[ "$RC" = "0" ] || fail_test "case 13: exit $RC (esperado 0)"
+echo "$OUT" | grep -q "orbit: evento enviado para AURYA" || fail_test "case 13: mensagem AURYA ausente com flag ligada"
+echo "$OUT" | grep -q "orbit: modo local" && fail_test "case 13: modo local nao deveria aparecer com flag ligada"
+python3 - "$OVERRIDES" <<'PY' || fail_test "case 13: contrato interno alterado (event != intent_ignored)"
+import json, sys
+e = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
+assert e.get("event") == "intent_ignored", f"event errado: {e}"
+PY
+rm -f "$INTENT"
+pass "case 13: ORBIT_AURYA_ENABLED=1 → mensagem AURYA, contrato interno preservado"
+
 echo ""
-echo "OK: orbit_explain enforcement + rastreabilidade de bypass em 12 casos"
+echo "OK: orbit_explain enforcement + rastreabilidade de bypass em 13 casos"
 exit 0

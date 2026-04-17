@@ -178,9 +178,15 @@ _check_and_print_intent() {
     if [ "$IGNORE_INTENT" = "1" ]; then
         local intent_path="$ORBIT_HOME/active_task.intent"
         if [ -f "$intent_path" ]; then
-            echo "! intent ignorado manualmente (--ignore-intent)"
+            echo "! execution override manual (--ignore-intent)"
             echo ""
             _log_intent_override "$intent_path"
+            # Opt-in explícito. Send HTTP real é plugado depois.
+            if [ "${ORBIT_AURYA_ENABLED:-0}" = "1" ]; then
+                echo "orbit: evento enviado para AURYA"
+            else
+                echo "orbit: modo local (nenhum evento enviado)"
+            fi
         fi
         return 0
     fi
