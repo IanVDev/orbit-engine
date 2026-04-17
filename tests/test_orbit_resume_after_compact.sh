@@ -2,15 +2,18 @@
 # tests/test_orbit_resume_after_compact.sh
 #
 # Garante que orbit_explain.sh persiste, detecta e bloqueia com intent ativo:
-#   case 1: --resume sem intent → exit 2 (fail-closed, mensagem explícita)
-#   case 2: --resume com intent válido → exit 0, exibe session_id e descrição
-#   case 3: --list com intent → INTERROMPIDA + exit 3, sem Status: OK
-#   case 4: --list sem intent → sem banner, exit 0 (sem falso positivo)
-#   case 5: <session_id> com intent → INTERROMPIDA + exit 3, sem Status: OK
-#   case 6: intent com JSON malformado → --list fail-closed (exit 2)
-#   case 7: intent com JSON malformado → --resume fail-closed (exit 2)
-#   case 8: --list --ignore-intent com intent → exit 0, tabela normal
-#   case 9: <session_id> --ignore-intent com intent → exit 0, Status: OK presente
+#   case 1:  --resume sem intent → exit 2 (fail-closed, mensagem explícita)
+#   case 2:  --resume com intent válido → exit 0, exibe session_id e descrição
+#   case 3:  --list com intent → INTERROMPIDA + exit 3, sem Status: OK
+#   case 4:  --list sem intent → sem banner, exit 0 (sem falso positivo)
+#   case 5:  <session_id> com intent → INTERROMPIDA + exit 3, sem Status: OK
+#   case 6:  intent com JSON malformado → --list fail-closed (exit 2)
+#   case 7:  intent com JSON malformado → --resume fail-closed (exit 2)
+#   case 8:  --list --ignore-intent com intent → exit 0, tabela normal
+#   case 9:  <session_id> --ignore-intent com intent → exit 0, Status: OK presente
+#   case 10: --ignore-intent com intent → log gravado em intent_overrides.jsonl
+#   case 11: --ignore-intent sem intent → log NÃO gravado
+#   case 12: bypass não altera exit code nem tabela vs execução normal sem intent
 #
 # Usa ORBIT_HOME temporário e ORBIT_EXPLAIN_LOCAL_ONLY=1.
 
@@ -162,6 +165,50 @@ echo "$OUT" | grep -q "INTERROMPIDA" && fail_test "case 9: INTERROMPIDA nao devi
 rm -f "$INTENT"
 pass "case 9: <session_id> --ignore-intent → exit 0, Status: OK presente"
 
+# ---------------------------------------------------------------------------
+# case 10: --ignore-intent com intent existente → log gravado + aviso no output
+# ---------------------------------------------------------------------------
+OVERRIDES="$TMP/intent_overrides.jsonl"
+rm -f "$OVERRIDES"
+mk_intent "sess-intent-1" "task para rastrear bypass"
+OUT="$("$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$?
+[ "$RC" = "0" ] || fail_test "case 10: exit $RC (esperado 0)"
+echo "$OUT" | grep -q "intent ignorado manualmente" || fail_test "case 10: aviso de bypass ausente no output"
+[ -f "$OVERRIDES" ] || fail_test "case 10: intent_overrides.jsonl nao criado"
+python3 - "$OVERRIDES" <<'PY' || fail_test "case 10: log estruturado invalido"
+import json, sys
+entries = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert entries, "nenhuma entrada no log"
+e = entries[-1]
+assert e.get("event") == "intent_ignored", f"event errado: {e}"
+assert e.get("reason") == "manual_override", f"reason errado: {e}"
+assert "timestamp" in e, "timestamp ausente"
+assert e.get("session_id") == "sess-intent-1", f"session_id errado: {e}"
+PY
+rm -f "$INTENT"
+pass "case 10: --ignore-intent + intent → log gravado, aviso no output"
+
+# ---------------------------------------------------------------------------
+# case 11: --ignore-intent sem intent existente → log NÃO gravado
+# ---------------------------------------------------------------------------
+rm -f "$INTENT" "$OVERRIDES"
+"$EXPLAIN" --list --ignore-intent >/dev/null 2>&1
+[ ! -f "$OVERRIDES" ] || fail_test "case 11: log nao devia ser criado sem intent ativo"
+pass "case 11: --ignore-intent sem intent → log não gerado"
+
+# ---------------------------------------------------------------------------
+# case 12: bypass não altera exit code nem tabela vs execução normal sem intent
+# ---------------------------------------------------------------------------
+mk_intent "sess-intent-1" "task qualquer"
+OUT_BYPASS="$("$EXPLAIN" --list --ignore-intent 2>&1)"; RC_BYPASS=$?
+rm -f "$INTENT"
+OUT_CLEAN="$("$EXPLAIN" --list 2>&1)"; RC_CLEAN=$?
+[ "$RC_BYPASS" = "0" ] || fail_test "case 12: --ignore-intent exit $RC_BYPASS (esperado 0)"
+[ "$RC_CLEAN"  = "0" ] || fail_test "case 12: sem intent exit $RC_CLEAN (esperado 0)"
+echo "$OUT_BYPASS" | grep -q "sess-intent-1" || fail_test "case 12: tabela ausente com --ignore-intent"
+echo "$OUT_CLEAN"  | grep -q "sess-intent-1" || fail_test "case 12: tabela ausente sem intent"
+pass "case 12: bypass mantém exit 0 e tabela idêntica à execução limpa"
+
 echo ""
-echo "OK: orbit_explain enforcement de intent funciona em todos os 9 casos"
+echo "OK: orbit_explain enforcement + rastreabilidade de bypass em 12 casos"
 exit 0

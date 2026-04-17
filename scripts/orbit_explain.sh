@@ -100,13 +100,51 @@ Exemplos de investigação:
 USAGE
 }
 
+# _log_intent_override — grava entrada observável em intent_overrides.jsonl.
+# Fail-open: falha de escrita não interrompe o bypass (observabilidade).
+_log_intent_override() {
+    local intent_path="$1"
+    ORBIT_HOME="$ORBIT_HOME" INTENT_PATH="$intent_path" python3 <<'PY'
+import json, os
+from datetime import datetime, timezone
+orbit_home = os.environ["ORBIT_HOME"]
+intent_path = os.environ["INTENT_PATH"]
+try:
+    with open(intent_path, encoding="utf-8") as f:
+        sid = json.load(f).get("session_id", "")
+except Exception:
+    sid = ""
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+entry = {"event": "intent_ignored", "timestamp": ts, "session_id": sid, "reason": "manual_override"}
+log_path = os.path.join(orbit_home, "intent_overrides.jsonl")
+try:
+    os.makedirs(orbit_home, mode=0o700, exist_ok=True)
+    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, (json.dumps(entry, separators=(",", ":")) + "\n").encode())
+    finally:
+        os.close(fd)
+except OSError:
+    pass
+PY
+}
+
 # _check_and_print_intent — bloqueia execução se intent pendente existir.
-# Se IGNORE_INTENT=1 (flag --ignore-intent) → não faz nada (debug).
+# Se IGNORE_INTENT=1 (flag --ignore-intent):
+#   → imprime aviso de bypass, grava log e retorna 0 (execução segue).
 # Se intent ausente → return 0 (execução normal).
 # Se intent válido → imprime banner + INTERROMPIDA e exit 3.
 # Se intent corrompido (JSON inválido) → fail-closed exit 2.
 _check_and_print_intent() {
-    [ "$IGNORE_INTENT" = "1" ] && return 0
+    if [ "$IGNORE_INTENT" = "1" ]; then
+        local intent_path="$ORBIT_HOME/active_task.intent"
+        if [ -f "$intent_path" ]; then
+            echo "! intent ignorado manualmente (--ignore-intent)"
+            echo ""
+            _log_intent_override "$intent_path"
+        fi
+        return 0
+    fi
     local intent_path="$ORBIT_HOME/active_task.intent"
     [ -f "$intent_path" ] || return 0
     local rc
