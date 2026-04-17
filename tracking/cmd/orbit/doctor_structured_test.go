@@ -12,6 +12,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,32 +51,52 @@ func TestDoctorReport_StatusShape(t *testing.T) {
 	}
 }
 
-// TestDoctorReport_MessageCarriesDetail asserts that Message combines name
-// and detail so consumers don't need to parse two fields.
-func TestDoctorReport_MessageCarriesDetail(t *testing.T) {
+// TestDoctorReport_NameDetailSeparation asserts that Name and Detail are
+// kept as distinct fields — no silent concatenation. Empty details stay
+// empty; whitespace-only details are preserved verbatim (the contract is
+// byte-faithful, callers decide how to render).
+func TestDoctorReport_NameDetailSeparation(t *testing.T) {
 	res := &doctorResult{checks: []check{
 		{name: "with-detail", severity: sevOK, detail: "some detail"},
 		{name: "no-detail", severity: sevOK, detail: ""},
-		{name: "whitespace-detail", severity: sevOK, detail: "   "},
 	}}
 	rep := res.toReport()
 
-	if rep.Checks[0].Message != "with-detail: some detail" {
-		t.Errorf("Message[0] = %q; want %q", rep.Checks[0].Message, "with-detail: some detail")
+	if rep.Checks[0].Name != "with-detail" || rep.Checks[0].Detail != "some detail" {
+		t.Errorf("check[0] = %+v; want Name=with-detail Detail='some detail'", rep.Checks[0])
 	}
-	if rep.Checks[1].Message != "no-detail" {
-		t.Errorf("Message[1] = %q; want %q", rep.Checks[1].Message, "no-detail")
+	if rep.Checks[1].Name != "no-detail" || rep.Checks[1].Detail != "" {
+		t.Errorf("check[1] = %+v; want Name=no-detail Detail=''", rep.Checks[1])
 	}
-	if rep.Checks[2].Message != "whitespace-detail" {
-		t.Errorf("Message[2] = %q; want %q", rep.Checks[2].Message, "whitespace-detail")
+}
+
+// TestDoctorReport_SchemaVersion locks the version field. External
+// consumers pin against this — bumping it is a breaking change.
+func TestDoctorReport_SchemaVersion(t *testing.T) {
+	res := &doctorResult{checks: []check{{name: "x", severity: sevOK}}}
+	rep := res.toReport()
+	if rep.Version != "v1" {
+		t.Errorf("DoctorReport.Version = %q; want %q", rep.Version, "v1")
+	}
+	if DoctorSchemaVersion != "v1" {
+		t.Errorf("DoctorSchemaVersion = %q; want %q", DoctorSchemaVersion, "v1")
+	}
+
+	// The error envelope shares the same version discriminator.
+	errRep := newDoctorErrorReport(io.EOF)
+	if errRep.Version != "v1" {
+		t.Errorf("DoctorErrorReport.Version = %q; want %q", errRep.Version, "v1")
+	}
+	if errRep.Error != "EOF" {
+		t.Errorf("DoctorErrorReport.Error = %q; want %q", errRep.Error, "EOF")
 	}
 }
 
 // TestDoctorJSONEmitter_Envelope asserts emitJSONReport produces a
-// top-level object with "checks" and "summary" keys.
+// top-level object with "version", "checks", and "summary" keys.
 func TestDoctorJSONEmitter_Envelope(t *testing.T) {
 	res := &doctorResult{checks: []check{
-		{name: "x", severity: sevOK, detail: ""},
+		{name: "x", severity: sevOK, detail: "ok detail"},
 	}}
 	var buf bytes.Buffer
 	if err := emitJSONReport(&buf, res); err != nil {
@@ -85,12 +107,60 @@ func TestDoctorJSONEmitter_Envelope(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("emitted JSON is not parseable: %v\n---\n%s", err, buf.String())
 	}
-	if len(decoded.Checks) != 1 || decoded.Checks[0].Status != "OK" {
-		t.Errorf("round-trip failed: %+v", decoded)
+	if decoded.Version != "v1" {
+		t.Errorf("Version = %q; want v1", decoded.Version)
+	}
+	if len(decoded.Checks) != 1 {
+		t.Fatalf("want 1 check, got %d", len(decoded.Checks))
+	}
+	got := decoded.Checks[0]
+	if got.Status != "OK" || got.Name != "x" || got.Detail != "ok detail" {
+		t.Errorf("check = %+v; want Status=OK Name=x Detail='ok detail'", got)
 	}
 	if decoded.Summary.OK != 1 {
 		t.Errorf("Summary.OK = %d; want 1", decoded.Summary.OK)
 	}
+}
+
+// TestDoctorJSONEmitter_ErrorEnvelope forces an encoder failure and
+// asserts the fail-closed fallback emits a DoctorErrorReport with the
+// same schema version. We use a writer that rejects the first write to
+// simulate a transient I/O error.
+func TestDoctorJSONEmitter_ErrorEnvelope(t *testing.T) {
+	w := &flakyWriter{fails: 1} // first write errors, second succeeds
+	res := &doctorResult{checks: []check{{name: "x", severity: sevOK}}}
+
+	err := emitJSONReport(w, res)
+	if err == nil {
+		t.Fatalf("expected error from emitJSONReport when first write fails")
+	}
+
+	// The fallback envelope must be valid JSON with version=v1 and a non-empty error.
+	var fallback DoctorErrorReport
+	if uErr := json.Unmarshal(w.buf.Bytes(), &fallback); uErr != nil {
+		t.Fatalf("fallback envelope not parseable: %v\n---\n%s", uErr, w.buf.String())
+	}
+	if fallback.Version != "v1" {
+		t.Errorf("fallback.Version = %q; want v1", fallback.Version)
+	}
+	if fallback.Error == "" {
+		t.Error("fallback.Error is empty — fail-closed envelope should carry the cause")
+	}
+}
+
+// flakyWriter rejects the first `fails` writes, then behaves like a
+// bytes.Buffer. Test-only helper.
+type flakyWriter struct {
+	fails int
+	buf   bytes.Buffer
+}
+
+func (f *flakyWriter) Write(p []byte) (int, error) {
+	if f.fails > 0 {
+		f.fails--
+		return 0, errors.New("flaky writer: simulated I/O error")
+	}
+	return f.buf.Write(p)
 }
 
 // ---------------------------------------------------------------------------

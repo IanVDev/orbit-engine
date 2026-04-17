@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,17 +26,22 @@ import (
 	"time"
 )
 
+// DoctorSchemaVersion identifies the contract version of the JSON output.
+// External consumers (CI, dashboards, ORIZON) pin against this — a breaking
+// change to DoctorReport/DoctorCheck MUST bump this string.
+const DoctorSchemaVersion = "v1"
+
 // DoctorCheck is the public, JSON-serialisable view of a single diagnostic
-// result. It is the structured contract consumed by tests, automation, and
-// `orbit doctor --json` — the goal is that callers never parse the human-
-// readable text to know what happened.
+// result. Tests and automation assert against Status + Name + Detail
+// directly — they never parse the human-readable text.
 //
-// Status is always one of "OK", "WARNING", "CRITICAL" (fail-closed: any
-// other value is a bug). Message combines the check name and its detail so
-// a single field carries the full context.
+// Status is one of "OK", "WARNING", "CRITICAL" (fail-closed: any other
+// value is a bug). Name is the check identity. Detail is free-form
+// context and MAY be empty.
 type DoctorCheck struct {
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	Status string `json:"status"`
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
 }
 
 // DoctorSummary is the count of checks per status.
@@ -47,10 +51,21 @@ type DoctorSummary struct {
 	Critical int `json:"critical"`
 }
 
-// DoctorReport is the envelope emitted by `orbit doctor --json`.
+// DoctorReport is the envelope emitted by `orbit doctor --json`. Version
+// is always set by the emitter — consumers should reject reports whose
+// Version does not match a supported contract.
 type DoctorReport struct {
+	Version string        `json:"version"`
 	Checks  []DoctorCheck `json:"checks"`
 	Summary DoctorSummary `json:"summary"`
+}
+
+// DoctorErrorReport is the fail-closed envelope emitted when the doctor
+// cannot produce a full report (internal error). Same Version so consumers
+// can parse it with the same schema discriminator.
+type DoctorErrorReport struct {
+	Version string `json:"version"`
+	Error   string `json:"error"`
 }
 
 // expectedInstallPath é o destino canônico do binário `orbit`.
@@ -130,29 +145,40 @@ func (r *doctorResult) counts() (ok, warn, crit int) {
 }
 
 // toReport converts the internal result to the public DoctorReport shape.
-// Messages combine name and detail ("name: detail"), or just the name when
-// detail is empty — this keeps the public struct minimal while preserving
-// all human-readable context.
+// Name and Detail are emitted as separate fields — consumers that need a
+// concatenated form can join them locally; the contract keeps them distinct.
 func (r *doctorResult) toReport() DoctorReport {
 	checks := make([]DoctorCheck, 0, len(r.checks))
 	for _, c := range r.checks {
-		msg := c.name
-		if strings.TrimSpace(c.detail) != "" {
-			msg = c.name + ": " + c.detail
-		}
 		checks = append(checks, DoctorCheck{
-			Status:  c.severity.tag(),
-			Message: msg,
+			Status: c.severity.tag(),
+			Name:   c.name,
+			Detail: c.detail,
 		})
 	}
 	ok, warn, crit := r.counts()
 	return DoctorReport{
-		Checks: checks,
+		Version: DoctorSchemaVersion,
+		Checks:  checks,
 		Summary: DoctorSummary{
 			OK:       ok,
 			Warning:  warn,
 			Critical: crit,
 		},
+	}
+}
+
+// newDoctorErrorReport builds the fail-closed envelope from an error.
+// Always stamped with the current schema version so consumers can parse
+// success and failure with the same discriminator.
+func newDoctorErrorReport(err error) DoctorErrorReport {
+	msg := "unknown error"
+	if err != nil {
+		msg = err.Error()
+	}
+	return DoctorErrorReport{
+		Version: DoctorSchemaVersion,
+		Error:   msg,
 	}
 }
 
@@ -165,14 +191,14 @@ func (r *doctorResult) toReport() DoctorReport {
 //
 // Fail-closed: o código de saída segue a mesma regra (CRITICAL → erro;
 // WARNING + --strict → erro) independente do modo de saída.
+//
+// Side-effects policy: doctor does NOT mutate the default stdlib logger.
+// The `[SECURITY]` banner seen in terminals comes from tracking.init()
+// via log.Printf to stderr — our JSON output stream is stdout, so there
+// is no contamination to guard against. If a future code path starts
+// calling log.* inside doctor, redirect it with a local logger built via
+// log.New(io.Discard, "", 0), never by touching log.SetOutput.
 func runDoctor(strict, fix, deep, jsonOut bool) error {
-	// Silencia o logger padrão: doctor não deve poluir a saída com linhas
-	// de pacotes importados (ex.: [SECURITY] do tracking.init). Qualquer
-	// sinal relevante vira um check estruturado.
-	origLogOut := log.Writer()
-	log.SetOutput(io.Discard)
-	defer log.SetOutput(origLogOut)
-
 	res := &doctorResult{orbitBinPos: -1, localBinPos: -1}
 
 	// Banner e info de binário são puramente humanos; em modo JSON os
@@ -223,10 +249,21 @@ func runDoctor(strict, fix, deep, jsonOut bool) error {
 // emitJSONReport writes the DoctorReport to w as indented JSON, with a
 // trailing newline. Indentation makes the output diff-friendly for the
 // determinism test without costing anything in machine-readability.
+//
+// Fail-closed: if encoding the full report fails, a DoctorErrorReport
+// envelope is attempted on the same writer so consumers always see a
+// parseable object with the same schema version. If even that fallback
+// fails, the original error is returned.
 func emitJSONReport(w io.Writer, res *doctorResult) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(res.toReport())
+	if err := enc.Encode(res.toReport()); err != nil {
+		fallback := json.NewEncoder(w)
+		fallback.SetIndent("", "  ")
+		_ = fallback.Encode(newDoctorErrorReport(err))
+		return err
+	}
+	return nil
 }
 
 // ── collectors ───────────────────────────────────────────────────────────────
