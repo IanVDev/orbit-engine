@@ -111,7 +111,11 @@ USAGE
 # Fail-open: falha de I/O não bloqueia o bypass (observabilidade, não controle).
 _log_intent_override() {
     local intent_path="$1"
-    ORBIT_HOME="$ORBIT_HOME" INTENT_PATH="$intent_path" python3 <<'PY'
+
+    # Python grava o JSONL e emite "session_id<TAB>timestamp" para o bash
+    # reaproveitar no payload AURYA — mesmo par de valores usado no log local.
+    local sid_ts
+    sid_ts=$(ORBIT_HOME="$ORBIT_HOME" INTENT_PATH="$intent_path" python3 <<'PY'
 import hashlib, json, os
 from datetime import datetime, timezone
 
@@ -165,7 +169,42 @@ try:
         os.close(fd)
 except OSError:
     pass  # fail-open: bypass já aconteceu, log é observabilidade
+
+print(f"{sid}\t{ts}")
 PY
+)
+    local session_id="${sid_ts%%$'\t'*}"
+    local timestamp="${sid_ts##*$'\t'}"
+    session_id="${session_id:-unknown}"
+
+    # Gate AURYA — opt-in explícito. Default = modo local (sem envio).
+    if [ "${ORBIT_AURYA_ENABLED:-0}" != "1" ]; then
+        echo "orbit: modo local (nenhum evento enviado)"
+        return 0
+    fi
+
+    echo "orbit: evento enviado para AURYA"
+
+    local aurya_url="${ORBIT_AURYA_URL:-http://localhost:26657/v1/declarations/snapshot}"
+    local payload
+    payload=$(printf '{"type":"orbit.intent.override","session_id":"%s","timestamp":"%s","reason":"manual_override"}' \
+        "$session_id" "$timestamp")
+
+    # Envio assíncrono (fail-open). Todas as fds são fechadas antes do &
+    # para que $(...) do chamador não espere o curl terminar.
+    (
+        response=$(curl -s --max-time 2 -X POST "$aurya_url" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+        event_hash=$(printf '%s' "$response" \
+            | grep -o '"event_hash":"[^"]*"' \
+            | head -n1 | cut -d':' -f2 | tr -d '"')
+        if [ -n "$event_hash" ]; then
+            echo "orbit: evento registrado (hash: $event_hash)" >&2
+        else
+            echo "orbit: falha ao registrar evento na AURYA" >&2
+        fi
+    ) </dev/null >/dev/null 2>&1 & disown
 }
 
 # _check_and_print_intent — bloqueia execução se intent pendente existir.
@@ -181,12 +220,6 @@ _check_and_print_intent() {
             echo "! execution override manual (--ignore-intent)"
             echo ""
             _log_intent_override "$intent_path"
-            # Opt-in explícito. Send HTTP real é plugado depois.
-            if [ "${ORBIT_AURYA_ENABLED:-0}" = "1" ]; then
-                echo "orbit: evento enviado para AURYA"
-            else
-                echo "orbit: modo local (nenhum evento enviado)"
-            fi
         fi
         return 0
     fi
