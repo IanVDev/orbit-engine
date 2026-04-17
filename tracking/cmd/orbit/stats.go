@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IanVDev/orbit-engine/tracking"
 )
 
 // displayMetric descreve uma métrica que deve ser exibida no painel.
@@ -43,10 +45,22 @@ var metricsPanel = []displayMetric{
 }
 
 // runStats conecta ao tracking-server e exibe os KPIs.
-func runStats(host string) error {
+// Se share=true, exibe apenas o snippet de compartilhamento e retorna sem
+// acessar o servidor (dados puramente locais).
+func runStats(host string, share bool) error {
 	PrintSection("Orbit Stats")
+	fmt.Println()
+
+	if share {
+		return printSharePanel()
+	}
+
 	PrintKV("Servidor:", host)
 	fmt.Println()
+
+	// --- Loop de valor local (JSONL history) ---
+	// Fail-soft: mesmo se o servidor estiver down, o usuário vê o que tem.
+	printHistoryPanel()
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(host + "/metrics")
@@ -89,6 +103,97 @@ func runStats(host string) error {
 		PrintSuccess(fmt.Sprintf("%d métrica(s) exibida(s)", found))
 		PrintTip("Use 'orbit run <cmd>' para registrar execuções com proof.")
 	}
+	fmt.Println()
+	return nil
+}
+
+// printHistoryPanel exibe o agregado de valor lido de $ORBIT_HOME/history.jsonl.
+// Fail-soft: em caso de erro de I/O, emite WARN e continua sem abortar o stats.
+// Fail-closed: se history vazio, mostra mensagem clara e não exibe linha zerada.
+func printHistoryPanel() {
+	stats, err := tracking.LoadHistoryStats()
+	if err != nil {
+		PrintWarn("Histórico local indisponível: " + err.Error())
+		fmt.Println()
+		return
+	}
+	if stats.TotalSessions == 0 {
+		PrintKV("Histórico local:", "vazio")
+		PrintTip("Ainda sem sessões — rode o orbit e gere atividade primeiro.")
+		fmt.Println()
+		return
+	}
+
+	PrintKV("Histórico local:", stats.Path)
+	PrintKV("Sessões totais:", fmt.Sprintf("%d", stats.TotalSessions))
+	PrintKV("Sessões com skill ativa:", fmt.Sprintf("%d", stats.ActivatedSessions))
+	PrintKV("Sessões com valor:", fmt.Sprintf("%d", stats.SessionsWithValue))
+	PrintKV("Taxa de ativação:", fmt.Sprintf("%.1f%%", stats.ActivationRate()*100))
+
+	// Tokens: total + progressão do dia
+	tokenLine := fmt.Sprintf("%d total", stats.TotalTokensSaved)
+	if stats.TodayTokensSaved > 0 || stats.HasPrevDay() {
+		todayPart := fmt.Sprintf("+%d hoje", stats.TodayTokensSaved)
+		if stats.HasPrevDay() {
+			pct := stats.TodayVariationPct()
+			arrow := "→"
+			switch {
+			case pct > 0:
+				arrow = "↑"
+			case pct < 0:
+				arrow = "↓"
+			}
+			todayPart += fmt.Sprintf("  %s %.0f%% vs ontem", arrow, pct)
+		}
+		tokenLine += "  |  " + todayPart
+	}
+	PrintKV("Tokens economizados:", tokenLine)
+	PrintKV("Custo economizado:", fmt.Sprintf("$%.4f USD", stats.TotalCostSavedUSD))
+
+	// Streak
+	switch {
+	case stats.StreakDays >= 7:
+		PrintSuccess(fmt.Sprintf("🔥 Streak: %d dias gerando valor — sequência excepcional", stats.StreakDays))
+	case stats.StreakDays >= 3:
+		PrintSuccess(fmt.Sprintf("🔥 Streak: %d dias gerando valor", stats.StreakDays))
+	case stats.StreakDays >= 1:
+		PrintKV("Streak:", fmt.Sprintf("%d dia(s) com valor", stats.StreakDays))
+	}
+
+	fmt.Println()
+}
+
+// printSharePanel exibe as 3 variações de texto de compartilhamento.
+// Fail-closed se histórico vazio ou inacessível.
+func printSharePanel() error {
+	stats, err := tracking.LoadHistoryStats()
+	if err != nil {
+		PrintWarn("Histórico local indisponível: " + err.Error())
+		return err
+	}
+	if stats.TotalSessions == 0 {
+		PrintWarn("Sem dados para compartilhar — rode o orbit e gere atividade primeiro.")
+		PrintTip("Execute 'orbit quickstart' para gerar o primeiro evento.")
+		fmt.Println()
+		return nil
+	}
+
+	tracking.IncrementStatsShared()
+
+	for _, style := range tracking.AllShareStyles {
+		label := tracking.ShareStyleLabel(style)
+		PrintDivider()
+		fmt.Printf("  %s\n\n", label)
+		text := tracking.GenerateShareText(stats, style)
+		// Indenta cada linha (minimalista usa \n internamente).
+		for _, line := range strings.Split(text, "\n") {
+			fmt.Println("  " + line)
+		}
+		fmt.Println()
+	}
+
+	PrintDivider()
+	PrintTip("Copie a versão que ressoa com você e compartilhe.")
 	fmt.Println()
 	return nil
 }

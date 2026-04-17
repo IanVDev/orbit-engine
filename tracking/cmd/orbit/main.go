@@ -56,8 +56,9 @@ func main() {
 	case "stats":
 		fs := flag.NewFlagSet("stats", flag.ExitOnError)
 		host := fs.String("host", defaultTrackingHost, "URL do tracking-server")
+		share := fs.Bool("share", false, "gerar texto curto para compartilhar resultados")
 		_ = fs.Parse(os.Args[2:])
-		if err := runStats(*host); err != nil {
+		if err := runStats(*host, *share); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
 			os.Exit(1)
 		}
@@ -98,6 +99,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  --host <url>    URL do tracking-server (default: http://localhost:9100)")
 	fmt.Fprintln(os.Stderr, "                  Em quickstart, deixe vazio para usar servidor embutido.")
 	fmt.Fprintln(os.Stderr, "  --json          (run) output JSON estruturado")
+	fmt.Fprintln(os.Stderr, "  --share         (stats) gerar texto curto para compartilhar resultados")
 	fmt.Fprintln(os.Stderr, "  --strict        (doctor) falha com exit 1 se houver WARNINGs")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Exemplos:")
