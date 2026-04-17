@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -246,24 +247,66 @@ func runDoctor(strict, fix, deep, jsonOut bool) error {
 	return finalize(res, strict)
 }
 
-// emitJSONReport writes the DoctorReport to w as indented JSON, with a
-// trailing newline. Indentation makes the output diff-friendly for the
-// determinism test without costing anything in machine-readability.
+// emitJSONReport writes the DoctorReport to w as indented JSON.
 //
-// Fail-closed: if encoding the full report fails, a DoctorErrorReport
-// envelope is attempted on the same writer so consumers always see a
-// parseable object with the same schema version. If even that fallback
-// fails, the original error is returned.
+// Atomic-emission contract (fail-closed):
+//
+//   - The JSON is always rendered to a bytes.Buffer FIRST. No incremental
+//     writes to w happen during encoding — we cannot observe a truncated
+//     or interleaved envelope in the middle of emission.
+//
+//   - Exactly ONE Write call is made to w (with the full buffer). If w
+//     partially fails (returns n<len, err), no retry or fallback is
+//     attempted on w — appending a second envelope on top of a partial
+//     write would produce interleaved garbage. The error is returned.
+//
+//   - If the internal encode fails (defensively handled; unreachable for
+//     the current types since they contain only strings/ints/slices),
+//     a DoctorErrorReport is encoded into a fresh buffer and written as
+//     the single atomic write instead. Consumers always see at most one
+//     complete envelope — never a mix.
+//
+// Result shape for w after this call:
+//   - success: w contains the full indented DoctorReport JSON
+//   - encode fail + write ok: w contains the full DoctorErrorReport JSON
+//   - w.Write fail: w contains at most a prefix of ONE envelope and the
+//     caller gets a non-nil error
 func emitJSONReport(w io.Writer, res *doctorResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(res.toReport()); err != nil {
-		fallback := json.NewEncoder(w)
-		fallback.SetIndent("", "  ")
-		_ = fallback.Encode(newDoctorErrorReport(err))
+	primary, encErr := encodeIndentedJSON(res.toReport())
+	if encErr != nil {
+		// The success envelope itself could not be encoded (unreachable
+		// for current types, but guard defensively). Try the error
+		// envelope on a fresh buffer, then perform the single atomic
+		// write of whichever envelope we produced.
+		fallback, fErr := encodeIndentedJSON(newDoctorErrorReport(encErr))
+		if fErr != nil {
+			return fmt.Errorf("doctor: primary encode failed (%v); fallback envelope also failed: %w", encErr, fErr)
+		}
+		if _, wErr := w.Write(fallback); wErr != nil {
+			return fmt.Errorf("doctor: encode error %v; fallback write failed: %w", encErr, wErr)
+		}
+		return encErr
+	}
+
+	if _, err := w.Write(primary); err != nil {
+		// Atomic contract: no retry, no fallback. The writer is
+		// considered broken; any further Write would interleave bytes.
 		return err
 	}
 	return nil
+}
+
+// encodeIndentedJSON marshals v into indented JSON (2-space) with a
+// trailing newline, identical to json.Encoder's behaviour. Returning
+// bytes (not streaming into w) is the core of the atomic contract.
+func encodeIndentedJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // ── collectors ───────────────────────────────────────────────────────────────

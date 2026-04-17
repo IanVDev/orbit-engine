@@ -122,45 +122,130 @@ func TestDoctorJSONEmitter_Envelope(t *testing.T) {
 	}
 }
 
-// TestDoctorJSONEmitter_ErrorEnvelope forces an encoder failure and
-// asserts the fail-closed fallback emits a DoctorErrorReport with the
-// same schema version. We use a writer that rejects the first write to
-// simulate a transient I/O error.
-func TestDoctorJSONEmitter_ErrorEnvelope(t *testing.T) {
-	w := &flakyWriter{fails: 1} // first write errors, second succeeds
+// TestDoctorJSONEmitter_AtomicSingleWrite asserts the happy path does
+// exactly one Write call with the full buffered envelope. Zero partial
+// writes, zero retries.
+func TestDoctorJSONEmitter_AtomicSingleWrite(t *testing.T) {
+	w := &countingWriter{accept: true}
+	res := &doctorResult{checks: []check{{name: "x", severity: sevOK, detail: "ok"}}}
+
+	if err := emitJSONReport(w, res); err != nil {
+		t.Fatalf("emitJSONReport: %v", err)
+	}
+	if w.writes != 1 {
+		t.Errorf("Write calls = %d; atomic contract requires exactly 1", w.writes)
+	}
+
+	var rep DoctorReport
+	if err := json.Unmarshal(w.buf.Bytes(), &rep); err != nil {
+		t.Fatalf("buffered output is not valid JSON: %v\n---\n%s", err, w.buf.String())
+	}
+	if rep.Version != "v1" {
+		t.Errorf("rep.Version = %q; want v1", rep.Version)
+	}
+}
+
+// TestDoctorJSONEmitter_AtomicOnPartialWriteFailure: when the writer
+// returns (n<len, err), the emitter must NOT attempt a second write to
+// fall back to the error envelope — that would interleave two envelopes
+// on top of each other and produce garbage. Exactly one Write call,
+// error is propagated.
+func TestDoctorJSONEmitter_AtomicOnPartialWriteFailure(t *testing.T) {
+	// The writer accepts the first 10 bytes of the success envelope,
+	// then returns an error. Under the atomic contract, no retry is made.
+	w := &partialWriter{acceptBytes: 10}
 	res := &doctorResult{checks: []check{{name: "x", severity: sevOK}}}
 
 	err := emitJSONReport(w, res)
 	if err == nil {
-		t.Fatalf("expected error from emitJSONReport when first write fails")
+		t.Fatalf("expected error when writer partially fails")
+	}
+	if w.writes != 1 {
+		t.Errorf("Write calls = %d; atomic contract forbids a second write after partial failure", w.writes)
+	}
+	// What reached the writer is a prefix of ONE envelope — never a mix.
+	// We don't require it to be parseable JSON (partial by nature), but we
+	// require it NOT to contain a second envelope marker.
+	occurrences := strings.Count(w.buf.String(), `"version"`)
+	if occurrences > 1 {
+		t.Errorf("writer received %d version markers; expected at most 1 envelope prefix", occurrences)
+	}
+}
+
+// TestDoctorJSONEmitter_AtomicRejection: when the writer rejects the
+// first byte entirely (n=0, err), the buffer stays empty and the
+// emitter returns the error.
+func TestDoctorJSONEmitter_AtomicRejection(t *testing.T) {
+	w := &countingWriter{accept: false}
+	res := &doctorResult{checks: []check{{name: "x", severity: sevOK}}}
+
+	err := emitJSONReport(w, res)
+	if err == nil {
+		t.Fatalf("expected error when writer rejects all writes")
+	}
+	if w.writes != 1 {
+		t.Errorf("Write calls = %d; expected 1", w.writes)
+	}
+	if w.buf.Len() != 0 {
+		t.Errorf("rejecting writer received %d bytes; expected 0", w.buf.Len())
+	}
+}
+
+// TestDoctorErrorEnvelope_Wellformed covers the fallback envelope that
+// the atomic emitter would use if the primary encode ever fails. Since
+// our concrete types cannot fail to marshal in practice, we validate
+// the helper directly: the envelope carries Version=v1 and is valid JSON.
+func TestDoctorErrorEnvelope_Wellformed(t *testing.T) {
+	payload, err := encodeIndentedJSON(newDoctorErrorReport(errors.New("boom")))
+	if err != nil {
+		t.Fatalf("encodeIndentedJSON(errorReport): %v", err)
 	}
 
-	// The fallback envelope must be valid JSON with version=v1 and a non-empty error.
 	var fallback DoctorErrorReport
-	if uErr := json.Unmarshal(w.buf.Bytes(), &fallback); uErr != nil {
-		t.Fatalf("fallback envelope not parseable: %v\n---\n%s", uErr, w.buf.String())
+	if uErr := json.Unmarshal(payload, &fallback); uErr != nil {
+		t.Fatalf("error envelope is not valid JSON: %v\n---\n%s", uErr, payload)
 	}
 	if fallback.Version != "v1" {
 		t.Errorf("fallback.Version = %q; want v1", fallback.Version)
 	}
-	if fallback.Error == "" {
-		t.Error("fallback.Error is empty — fail-closed envelope should carry the cause")
+	if fallback.Error != "boom" {
+		t.Errorf("fallback.Error = %q; want %q", fallback.Error, "boom")
 	}
 }
 
-// flakyWriter rejects the first `fails` writes, then behaves like a
-// bytes.Buffer. Test-only helper.
-type flakyWriter struct {
-	fails int
-	buf   bytes.Buffer
+// ── test-only writers ────────────────────────────────────────────────────────
+
+// countingWriter either accepts all writes (buffered) or rejects them.
+type countingWriter struct {
+	accept bool
+	buf    bytes.Buffer
+	writes int
 }
 
-func (f *flakyWriter) Write(p []byte) (int, error) {
-	if f.fails > 0 {
-		f.fails--
-		return 0, errors.New("flaky writer: simulated I/O error")
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.writes++
+	if !c.accept {
+		return 0, errors.New("countingWriter: rejected")
 	}
-	return f.buf.Write(p)
+	return c.buf.Write(p)
+}
+
+// partialWriter accepts acceptBytes from each Write and returns an error.
+// Used to simulate a writer that flushes a prefix before failing.
+type partialWriter struct {
+	acceptBytes int
+	buf         bytes.Buffer
+	writes      int
+}
+
+func (p *partialWriter) Write(b []byte) (int, error) {
+	p.writes++
+	n := len(b)
+	if n > p.acceptBytes {
+		n = p.acceptBytes
+	}
+	p.buf.Write(b[:n])
+	return n, errors.New("partialWriter: simulated partial failure")
 }
 
 // ---------------------------------------------------------------------------
