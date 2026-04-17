@@ -90,6 +90,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "hygiene":
+		if err := runHygiene(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+			os.Exit(1)
+		}
+
 	case "doctor":
 		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
@@ -123,6 +129,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
 	fmt.Fprintln(os.Stderr, "  analyze       Alerta silencioso: imprime apenas se risco >= HIGH")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
+	fmt.Fprintln(os.Stderr, "  hygiene       Gerencia o pre-commit hook (install|check)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
