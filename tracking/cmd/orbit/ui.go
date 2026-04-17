@@ -16,8 +16,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -104,10 +104,32 @@ func PrintDivider() {
 	fmt.Println(col(ansiDim, strings.Repeat("─", 49)))
 }
 
-// PrintJSON serializa v como JSON indentado e escreve em stdout.
-// Retorna error se a serialização falhar.
+// PrintJSON serializa v como JSON indentado e escreve em stdout usando
+// o contrato de emissão atômica (ver writeJSONAtomic).
 func PrintJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	return writeJSONAtomic(os.Stdout, v)
+}
+
+// writeJSONAtomic encodes v into an in-memory buffer and performs at most
+// one Write call against w. This guarantees:
+//
+//   - No partial writes from the encoder itself (the encoder targets a
+//     bytes.Buffer, which cannot partial-fail).
+//   - At most one Write call to w per invocation. If w partial-fails, the
+//     error is propagated and no retry is attempted — a second write on a
+//     broken writer would risk interleaving.
+//   - If encoding v fails (e.g., unsupported type), no bytes are written
+//     to w at all; the error is returned.
+//
+// This is the general-purpose counterpart to emitJSONReport in doctor.go,
+// which adds a schema-specific error-envelope fallback on encode failure.
+// Callers that need that envelope behaviour use emitJSONReport; everyone
+// else uses PrintJSON / writeJSONAtomic.
+func writeJSONAtomic(w io.Writer, v any) error {
+	buf, err := encodeIndentedJSON(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(buf)
+	return err
 }
