@@ -39,6 +39,8 @@ set -uo pipefail
 ARG1="${1:-}"
 ARG2="${2:-}"
 ARG3="${3:-}"
+ARG4="${4:-}"
+ARG5="${5:-}"
 ORBIT_HOME="${ORBIT_HOME:-$HOME/.orbit}"
 LEDGER="$ORBIT_HOME/client_ledger.jsonl"
 BACKEND="${ORBIT_BACKEND_URL:-http://localhost:9100}"
@@ -55,12 +57,10 @@ uso:
   orbit_explain.sh <session_id>
       Verifica integridade + exibe correlação git de uma sessão.
 
-  orbit_explain.sh --list
-      Lista todas as sessões presentes no ledger.
-
-  orbit_explain.sh --list --since <ISO8601>
-      Idem, filtrando por sessões cujo último evento é >= <ISO8601>.
-      Útil em incident response: "sessões das últimas 24h".
+  orbit_explain.sh --list [--since <ISO8601>] [--repo <caminho>]
+      Lista sessões no ledger. Flags opcionais (qualquer ordem):
+        --since <ISO8601>   filtra por ultimo_ts >= valor
+        --repo  <caminho>   filtra por repositório git (substring)
 
   orbit_explain.sh -h | --help
       Esta mensagem.
@@ -72,8 +72,9 @@ Env:
   ORBIT_EXPLAIN_LOCAL_ONLY   "1" pula fases 2 e 3 (escopo de teste)
 
 Exemplos de investigação:
-  orbit_explain.sh --list --since 2026-04-17T00:00:00Z
-  orbit_explain.sh refine-1776443535
+  orbit_explain.sh --list --since 2026-04-17T00:00:00Z --repo /tmp/meu-repo
+  orbit_explain.sh --list --repo /home/dev/project
+  orbit_explain.sh drill-sessC-1776446786
 USAGE
 }
 
@@ -82,24 +83,45 @@ if [ "$ARG1" = "-h" ] || [ "$ARG1" = "--help" ] || [ -z "$ARG1" ]; then
     [ -z "$ARG1" ] && exit 2 || exit 0
 fi
 
-# --list [--since <ISO>] — tabela de sessões. Resolve "qual session_id eu
-# passo pro explain?" e "quais sessões rodaram desde X?" sem virar
-# subcomandos separados.
+# --list [--since <ISO>] [--repo <caminho>]
+# Flags aceitas em qualquer ordem após --list.
 if [ "$ARG1" = "--list" ]; then
     [ -f "$LEDGER" ] || fail "ledger não encontrado: $LEDGER"
+
     SINCE=""
-    if [ "$ARG2" = "--since" ]; then
-        [ -n "$ARG3" ] || fail "--since requer valor (ISO8601): orbit_explain.sh --list --since 2026-04-17"
-        SINCE="$ARG3"
-    elif [ -n "$ARG2" ]; then
-        fail "flag desconhecida após --list: $ARG2 (use --since <ISO8601>)"
-    fi
-    LEDGER="$LEDGER" SINCE="$SINCE" python3 <<'PY'
+    REPO_FILTER=""
+    _flags=("$ARG2" "$ARG3" "$ARG4" "$ARG5")
+    _i=0
+    while [ "$_i" -lt 4 ]; do
+        _flag="${_flags[$_i]}"
+        _i=$(( _i + 1 ))
+        _val="${_flags[$_i]:-}"
+        case "$_flag" in
+            --since)
+                [ -n "$_val" ] || fail "--since requer valor ISO8601"
+                SINCE="$_val"
+                _i=$(( _i + 1 ))
+                ;;
+            --repo)
+                [ -n "$_val" ] || fail "--repo requer valor (substring do caminho)"
+                REPO_FILTER="$_val"
+                _i=$(( _i + 1 ))
+                ;;
+            "")
+                ;;
+            *)
+                fail "flag desconhecida após --list: $_flag"
+                ;;
+        esac
+    done
+
+    LEDGER="$LEDGER" SINCE="$SINCE" REPO_FILTER="$REPO_FILTER" python3 <<'PY'
 import json, os
 from collections import defaultdict
 
-path = os.environ["LEDGER"]
-since = os.environ.get("SINCE", "").strip()
+path        = os.environ["LEDGER"]
+since       = os.environ.get("SINCE", "").strip()
+repo_filter = os.environ.get("REPO_FILTER", "").strip()
 
 sess = defaultdict(list)
 with open(path, "r", encoding="utf-8") as f:
@@ -123,32 +145,60 @@ rows = []
 for sid, evs in sess.items():
     evs.sort(key=lambda x: x.get("timestamp", ""))
     last_ts = evs[-1].get("timestamp", "")
-    # Filtro --since: comparação lexicográfica funciona para ISO8601 normalizado.
+
+    # Filtro --since (lexicográfico — funciona para ISO8601 normalizado).
     if since and last_ts < since:
         continue
+
+    # Filtro --repo (substring do git_repo de qualquer evento da sessão).
+    if repo_filter:
+        repos = [e.get("git_repo") or "" for e in evs]
+        if not any(repo_filter in r for r in repos):
+            continue
+
     tok = sum(int(x.get("impact_estimated_tokens", 0)) for x in evs)
-    git_head = ""
-    for x in evs:
-        if x.get("git_head"):
-            git_head = x["git_head"][:12]
-            break
+
+    # HEAD_RANGE: first→last (6 chars cada) ou ≡ se não avançou.
+    first_head = next((x["git_head"][:7] for x in evs     if x.get("git_head")), "")
+    last_head  = next((x["git_head"][:7] for x in reversed(evs) if x.get("git_head")), "")
+    if first_head and last_head:
+        if first_head == last_head:
+            head_range = f"≡ {first_head}"          # HEAD estável na sessão
+        else:
+            head_range = f"{first_head}→{last_head}"  # HEAD avançou
+    else:
+        head_range = "<sem git>"
+
+    # Repo mais frequente (ou único) para exibir abreviado.
+    all_repos = [e.get("git_repo") or "" for e in evs if e.get("git_repo")]
+    repo_display = os.path.basename(all_repos[0]) if all_repos else ""
+
     rows.append((last_ts, sid, len(evs), tok,
-                 evs[0].get("timestamp", ""), last_ts, git_head))
+                 evs[0].get("timestamp", ""), last_ts,
+                 head_range, repo_display))
+
 rows.sort(reverse=True)
 
 if not rows:
+    parts = []
     if since:
-        print(f"(nenhuma sessão com ultimo_ts >= {since})")
-    else:
-        print("(ledger vazio)")
+        parts.append(f"--since {since}")
+    if repo_filter:
+        parts.append(f"--repo {repo_filter}")
+    filt = " ".join(parts)
+    print(f"(nenhuma sessão com {filt})" if filt else "(ledger vazio)")
     raise SystemExit(0)
 
-print(f"{'SESSION_ID':<40}  {'EV':>3}  {'TOK':>5}  {'GIT_HEAD':<12}  PRIMEIRO_TS                ULTIMO_TS")
-for _, sid, n, tok, first, last, ghead in rows:
-    gh = ghead if ghead else "<sem git>"
-    print(f"{sid:<40}  {n:>3}  {tok:>5}  {gh:<12}  {first:<25}  {last}")
+print(f"{'SESSION_ID':<42}  {'EV':>3}  {'TOK':>5}  {'HEAD_RANGE':<16}  {'REPO':<20}  ULTIMO_TS")
+for _, sid, n, tok, first, last, hr, repo in rows:
+    print(f"{sid:<42}  {n:>3}  {tok:>5}  {hr:<16}  {repo:<20}  {last}")
 print()
-suffix = f" (filtro: --since {since})" if since else ""
+parts = []
+if since:
+    parts.append(f"--since {since}")
+if repo_filter:
+    parts.append(f"--repo {repo_filter}")
+suffix = " (" + ", ".join(parts) + ")" if parts else ""
 print(f"total: {len(rows)} sessões{suffix}. Use: orbit_explain.sh <session_id>")
 PY
     exit 0

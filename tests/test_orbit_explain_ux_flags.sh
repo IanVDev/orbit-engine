@@ -116,6 +116,60 @@ OUT="$("$EXPLAIN" --list --banana 2026 2>&1)"; RC=$?
 [ "$RC" = "2" ] || fail_test "case 7: flag desconhecida retornou $RC (esperado 2)"
 pass "case 7: --list --banana → exit 2"
 
+# ---------------------------------------------------------------------------
+# Adiciona entradas com dois repos distintos para testar --repo
+# ---------------------------------------------------------------------------
+mk_entry "sess-repo-x" "2026-04-17T10:00:00.000Z" 0   >  "$LEDGER"
+mk_entry "sess-repo-y" "2026-04-17T10:00:05.000Z" 100 >> "$LEDGER"
+# Injeta git_repo nos eventos via Python (mk_entry gera sem git_repo real)
+python3 - "$LEDGER" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+lines = p.read_text().splitlines()
+for i, raw in enumerate(lines):
+    e = json.loads(raw)
+    if e["session_id"] == "sess-repo-x":
+        e["git_repo"] = "/home/dev/project-alpha"
+        e["git_head"] = "aaa" + "0" * 37
+    elif e["session_id"] == "sess-repo-y":
+        e["git_repo"] = "/home/dev/project-beta"
+        e["git_head"] = "bbb" + "0" * 37
+    lines[i] = json.dumps(e, separators=(",", ":"), sort_keys=True)
+p.write_text("\n".join(lines) + "\n")
+PY
+
+# ---------------------------------------------------------------------------
+# case 8: --repo filtra por substring do caminho
+# ---------------------------------------------------------------------------
+OUT="$("$EXPLAIN" --list --repo "project-alpha" 2>&1)"; RC=$?
+[ "$RC" = "0" ] || fail_test "case 8: --repo retornou $RC"
+echo "$OUT" | grep -q "sess-repo-x" || fail_test "case 8: --repo nao mostrou sess-repo-x"
+echo "$OUT" | grep -q "sess-repo-y" && fail_test "case 8: --repo nao devia mostrar sess-repo-y"
+pass "case 8: --repo project-alpha → só sess-repo-x"
+
+# ---------------------------------------------------------------------------
+# case 9: --repo + --since combinados
+# ---------------------------------------------------------------------------
+OUT="$("$EXPLAIN" --list --since "2026-04-17T10:00:03Z" --repo "project-beta" 2>&1)"; RC=$?
+[ "$RC" = "0" ] || fail_test "case 9: --repo+--since retornou $RC"
+echo "$OUT" | grep -q "sess-repo-y" || fail_test "case 9: deveria mostrar sess-repo-y"
+echo "$OUT" | grep -q "sess-repo-x" && fail_test "case 9: nao deveria mostrar sess-repo-x (filtrado por --since)"
+pass "case 9: --since + --repo combinados → só sess-repo-y"
+
+# ---------------------------------------------------------------------------
+# case 10: HEAD_RANGE mostra ≡ e → corretamente
+# ---------------------------------------------------------------------------
+OUT="$("$EXPLAIN" --list --repo "project-alpha" 2>&1)"
+echo "$OUT" | grep -q "≡ aaa0000" || fail_test "case 10: HEAD estável deveria mostrar ≡"
+pass "case 10: HEAD_RANGE ≡ exibido para HEAD estável"
+
+# ---------------------------------------------------------------------------
+# case 11: --repo sem valor → fail-closed
+# ---------------------------------------------------------------------------
+OUT="$("$EXPLAIN" --list --repo 2>&1)"; RC=$?
+[ "$RC" = "2" ] || fail_test "case 11: --repo sem valor retornou $RC (esperado 2)"
+pass "case 11: --repo sem valor → exit 2"
+
 echo ""
 echo "OK: orbit_explain UX flags comportam conforme esperado"
 exit 0
