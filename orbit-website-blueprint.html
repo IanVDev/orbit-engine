@@ -1,0 +1,1718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Orbit — Website Blueprint</title>
+<style>
+  :root {
+    --bg: #0B0D10;
+    --bg-2: #11141A;
+    --surface: #171B22;
+    --border: #232833;
+    --border-soft: #1c212a;
+    --text: #E8EAED;
+    --text-2: #9AA3AE;
+    --text-3: #6B7280;
+    --accent: #7C9CFF;
+    --green: #4ADE80;
+    --amber: #F59E0B;
+    --red: #EF4444;
+    --mono-bg: #0A0B0E;
+  }
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+  }
+
+  @page :first {
+    margin: 0;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    padding: 0;
+  }
+
+  /* Cover */
+  .cover {
+    height: 297mm;
+    background: radial-gradient(ellipse at 20% 15%, rgba(124,156,255,0.14), transparent 50%),
+                radial-gradient(ellipse at 90% 85%, rgba(74,222,128,0.06), transparent 55%),
+                var(--bg);
+    padding: 28mm 22mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cover::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(124,156,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,156,255,0.035) 1px, transparent 1px);
+    background-size: 36px 36px;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .cover-top, .cover-mid, .cover-bot {
+    position: relative;
+    z-index: 1;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11pt;
+    letter-spacing: 1.4px;
+    color: var(--text);
+  }
+
+  .brand .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(124,156,255,0.18);
+  }
+
+  .cover-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8.5pt;
+    color: var(--text-2);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+
+  .cover-badge .pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .cover h1 {
+    font-size: 44pt;
+    line-height: 1.04;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 18px 0;
+    color: var(--text);
+    max-width: 170mm;
+  }
+
+  .cover h1 .accent {
+    color: var(--accent);
+  }
+
+  .cover .tagline {
+    font-size: 14pt;
+    color: var(--text-2);
+    max-width: 150mm;
+    font-weight: 400;
+    line-height: 1.45;
+  }
+
+  .cover-meta {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+  }
+
+  .cover-meta .item {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8.5pt;
+    color: var(--text-3);
+  }
+
+  .cover-meta .item strong {
+    display: block;
+    color: var(--text);
+    font-weight: 600;
+    font-size: 10pt;
+    margin-top: 4px;
+  }
+
+  /* Content */
+  .content {
+    padding: 0 4mm;
+  }
+
+  .toc {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-bottom: 26px;
+    page-break-after: always;
+  }
+
+  .toc h2 {
+    font-size: 16pt;
+    margin: 0 0 16px 0;
+    letter-spacing: -0.01em;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    counter-reset: toc;
+    column-count: 2;
+    column-gap: 28px;
+  }
+
+  .toc ol li {
+    counter-increment: toc;
+    padding: 5px 0;
+    color: var(--text-2);
+    font-size: 10pt;
+    border-bottom: 1px dotted var(--border);
+    break-inside: avoid;
+  }
+
+  .toc ol li::before {
+    content: counter(toc, decimal-leading-zero) "   ";
+    color: var(--accent);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9pt;
+    margin-right: 6px;
+  }
+
+  /* Section */
+  section {
+    page-break-inside: auto;
+    margin-bottom: 28px;
+  }
+
+  section.break-before {
+    page-break-before: always;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin: 32px 0 14px 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-head .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11pt;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+
+  .section-head h2 {
+    font-size: 18pt;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  h3 {
+    font-size: 13pt;
+    font-weight: 600;
+    color: var(--text);
+    margin: 22px 0 8px 0;
+    letter-spacing: -0.005em;
+  }
+
+  h4 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: var(--text);
+    margin: 14px 0 6px 0;
+  }
+
+  p {
+    margin: 0 0 10px 0;
+    color: var(--text-2);
+  }
+
+  p strong, li strong { color: var(--text); font-weight: 600; }
+
+  ul, ol {
+    margin: 0 0 12px 0;
+    padding-left: 20px;
+    color: var(--text-2);
+  }
+
+  li { margin: 3px 0; }
+
+  code, .mono {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 9.2pt;
+    background: rgba(124,156,255,0.08);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(124,156,255,0.15);
+  }
+
+  pre {
+    background: var(--mono-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8.8pt;
+    line-height: 1.55;
+    color: var(--text);
+    overflow: hidden;
+    white-space: pre-wrap;
+    page-break-inside: avoid;
+  }
+
+  pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: inherit;
+  }
+
+  pre .c-key { color: #c3a6ff; }
+  pre .c-str { color: #9acd9a; }
+  pre .c-num { color: #e6b97a; }
+  pre .c-cmd { color: var(--accent); }
+  pre .c-ok  { color: var(--green); }
+  pre .c-warn{ color: var(--amber); }
+  pre .c-err { color: var(--red); }
+  pre .c-dim { color: var(--text-3); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 16px 0;
+    font-size: 9.8pt;
+    page-break-inside: avoid;
+  }
+
+  th, td {
+    padding: 9px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--text-2);
+  }
+
+  th {
+    background: var(--bg-2);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 9.5pt;
+    letter-spacing: 0.2px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 10px 0;
+    page-break-inside: avoid;
+  }
+
+  .card h4 { margin-top: 0; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8pt;
+    color: var(--text-2);
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+
+  .pill.green { color: var(--green); border-color: rgba(74,222,128,0.35); }
+  .pill.amber { color: var(--amber); border-color: rgba(245,158,11,0.35); }
+  .pill.red   { color: var(--red); border-color: rgba(239,68,68,0.35); }
+  .pill.blue  { color: var(--accent); border-color: rgba(124,156,255,0.35); }
+
+  blockquote {
+    margin: 12px 0;
+    padding: 12px 16px;
+    border-left: 3px solid var(--accent);
+    background: rgba(124,156,255,0.05);
+    color: var(--text-2);
+    border-radius: 0 8px 8px 0;
+  }
+
+  blockquote p:last-child { margin-bottom: 0; }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 12px 16px;
+    background: var(--bg-2);
+    margin: 12px 0;
+    page-break-inside: avoid;
+  }
+
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout.ok { border-left-color: var(--green); }
+
+  .callout .label {
+    display: inline-block;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8pt;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .callout.warn .label { color: var(--amber); }
+  .callout.danger .label { color: var(--red); }
+  .callout.ok .label { color: var(--green); }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 24px 0;
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 6px 18px;
+    font-size: 9.8pt;
+    margin: 8px 0;
+  }
+
+  .kv dt {
+    color: var(--text-3);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9pt;
+  }
+
+  .kv dd {
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .footer {
+    margin-top: 40px;
+    padding: 18px 0 10px 0;
+    border-top: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 9pt;
+    font-family: "JetBrains Mono", monospace;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .lead {
+    font-size: 11.5pt;
+    color: var(--text);
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+
+  /* Verdict */
+  .verdict {
+    background: linear-gradient(180deg, rgba(124,156,255,0.06), transparent);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin-top: 20px;
+  }
+
+  .verdict h2 {
+    margin-top: 0;
+  }
+
+  /* Hero mock */
+  .terminal {
+    background: var(--mono-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 14px 0;
+    page-break-inside: avoid;
+  }
+
+  .terminal .bar {
+    background: #13161c;
+    padding: 8px 12px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .terminal .bar .d {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #3a3f4a;
+  }
+
+  .terminal .bar .title {
+    margin-left: 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 8pt;
+    color: var(--text-3);
+  }
+
+  .terminal pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+
+  .small { font-size: 9pt; color: var(--text-3); }
+
+</style>
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<div class="cover">
+  <div class="cover-top">
+    <div class="brand"><span class="dot"></span> ORBIT</div>
+  </div>
+
+  <div class="cover-mid">
+    <div class="cover-badge"><span class="pulse"></span> Website Blueprint · v1.0</div>
+    <h1>Operational visibility<br/>for <span class="accent">AI coding sessions.</span></h1>
+    <div class="tagline">Complete positioning, content, and information architecture for the official Orbit website. Launch-ready, evidence-first, zero hype.</div>
+  </div>
+
+  <div class="cover-bot">
+    <div class="cover-meta">
+      <div class="item">Document<strong>Website Blueprint</strong></div>
+      <div class="item">Revision<strong>v1.0 · 2026-04-17</strong></div>
+      <div class="item">Scope<strong>Positioning · IA · Copy</strong></div>
+      <div class="item">Prepared for<strong>Orbit Launch</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CONTENT ===================== -->
+<div class="content">
+
+<div class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li>Site positioning</li>
+    <li>Audience profiles</li>
+    <li>Homepage objective</li>
+    <li>Hero — full spec</li>
+    <li>Homepage structure</li>
+    <li>Block-level content</li>
+    <li>Product in action</li>
+    <li>Proof &amp; credibility</li>
+    <li>Official FAQ</li>
+    <li>Navigation architecture</li>
+    <li>Pages beyond the home</li>
+    <li>Design system</li>
+    <li>Voice &amp; tone</li>
+    <li>Differentiation &amp; key messages</li>
+    <li>Conversion</li>
+    <li>Instrumentation &amp; metrics</li>
+    <li>Realistic launch scope</li>
+    <li>Product &amp; communication risks</li>
+    <li>Final deliverables</li>
+    <li>Final verdict</li>
+  </ol>
+</div>
+
+<!-- 1 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">01</span><h2>Posicionamento do site</h2></div>
+
+  <h3>Categoria</h3>
+  <p><strong>AI coding workflow observability</strong> — uma nova categoria, não "dev tool", não "token saver", não "analytics".</p>
+
+  <h3>Percepção pretendida</h3>
+  <p>Orbit é a <strong>camada de visibilidade operacional</strong> que falta entre "o dev usa IA" e "o time entende como a IA está sendo usada". É o equivalente a um APM, mas para <em>sessões de IA</em> em vez de serviços web.</p>
+
+  <h3>Dores que resolve</h3>
+  <ul>
+    <li>Uso de IA vira caixa-preta: ninguém sabe se está funcionando ou desperdiçando.</li>
+    <li>Decisões sobre ferramentas de IA feitas por feeling, sem evidência.</li>
+    <li>Rework invisível: o dev não percebe que está iterando 5 vezes onde bastava 1.</li>
+    <li>Custo cresce sem explicação mecânica e sem correlação com resultado.</li>
+    <li>Times não conseguem distinguir uso real, uso passivo e desperdício estrutural.</li>
+  </ul>
+
+  <h3>Resultados que entrega</h3>
+  <ul>
+    <li>Visibilidade contínua do que acontece dentro de sessões de AI coding.</li>
+    <li>Diagnóstico em tempo real com causa mecânica, não opinião.</li>
+    <li>Evidência auditável de cada decisão (append-only log).</li>
+    <li>Padrões de desperdício classificados por risco.</li>
+    <li>Comparativo antes/depois com métricas reais, não estimadas.</li>
+  </ul>
+
+  <h3>Linguagem</h3>
+  <p>Direta, técnica, mensurável. Frases curtas. Substantivos concretos. Verbos operacionais (<code>detect</code>, <code>record</code>, <code>diagnose</code>, <code>reconcile</code>, <code>prove</code>). Zero hype.</p>
+
+  <h3>Erros de posicionamento a evitar</h3>
+  <ul>
+    <li>Vender como "economize tokens" (commoditiza e vira race-to-the-bottom).</li>
+    <li>Vender como dashboard (põe Orbit no balde de BI).</li>
+    <li>Vender como linter ou code quality (escopo errado).</li>
+    <li>Vender como "AI para gerenciar sua AI" (vaporware).</li>
+    <li>Vender como ferramenta de produtividade individual (limita ticket).</li>
+  </ul>
+
+  <h3>Diferenciação vs concorrentes conceituais</h3>
+  <table>
+    <thead><tr><th>Categoria adjacente</th><th>O que ela faz</th><th>Por que Orbit é diferente</th></tr></thead>
+    <tbody>
+      <tr><td>Token cost dashboards (Helicone, LangSmith)</td><td>Contam tokens e latência</td><td>Orbit diagnostica <em>por que</em> o custo está alto, mecanicamente</td></tr>
+      <tr><td>Observabilidade APM (Datadog, New Relic)</td><td>Observam serviços</td><td>Orbit observa <em>sessões humano↔IA</em></td></tr>
+      <tr><td>Prompt analytics</td><td>Medem prompts isolados</td><td>Orbit mede <em>comportamento de sessão</em> longitudinal</td></tr>
+      <tr><td>Code quality (SonarQube)</td><td>Mede código</td><td>Orbit mede <em>como o código foi obtido</em></td></tr>
+      <tr><td>Time tracking</td><td>Mede horas</td><td>Orbit mede <em>eficiência de colaboração com IA</em></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 2 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">02</span><h2>Perfil de público</h2></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>2.1 Solo developer</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Entender se o fluxo com IA está fluido ou enrolado.</dd>
+        <dt>Teme</dt><dd>Instalar mais uma tool que vira ruído.</dd>
+        <dt>Convence</dt><dd>"Silent when healthy" + instalação em 30s + zero conta.</dd>
+        <dt>CTA</dt><dd><code>Install the Free skill → 30 seconds</code></dd>
+        <dt>Objeção</dt><dd>"Não é só mais um contador de tokens?" → "Orbit diagnoses, it doesn't count."</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h4>2.2 Tech lead</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Saber como o time usa IA sem virar polícia.</dd>
+        <dt>Teme</dt><dd>Fricção com devs, parecer vigilância.</dd>
+        <dt>Convence</dt><dd>Evidência agregada, padrões sem nomes expostos, privacidade granular.</dd>
+        <dt>CTA</dt><dd><code>See team view</code></dd>
+        <dt>Objeção</dt><dd>"Meus devs vão achar invasivo?" → "No code stored. No prompts stored. Patterns only."</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h4>2.3 Founder técnico</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Justificar investimento em IA com números reais.</dd>
+        <dt>Teme</dt><dd>Gastar mais do que retorna, sem forma de provar.</dd>
+        <dt>Convence</dt><dd>Antes/depois verificável, gráfico de desperdício, ROI em uma tela.</dd>
+        <dt>CTA</dt><dd><code>Get evidence for your AI spend</code></dd>
+        <dt>Objeção</dt><dd>"Vira mais uma linha de custo?" → Free tier completo + Pro opcional.</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h4>2.4 Time de engenharia</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Padronizar como o time colabora com IA.</dd>
+        <dt>Teme</dt><dd>Adotar algo que quebra em 3 meses.</dd>
+        <dt>Convence</dt><dd>Arquitetura estável, schema versionado, self-hosting, changelog público.</dd>
+        <dt>CTA</dt><dd><code>Read the architecture</code></dd>
+        <dt>Objeção</dt><dd>"É production-ready?" → schema versionado + audit log + CLI formal.</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h4>2.5 DevEx / Plataforma</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Métricas para provar que a adoção de IA vale.</dd>
+        <dt>Teme</dt><dd>Ter que construir internamente algo que é commodity.</dd>
+        <dt>Convence</dt><dd>API/CLI estável, saída JSON versionada, integrações claras.</dd>
+        <dt>CTA</dt><dd><code>Explore the CLI and JSON schema</code></dd>
+        <dt>Objeção</dt><dd>"Integra com nosso stack?" → CLI + JSON + OpenTelemetry-friendly.</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h4>2.6 Comprador técnico</h4>
+      <dl class="kv">
+        <dt>Quer</dt><dd>Um produto que passe em security review sem drama.</dd>
+        <dt>Teme</dt><dd>Vendor lock-in, uploads de código, compliance.</dd>
+        <dt>Convence</dt><dd>Página Security, threat model público, dados no perímetro.</dd>
+        <dt>CTA</dt><dd><code>Read security model</code></dd>
+        <dt>Objeção</dt><dd>"Para onde vai meu código?" → "Code never leaves your machine."</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">03</span><h2>Objetivo da home</h2></div>
+  <p class="lead">Fluxo mental em 5 batidas:</p>
+  <ol>
+    <li><strong>Captar atenção</strong> (0–3s): hero mostra o que é, em uma frase concreta, com prova visual ao lado.</li>
+    <li><strong>Explicar</strong> (3–15s): "how it works" em três passos mecânicos, não vagos.</li>
+    <li><strong>Provar</strong> (15–45s): antes/depois numérico + produto em ação com screenshot real.</li>
+    <li><strong>Convencer</strong> (45–90s): casos de uso por papel + seção de confiança/rastreabilidade.</li>
+    <li><strong>Converter</strong> (90s+): CTA final, FAQ para quebrar objeções, footer com caminhos de compra/install.</li>
+  </ol>
+  <div class="callout">
+    <div class="label">Golden rule</div>
+    Cada seção deve responder à dúvida que a anterior provocou. Se uma seção não quebra objeção nem gera evidência, ela sai.
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">04</span><h2>Hero completo</h2></div>
+
+  <h3>Estrutura visual</h3>
+  <ul>
+    <li><strong>Esquerda (60%):</strong> badge, headline, subheadline, 2 CTAs empilhados em mobile, inline em desktop, microcopy abaixo.</li>
+    <li><strong>Direita (40%):</strong> prova visual — terminal mockup animado mostrando <code>orbit run</code> com um <code>DIAGNOSIS</code> real aparecendo.</li>
+    <li><strong>Acima de tudo:</strong> nav slim, translúcida, sem ruído.</li>
+    <li><strong>Hierarquia:</strong> badge (12px) → headline (56–64px) → subheadline (20–22px) → CTAs (16px) → microcopy (13px).</li>
+  </ul>
+
+  <h3>Copy canônica</h3>
+  <div class="card">
+    <p><strong>Badge:</strong> <code>Now in Public Beta · v1.0</code></p>
+    <p><strong>Headline:</strong> <em>Operational visibility for AI coding sessions.</em></p>
+    <p><strong>Subheadline:</strong> <em>Orbit watches how you work with Claude Code, GPT, and Gemini — detects waste patterns, records every decision, and shows you exactly what changed. Evidence, not estimates.</em></p>
+    <p><strong>CTA primário:</strong> <code>Install the free skill</code> &nbsp;·&nbsp; Microlabel: <code>30 seconds · no account</code></p>
+    <p><strong>CTA secundário:</strong> <code>See it in action ↓</code></p>
+    <p><strong>Microcopy:</strong> <em>Runs locally · No prompts stored · No code uploaded</em></p>
+  </div>
+
+  <h3>Prova visual (terminal canônico)</h3>
+  <div class="terminal">
+    <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="title">session-042 · orbit run</span></div>
+<pre><span class="c-cmd">$ orbit run</span>
+<span class="c-dim">▸ session: session-042
+▸ watching conversation stream...</span>
+
+<span class="c-warn">DIAGNOSIS</span>
+- 3 correction cycles on src/ingest.ts
+- AI generated 412 lines; scope required ~90
+- Plan Mode not used on complex task
+
+<span class="c-err">Risk: high</span>
+
+<span class="c-ok">ACTIONS</span>
+1. Stop current thread. Re-scope with explicit constraints.
+2. Clear context. Restart with Plan Mode.
+3. Reference file by path, do not paste.
+
+<span class="c-dim">Recorded · evidence id:</span> <span class="c-str">ev_7f2a91</span></pre>
+  </div>
+
+  <h3>Variações</h3>
+  <div class="grid-2">
+    <div class="card">
+      <h4>Headline</h4>
+      <ol>
+        <li><strong>Operational visibility for AI coding sessions.</strong> <span class="small">(canônica)</span></li>
+        <li>See how your AI coding time is actually spent.</li>
+        <li>The observability layer for AI-assisted development.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h4>Subheadline</h4>
+      <ol>
+        <li>Detect waste patterns, record every decision, and prove what changed — across Claude Code, GPT, and Gemini.</li>
+        <li>Turn opaque AI sessions into measurable, auditable workflows.</li>
+        <li>Diagnose AI coding sessions in real time. Keep the evidence. Ship with confidence.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h4>CTA primário</h4>
+      <ul>
+        <li><code>Install the free skill</code></li>
+        <li><code>Get Orbit Free</code></li>
+        <li><code>Install in 30 seconds</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>CTA secundário</h4>
+      <ul>
+        <li><code>See it in action</code></li>
+        <li><code>Read how it works</code></li>
+        <li><code>Watch a real session</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>O que o usuário deve sentir</h3>
+  <p>Clareza imediata, seriedade técnica, produto real em execução, zero marketing vazio. Sensação-alvo: <em>"isso resolve algo que eu sinto todos os dias, e parece que já está pronto."</em></p>
+
+  <h3>O que nunca deve aparecer no hero</h3>
+  <ul>
+    <li>Emojis.</li>
+    <li>"Powered by AI" (redundante).</li>
+    <li>Números sem contexto ("10x faster", "save 80%") isolados.</li>
+    <li>Logos de clientes que você não tem.</li>
+    <li>Vídeo autoplay com som.</li>
+    <li>Frases começando com "The first...", "The only..." (soa inseguro).</li>
+    <li>Badge de "AI" como se fosse diferencial.</li>
+  </ul>
+</section>
+
+<!-- 5 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">05</span><h2>Estrutura completa da home</h2></div>
+  <p class="lead">Ordem ideal, seção por seção. Cada bloco tem objetivo, copy e motivo estratégico.</p>
+
+  <h3>5.1 Hero</h3>
+  <p>Já detalhado no bloco 04.</p>
+
+  <h3>5.2 Proof / Value strip</h3>
+  <div class="card">
+    <p><strong>Objetivo:</strong> micro-validação logo após o hero para quem rolou 300px.</p>
+    <p><strong>Título:</strong> <em>Built for developers who ship with AI daily.</em></p>
+    <p><strong>Subtítulo:</strong> <em>Works with the tools you already use.</em></p>
+    <p><strong>Conteúdo:</strong> tira horizontal em escala de cinza com 4 itens: <code>Claude Code</code> · <code>GPT / ChatGPT</code> · <code>Gemini</code> · <code>Any CLI-based AI assistant</code>.</p>
+    <p><strong>Motivo:</strong> neutralizar objeção de compatibilidade antes que surja.</p>
+  </div>
+
+  <h3>5.3 The problem</h3>
+  <div class="card">
+    <p><strong>Objetivo:</strong> fazer o visitante se reconhecer no problema.</p>
+    <p><strong>Título:</strong> <em>You can't improve what you can't see.</em></p>
+    <p><strong>Subtítulo:</strong> <em>Most AI coding sessions are invisible. The waste is mechanical — and fixable — if you can observe it.</em></p>
+    <p><strong>Conteúdo:</strong> 3 colunas:</p>
+    <ul>
+      <li><strong>Invisible rework</strong> — <em>You don't notice you corrected the AI four times on the same file.</em></li>
+      <li><strong>Opaque cost</strong> — <em>Token bills grow without explanation. Nobody knows which session burned the budget.</em></li>
+      <li><strong>Anecdotal decisions</strong> — <em>"AI feels slower this week" is not a signal. It's a feeling.</em></li>
+    </ul>
+  </div>
+
+  <h3>5.4 How it works</h3>
+  <div class="card">
+    <p><strong>Título:</strong> <em>How Orbit works.</em> &nbsp;<strong>Subtítulo:</strong> <em>Three steps. No dashboards to configure. No integrations to build.</em></p>
+    <ol>
+      <li><strong>Install once.</strong> Drop the skill into your AI assistant. 30 seconds.</li>
+      <li><strong>Work normally.</strong> Orbit reads the session as it happens. It never modifies your code.</li>
+      <li><strong>Get diagnoses on demand.</strong> When waste patterns appear, Orbit tells you what, how risky, and what to do next.</li>
+    </ol>
+    <p><strong>CTA opcional:</strong> <code>Read the full guide →</code></p>
+  </div>
+
+  <h3>5.5 What you get, concretely</h3>
+  <div class="grid-3">
+    <div class="card"><h4>Real-time diagnosis</h4><p>Waste patterns caught during the session, not after the bill.</p></div>
+    <div class="card"><h4>Risk-scored actions</h4><p>Each finding ranked low · medium · high · critical, with the exact next step.</p></div>
+    <div class="card"><h4>Silent when healthy</h4><p>No output means no waste. Orbit doesn't nag.</p></div>
+    <div class="card"><h4>Append-only evidence</h4><p>Every decision logged. Auditable. Never overwritten.</p></div>
+    <div class="card"><h4>Local by default</h4><p>Your code stays on your machine. No uploads, no telemetry leaks.</p></div>
+    <div class="card"><h4>Versioned JSON</h4><p>Plug into your own pipeline. Schema is stable and documented.</p></div>
+  </div>
+
+  <h3>5.6 Product in action</h3>
+  <p>Três tabs (ou blocos empilhados):</p>
+  <ul>
+    <li><strong>Tab 1 — Live diagnosis:</strong> terminal <code>orbit run</code>.</li>
+    <li><strong>Tab 2 — Session summary:</strong> terminal <code>orbit stats</code>.</li>
+    <li><strong>Tab 3 — Structured report:</strong> terminal <code>orbit doctor --json</code>.</li>
+  </ul>
+  <p><strong>CTA:</strong> <code>Explore the CLI reference →</code></p>
+
+  <h3>5.7 Before vs after</h3>
+  <p><strong>Título:</strong> <em>Same task. Measured twice.</em> &nbsp; <strong>Subtítulo:</strong> <em>A single data ingestion service. Before Orbit, and after.</em></p>
+  <table>
+    <thead><tr><th>Metric</th><th>Without Orbit</th><th>With Orbit</th><th>Δ</th></tr></thead>
+    <tbody>
+      <tr><td>Lines generated</td><td>812</td><td>169</td><td><strong>−79%</strong></td></tr>
+      <tr><td>Tokens consumed</td><td>~6,059</td><td>~1,051</td><td><strong>−83%</strong></td></tr>
+      <tr><td>Rework cycles</td><td>3</td><td>0</td><td><strong>−100%</strong></td></tr>
+      <tr><td>Unnecessary files</td><td>6</td><td>0</td><td><strong>−6</strong></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Methodology and raw session logs available in <code>/docs/evidence</code>.</p>
+
+  <h3>5.8 Use cases</h3>
+  <div class="grid-2">
+    <div class="card"><h4>Solo developer</h4><p>Understand where your session time actually goes.</p></div>
+    <div class="card"><h4>Team lead</h4><p>See team patterns without reading every session.</p></div>
+    <div class="card"><h4>Agency / consultancy</h4><p>Justify AI-assisted hours with auditable logs.</p></div>
+    <div class="card"><h4>Platform / DevEx</h4><p>Feed Orbit's JSON into your own internal dashboards.</p></div>
+  </div>
+
+  <h3>5.9 Is Orbit for you?</h3>
+  <div class="grid-2">
+    <div class="card ok">
+      <h4>Use Orbit if…</h4>
+      <ul>
+        <li>You use AI coding assistants daily.</li>
+        <li>You care about why a session went long, not just how long.</li>
+        <li>You want evidence, not anecdotes.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Skip Orbit if…</h4>
+      <ul>
+        <li>You open an AI assistant once a week for a quick question.</li>
+        <li>You're looking for a chat UI or a prompt library.</li>
+        <li>You need a code review tool (we don't review code).</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>5.10 Traceability &amp; trust</h3>
+  <div class="card">
+    <p><strong>Título:</strong> <em>Every signal is recorded. Nothing is hidden.</em></p>
+    <p><strong>Subtítulo:</strong> <em>Orbit is built around an append-only evidence log. Every detection, every action, every reconciliation — stored with a verifiable id.</em></p>
+    <p>
+      <span class="pill blue">Append-only evidence log</span>
+      <span class="pill blue">Versioned JSON schema</span>
+      <span class="pill blue">HMAC-signed events (optional)</span>
+      <span class="pill blue">Public threat model</span>
+    </p>
+    <p class="mono small"><code>ev_7f2a91 · ev_7f2b04 · ev_7f2b22 · ev_7f2b57 · ev_7f2c01</code></p>
+    <p><strong>CTA:</strong> <code>Read the security model →</code></p>
+  </div>
+
+  <h3>5.11 FAQ</h3>
+  <p>Detalhada em §09. Na home, exibir <strong>as 6 mais críticas</strong> com <code>See all →</code> para página dedicada.</p>
+
+  <h3>5.12 Final CTA</h3>
+  <div class="card">
+    <p><strong>Título:</strong> <em>Start measuring your AI coding workflow.</em></p>
+    <p><strong>Subtítulo:</strong> <em>Install in 30 seconds. See your first diagnosis in your next session.</em></p>
+    <p><strong>CTAs:</strong> <code>Install the free skill</code> · <code>Talk to us about teams</code></p>
+    <p class="small">Free forever for individuals. Pro for teams.</p>
+  </div>
+
+  <h3>5.13 Footer</h3>
+  <div class="grid-2">
+    <div class="card"><h4>Product</h4><p>Home · Product · Pricing · Changelog</p></div>
+    <div class="card"><h4>Resources</h4><p>Docs · Quickstart · FAQ · Evidence methodology</p></div>
+    <div class="card"><h4>Trust</h4><p>Security · Privacy · Threat model · Status</p></div>
+    <div class="card"><h4>Company</h4><p>About · Contact · GitHub</p></div>
+  </div>
+  <p class="small">© 2026 Orbit · Built for operators who ship.</p>
+</section>
+
+<!-- 6 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">06</span><h2>Conteúdo de cada bloco (microcopy reutilizável)</h2></div>
+
+  <h3>Botões (CTAs canônicos)</h3>
+  <p>
+    <span class="pill">Install the free skill</span>
+    <span class="pill">See it in action</span>
+    <span class="pill">Read the docs</span>
+    <span class="pill">For teams →</span>
+    <span class="pill">Read the security model</span>
+    <span class="pill">Explore the CLI reference</span>
+    <span class="pill">See all questions</span>
+    <span class="pill">Talk to us</span>
+    <span class="pill">Copy install command</span>
+  </p>
+
+  <h3>Labels curtas (chips, tags, pills)</h3>
+  <p>
+    <span class="pill green">Free forever</span>
+    <span class="pill blue">Runs locally</span>
+    <span class="pill blue">No account required</span>
+    <span class="pill blue">Works with Claude Code, GPT, Gemini</span>
+    <span class="pill">Public beta · v1.0</span>
+    <span class="pill">Recorded · evidence id …</span>
+    <span class="pill amber">Risk: medium</span>
+    <span class="pill red">Risk: critical</span>
+    <span class="pill green">Silent when healthy</span>
+  </p>
+
+  <h3>Mensagens auxiliares</h3>
+  <ul>
+    <li>Após install CTA: <em>Drag the skill file into your AI assistant. That's it.</em></li>
+    <li>Abaixo da tabela before/after: <em>Methodology and raw session logs in /docs/evidence.</em></li>
+    <li>Abaixo do hero: <em>Runs locally · No prompts stored · No code uploaded</em></li>
+    <li>Em privacidade: <em>Orbit watches patterns. It never reads your secrets.</em></li>
+  </ul>
+
+  <h3>Micro-linhas de valor</h3>
+  <ul>
+    <li><em>See how your AI coding time is actually spent.</em></li>
+    <li><em>Evidence, not estimates.</em></li>
+    <li><em>A recorded session beats a remembered one.</em></li>
+    <li><em>The observability layer for AI workflows.</em></li>
+    <li><em>Silent when healthy. Loud when it matters.</em></li>
+  </ul>
+</section>
+
+<!-- 7 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">07</span><h2>Produto em ação</h2></div>
+
+  <h3>Princípios de representação</h3>
+  <ul>
+    <li>Nada de ilustrações abstratas de "cérebro com circuitos".</li>
+    <li>Tudo mostrado deve ser <strong>output real de comando real</strong> — ou tipograficamente indistinguível.</li>
+    <li>Fonte monospace única (JetBrains Mono ou Berkeley Mono).</li>
+    <li>Paleta de terminal: fundo <code>#0b0c10</code> ou <code>#11131a</code>, texto <code>#e6e6e6</code>, destaques discretos.</li>
+  </ul>
+
+  <h3>7.1 Live diagnosis — <code>orbit run</code></h3>
+  <div class="terminal">
+    <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="title">orbit run · session-042</span></div>
+<pre><span class="c-cmd">$ orbit run</span>
+
+<span class="c-warn">DIAGNOSIS</span>
+- 3 correction cycles on src/ingest.ts
+- AI generated 412 lines; scope required ~90
+- Plan Mode not used on complex task
+
+<span class="c-err">Risk: high</span>
+
+<span class="c-ok">ACTIONS</span>
+1. Stop current thread. Re-scope with explicit constraints.
+2. Clear context. Restart with Plan Mode.
+3. Reference file by path, do not paste.
+
+<span class="c-dim">Recorded · evidence id:</span> <span class="c-str">ev_7f2a91</span></pre>
+  </div>
+
+  <h3>7.2 Session summary — <code>orbit stats</code></h3>
+  <div class="terminal">
+    <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="title">orbit stats</span></div>
+<pre><span class="c-cmd">$ orbit stats --session session-042</span>
+Session: session-042        Duration: 47m
+Messages: 31                Turns: 14
+
+<span class="c-ok">Activity</span>
+  active input:  9m  20%
+  passive ctx:  33m  70%
+  waste:        5m   10%
+
+<span class="c-warn">Patterns detected</span>
+  correction_chain    x2  risk: high
+  repeated_edits      x1  risk: medium
+  weak_prompt         x1  risk: medium
+
+<span class="c-dim">Evidence entries: 17</span></pre>
+  </div>
+
+  <h3>7.3 Structured report — <code>orbit doctor --json</code></h3>
+  <div class="terminal">
+    <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="title">orbit doctor --json</span></div>
+<pre>{
+  <span class="c-key">"schema"</span>: <span class="c-str">"orbit.doctor.v1"</span>,
+  <span class="c-key">"status"</span>: <span class="c-str">"degraded"</span>,
+  <span class="c-key">"findings"</span>: [
+    {
+      <span class="c-key">"name"</span>: <span class="c-str">"correction_chain"</span>,
+      <span class="c-key">"detail"</span>: <span class="c-str">"3 consecutive corrections on src/ingest.ts"</span>,
+      <span class="c-key">"risk"</span>: <span class="c-str">"high"</span>,
+      <span class="c-key">"evidence_id"</span>: <span class="c-str">"ev_7f2a91"</span>
+    }
+  ],
+  <span class="c-key">"recorded_at"</span>: <span class="c-str">"2026-04-17T05:50:00Z"</span>
+}</pre>
+  </div>
+
+  <h3>7.4 Session timeline</h3>
+  <p>Mockup horizontal estilo "strip" mostrando eventos reais: <code>start → plan missing → correction → correction → rescope → healthy → end</code>. Cada marco com tooltip de evidence id. Sensação de timeline operacional.</p>
+
+  <h3>7.5 Cards de métrica</h3>
+  <div class="grid-2">
+    <div class="card"><h4>Sessions analyzed</h4><p class="mono" style="font-size:22pt;color:var(--text)">1,284</p><p class="small">+12% week over week</p></div>
+    <div class="card"><h4>Waste detected</h4><p class="mono" style="font-size:22pt;color:var(--amber)">17.4%</p><p class="small">of total session time</p></div>
+    <div class="card"><h4>Interventions suggested</h4><p class="mono" style="font-size:22pt;color:var(--accent)">312</p><p class="small">last 7 days</p></div>
+    <div class="card"><h4>Evidence entries</h4><p class="mono" style="font-size:22pt;color:var(--green)">9,148</p><p class="small">append-only</p></div>
+  </div>
+
+  <h3>7.6 States visuais</h3>
+  <p>
+    <span class="pill green">✓ Healthy</span>
+    <span class="pill amber">! Degraded</span>
+    <span class="pill red">✗ At risk</span>
+  </p>
+
+  <h3>7.7 Real vs passive vs waste</h3>
+  <p>Anel de progresso segmentado (donut) com 3 cores — <strong>Active</strong> · <strong>Passive</strong> · <strong>Waste</strong>. Abaixo, label: <em>Session composition — last 7 days.</em> Esse componente é a <strong>assinatura visual</strong> do produto.</p>
+</section>
+
+<!-- 8 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">08</span><h2>Provas e credibilidade</h2></div>
+  <p class="lead">Sem logos famosos, construa confiança com <strong>sinais técnicos</strong>, não sociais.</p>
+
+  <h3>Sinais obrigatórios no site</h3>
+  <ul>
+    <li>Threat model público em <code>/security/threat-model</code>.</li>
+    <li>Schema JSON versionado e documentado (<code>orbit.doctor.v1</code>, <code>orbit.session.v1</code>).</li>
+    <li>Changelog público com datas reais, não releases vagas.</li>
+    <li>Evidence methodology explicando como before/after foi medido.</li>
+    <li>Self-hosting guide (mesmo que experimental).</li>
+    <li>Status page mínimo (pode ser estático no lançamento).</li>
+  </ul>
+
+  <h3>Mensagens de credibilidade</h3>
+  <blockquote><p>Built in the open. Every decision is logged, versioned, and auditable.</p></blockquote>
+  <blockquote><p>No prompts stored. No code uploaded. Ever.</p></blockquote>
+  <blockquote><p>Schema is versioned. Integrations don't break on upgrade.</p></blockquote>
+  <blockquote><p>Threat model and privacy assumptions are public.</p></blockquote>
+
+  <h3>Evidência de maturidade operacional</h3>
+  <ul>
+    <li>CLI formal com subcomandos nomeados (<code>run</code>, <code>stats</code>, <code>doctor</code>, <code>analyze</code>, <code>ui</code>, <code>quickstart</code>).</li>
+    <li>Flag <code>--json</code> em comandos críticos (atomic write).</li>
+    <li>HMAC opcional via <code>ORBIT_HMAC_SECRET</code>.</li>
+    <li>Teste automatizado de UX (<code>ux_audit_test.go</code>).</li>
+    <li>Governança de schema (<code>SCHEMA-EVOLUTION.md</code>).</li>
+  </ul>
+
+  <h3>Como evitar parecer vaporware</h3>
+  <ul>
+    <li>Mostrar output <em>real</em> em todas as capturas.</li>
+    <li>Citar nomes de comandos e flags que existem de verdade.</li>
+    <li>Linkar código-fonte público se aplicável.</li>
+    <li>Usar datas absolutas no changelog (<code>Apr 17, 2026</code>), não relativas.</li>
+  </ul>
+</section>
+
+<!-- 9 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">09</span><h2>FAQ oficial</h2></div>
+  <p class="lead">Regra: cada resposta abre com uma frase completa e autossuficiente.</p>
+
+  <div class="card"><h4>1. What is Orbit?</h4><p>Orbit is an operational visibility layer for AI coding sessions. It watches how you work with tools like Claude Code, GPT, and Gemini, detects waste patterns in real time, and records every decision in an append-only evidence log.</p></div>
+
+  <div class="card"><h4>2. Who is Orbit for?</h4><p>Developers, tech leads, and engineering teams who use AI coding assistants daily and want to understand — with evidence — how those sessions actually run. If AI is an occasional tool for you, Orbit is probably overkill.</p></div>
+
+  <div class="card"><h4>3. Is Orbit tied to Claude Code?</h4><p>No. Orbit works with Claude Code, GPT, Gemini, and any AI coding assistant that exposes a session stream. Claude Code is the first-class integration because of its skill system, but the detection engine is assistant-agnostic.</p></div>
+
+  <div class="card"><h4>4. Does Orbit store my prompts?</h4><p>No. Orbit analyzes patterns in the session, not the text of your prompts. Nothing you type is stored, exported, or sent to a third party. Default deployment is entirely local.</p></div>
+
+  <div class="card"><h4>5. Does Orbit store my code?</h4><p>No. Orbit never reads file contents beyond what's already in the session. No repository is cloned, no file is uploaded. References are kept as paths, not bodies.</p></div>
+
+  <div class="card"><h4>6. What's the difference between "cost" and "value" in Orbit's view?</h4><p>Cost is what you pay in tokens. Value is what the session produced. Orbit makes both observable — and shows when the first grows without the second. It doesn't just measure spend, it measures <em>efficiency</em>.</p></div>
+
+  <div class="card"><h4>7. How is this different from a token dashboard?</h4><p>A token dashboard tells you <em>how much</em> you spent. Orbit tells you <em>why</em> — which behaviors in the session caused the cost, and which specific action would have prevented it. It's diagnosis, not accounting.</p></div>
+
+  <div class="card"><h4>8. Can I use Orbit as an individual?</h4><p>Yes. The free tier is designed for individual use: full pattern detection, real-time diagnoses, no account, no login. You install it once and it works.</p></div>
+
+  <div class="card"><h4>9. Can a team use Orbit?</h4><p>Yes. Orbit Pro aggregates patterns across a team's sessions without exposing prompts or code. Leads see patterns and risks at a team level; developers keep full privacy inside their sessions.</p></div>
+
+  <div class="card"><h4>10. How do I install it?</h4><p>Drag the <code>skill/</code> folder (or <code>SKILL.md</code>) into your AI assistant. That takes around 30 seconds. The first diagnosis appears on your next complex session. Full guide in <code>/docs/quickstart</code>.</p></div>
+
+  <div class="card"><h4>11. Does Orbit integrate with my existing tools?</h4><p>Yes. Orbit emits versioned JSON that any pipeline can consume. The CLI is designed to pipe into your own dashboards, OpenTelemetry collectors, or internal ingestion systems.</p></div>
+
+  <div class="card"><h4>12. Can I self-host Orbit?</h4><p>Yes. The engine is a standalone service (HTTP on localhost by default). Docker Compose and deployment notes are in <code>/docs/self-hosting</code>. Your data never leaves your infrastructure.</p></div>
+
+  <div class="card"><h4>13. How long before I see value?</h4><p>One session. The first time Orbit detects a waste pattern during your session, you'll see a diagnosis with the action to take. Most users see that in under 15 minutes of normal use.</p></div>
+
+  <div class="card"><h4>14. Is Orbit secure?</h4><p>Yes. Orbit runs locally by default, supports HMAC-signed events on the tracking channel, and exposes an append-only evidence log that cannot be rewritten silently. The public threat model explains every assumption.</p></div>
+
+  <div class="card"><h4>15. What does Orbit actually record?</h4><p>Orbit records: detection events, risk scores, recommended actions, reconciliation entries, and schema-versioned diagnoses. It does not record: your prompts, your code, your file contents, or any personally identifiable session content.</p></div>
+
+  <div class="card"><h4>16. What makes Orbit different?</h4><p>Three things. It diagnoses, it doesn't just count. It records evidence, it doesn't just report. And it treats an AI session as something you can <em>observe</em>, not something you have to guess about after the fact.</p></div>
+</section>
+
+<!-- 10 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">10</span><h2>Arquitetura de navegação</h2></div>
+
+  <h3>Menu principal (desktop, esq → dir)</h3>
+  <p><code>Product</code> · <code>Docs</code> · <code>Pricing</code> · <code>Security</code> · <code>Changelog</code> · <strong>CTA do topo</strong> <code>Install free</code></p>
+
+  <h3>Menu mobile</h3>
+  <p>Hamburguer, mesma ordem, CTA sticky no fundo.</p>
+
+  <h3>Páginas agora vs depois</h3>
+  <div class="grid-3">
+    <div class="card">
+      <h4>V1 (lançamento)</h4>
+      <ul>
+        <li>Home</li>
+        <li>Product</li>
+        <li>Docs / Quickstart</li>
+        <li>Pricing</li>
+        <li>FAQ</li>
+        <li>Security &amp; Privacy</li>
+        <li>Changelog</li>
+        <li>Contact</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>V1.1 (+4–8 semanas)</h4>
+      <ul>
+        <li>For Teams</li>
+        <li>Evidence methodology</li>
+        <li>Integrations</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>V2+</h4>
+      <ul>
+        <li>Customers / Case studies</li>
+        <li>Blog / Field notes</li>
+        <li>Public roadmap</li>
+        <li>Status page interativo</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">11</span><h2>Páginas recomendadas além da home</h2></div>
+
+  <div class="card">
+    <h4>11.1 Product</h4>
+    <p><strong>Função:</strong> aprofundar o que Orbit faz, com foco em mecânica.</p>
+    <p><strong>Conteúdo:</strong> Headline <em>Every AI coding session, observable.</em>; Detection engine (6 padrões); Evidence log; CLI (tabela de subcomandos); What Orbit is not.</p>
+    <p><strong>CTA:</strong> <code>Install free</code> · <code>Read the CLI reference</code></p>
+    <p><strong>Prioridade:</strong> alta (V1).</p>
+  </div>
+
+  <div class="card">
+    <h4>11.2 Pricing</h4>
+    <p><strong>Função:</strong> remover ambiguidade sobre custo.</p>
+    <p><strong>Free:</strong> $0 forever. Full detection. Local only.</p>
+    <p><strong>Pro:</strong> "For teams that need session history, aggregation, and evolution engine." Se preço Pro não estiver definido, usar <code>Contact for pricing</code>.</p>
+    <p><strong>CTA:</strong> <code>Install free</code> · <code>Contact sales</code>. &nbsp;<strong>Prioridade:</strong> alta (V1).</p>
+  </div>
+
+  <div class="card">
+    <h4>11.3 Docs / Quickstart</h4>
+    <p><strong>Função:</strong> converter interesse em instalação bem-sucedida.</p>
+    <p><strong>Conteúdo:</strong> Quickstart 3 passos; Troubleshooting; CLI reference; Schema reference; Self-hosting notes.</p>
+    <p><strong>CTA:</strong> <code>Run doctor</code>. &nbsp;<strong>Prioridade:</strong> alta (V1) — indispensável.</p>
+  </div>
+
+  <div class="card">
+    <h4>11.4 Security / Privacy</h4>
+    <p><strong>Função:</strong> passar em security review.</p>
+    <p><strong>Conteúdo:</strong> Data handling; Threat model summary; HMAC/signing; Self-hosting + air-gapped; Responsible disclosure.</p>
+    <p><strong>CTA:</strong> <code>Read the full threat model</code>. &nbsp;<strong>Prioridade:</strong> alta (V1).</p>
+  </div>
+
+  <div class="card">
+    <h4>11.5 For Teams</h4>
+    <p><strong>Função:</strong> abrir caminho para deals maiores.</p>
+    <p><strong>Conteúdo:</strong> Headline <em>Observability for AI-assisted engineering teams.</em>; uso sem vigilância; dashboard agregado; integrações; estudo simulado.</p>
+    <p><strong>CTA:</strong> <code>Book a 20-min intro</code>. &nbsp;<strong>Prioridade:</strong> média (V1.1).</p>
+  </div>
+
+  <div class="card">
+    <h4>11.6 FAQ (página dedicada)</h4>
+    <p><strong>Conteúdo:</strong> as 16 perguntas do §09 + categorias (Product, Privacy, Integration, Teams). <strong>Prioridade:</strong> média (V1).</p>
+  </div>
+
+  <div class="card">
+    <h4>11.7 Changelog</h4>
+    <p><strong>Função:</strong> sinal de vida e maturidade.</p>
+    <p><strong>Conteúdo:</strong> lista reversa cronológica, datas absolutas, categorias (<code>feat</code> / <code>fix</code> / <code>docs</code> / <code>security</code>), links para commit/PR se público.</p>
+    <p><strong>CTA:</strong> <code>Subscribe to release notes</code>. &nbsp;<strong>Prioridade:</strong> alta (V1).</p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">12</span><h2>Design system e direção visual</h2></div>
+
+  <h3>Estética</h3>
+  <p>Premium, técnico, clean. Inspiração: Linear, Vercel, Railway, Stripe Docs. Nada de glassmorphism pesado, nada de neon. Mais perto de "engineering tool" do que "SaaS startup".</p>
+
+  <h3>Paleta sugerida</h3>
+  <table>
+    <thead><tr><th>Token</th><th>HEX</th><th>Uso</th></tr></thead>
+    <tbody>
+      <tr><td>Background principal</td><td><code>#0B0D10</code></td><td>Body dark</td></tr>
+      <tr><td>Background secundário</td><td><code>#11141A</code></td><td>Hero background alt</td></tr>
+      <tr><td>Superfície elevada</td><td><code>#171B22</code></td><td>Cards</td></tr>
+      <tr><td>Borda sutil</td><td><code>#232833</code></td><td>Separadores</td></tr>
+      <tr><td>Texto primário</td><td><code>#E8EAED</code></td><td>Headlines, body</td></tr>
+      <tr><td>Texto secundário</td><td><code>#9AA3AE</code></td><td>Sub, legendas</td></tr>
+      <tr><td>Texto terciário</td><td><code>#6B7280</code></td><td>Metadata, microcopy</td></tr>
+      <tr><td>Accent primário</td><td><code>#7C9CFF</code></td><td>Links, CTAs, destaque</td></tr>
+      <tr><td>Sinal verde</td><td><code>#4ADE80</code></td><td>Healthy</td></tr>
+      <tr><td>Sinal amarelo</td><td><code>#F59E0B</code></td><td>Degraded</td></tr>
+      <tr><td>Sinal vermelho</td><td><code>#EF4444</code></td><td>At risk</td></tr>
+      <tr><td>Mono background</td><td><code>#0A0B0E</code></td><td>Terminais, blocos de código</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Tipografia</h3>
+  <ul>
+    <li><strong>Sans:</strong> Inter (ou Geist Sans) — pesos 400, 500, 600.</li>
+    <li><strong>Mono:</strong> JetBrains Mono ou Berkeley Mono — 400 e 600.</li>
+    <li><strong>Serif:</strong> nenhuma.</li>
+    <li><strong>Escala:</strong> 12, 13, 14, 16, 18, 20, 24, 32, 40, 56, 64. Nunca tamanhos fora dessa escala.</li>
+  </ul>
+
+  <h3>Densidade e espaçamento</h3>
+  <ul>
+    <li>Grid: 12 colunas, 1200px max, gutter 24px.</li>
+    <li>Espaçamento vertical entre seções: 96px (desktop), 64px (tablet), 48px (mobile).</li>
+    <li>Cards: radius 12px, padding 24px, border 1px.</li>
+    <li>Botões: radius 8px, padding 12×20, altura 44px.</li>
+  </ul>
+
+  <h3>Estilo de ilustrações / mockups</h3>
+  <ul>
+    <li><strong>Prioridade absoluta:</strong> terminal mockups com output real.</li>
+    <li><strong>Segundo:</strong> diagramas minimalistas em linha fina (1.5px), 3–4 cores máximo.</li>
+    <li><strong>Proibido:</strong> ilustrações 3D genéricas, personagens estilizados, blobs coloridos.</li>
+  </ul>
+
+  <h3>Ícones, animações, responsividade</h3>
+  <ul>
+    <li>Ícones: linha fina (1.5px stroke), 24px padrão, uma família única (Lucide ou Phosphor).</li>
+    <li>Animações: 180–250ms, easing <code>cubic-bezier(0.22, 1, 0.36, 1)</code>. Proibido scroll-jacking, parallax pesado, autoplay de vídeo.</li>
+    <li>Breakpoints: <code>sm: 640</code>, <code>md: 768</code>, <code>lg: 1024</code>, <code>xl: 1280</code>.</li>
+    <li>Home deve converter em 375px. Terminal vira carrossel em mobile. CTA primário sticky no fundo.</li>
+  </ul>
+</section>
+
+<!-- 13 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">13</span><h2>Tom de voz</h2></div>
+
+  <h3>Como Orbit fala</h3>
+  <p>Como um engenheiro sênior que respeita o tempo do leitor. Direto, específico, sem drama. Usa números quando tem; não usa quando não tem.</p>
+
+  <div class="grid-2">
+    <div class="card danger">
+      <h4>Evitar</h4>
+      <ul>
+        <li>Palavras ocas: "leverage", "unlock", "empower", "revolutionary".</li>
+        <li>Hype de IA: "AI-powered", "intelligent", "next-gen", "smart".</li>
+        <li>Promessas vagas: "save time", "boost productivity".</li>
+        <li>Superlativos sem prova.</li>
+        <li>Jargão acadêmico desnecessário.</li>
+      </ul>
+    </div>
+    <div class="card ok">
+      <h4>Reforçar</h4>
+      <ul>
+        <li>Verbos mecânicos: <code>detect</code>, <code>record</code>, <code>diagnose</code>, <code>reconcile</code>, <code>observe</code>, <code>prove</code>.</li>
+        <li>Substantivos concretos: <code>session</code>, <code>pattern</code>, <code>evidence</code>, <code>action</code>, <code>risk</code>.</li>
+        <li>Números com unidade explícita e fonte linkável.</li>
+        <li>Reconhecimento honesto do escopo ("Orbit doesn't review your code — it reviews the session").</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Humano e técnico simultaneamente</h3>
+  <ul>
+    <li>Frases curtas alternadas com uma frase média. Nunca três longas em sequência.</li>
+    <li>Use "you", não "the user".</li>
+    <li>Use contrações ("it's", "doesn't").</li>
+    <li>Abra seções com o ponto principal; não atrase o valor com setup.</li>
+  </ul>
+
+  <h3>Confiante sem arrogante</h3>
+  <ul>
+    <li>Reivindicar apenas o que o produto faz.</li>
+    <li>Mostrar limites: "Skip Orbit if…".</li>
+    <li>Deixar o leitor decidir — sem escassez falsa ("last spots!").</li>
+  </ul>
+</section>
+
+<!-- 14 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">14</span><h2>Diferenciação e mensagens-chave</h2></div>
+
+  <h3>10 mensagens principais do produto</h3>
+  <ol>
+    <li>Orbit turns AI coding sessions into observable operations.</li>
+    <li>You can't improve what you can't see — Orbit makes the invisible measurable.</li>
+    <li>Evidence, not estimates. Every signal is recorded and verifiable.</li>
+    <li>Diagnosis, not accounting. Orbit tells you <em>why</em> the session went long.</li>
+    <li>Silent when healthy. Loud when it matters.</li>
+    <li>Orbit is the observability layer AI workflows never had.</li>
+    <li>A recorded session is a fixable session.</li>
+    <li>Active time, passive context, waste — know which is which.</li>
+    <li>Orbit doesn't count tokens. It finds the habits that inflate them.</li>
+    <li>Treat AI coding like production: observed, instrumented, accountable.</li>
+  </ol>
+
+  <h3>10 linhas curtas de valor</h3>
+  <p>
+    <span class="pill">Observability for AI coding sessions.</span>
+    <span class="pill">See what your AI session actually did.</span>
+    <span class="pill">Waste patterns, caught in real time.</span>
+    <span class="pill">Every decision, recorded.</span>
+    <span class="pill">Local by default.</span>
+    <span class="pill">Evidence-grade diagnostics.</span>
+    <span class="pill">Works where you already work.</span>
+    <span class="pill">Quiet when it should be.</span>
+    <span class="pill">Built for operators who ship.</span>
+    <span class="pill">A new layer of visibility.</span>
+  </p>
+
+  <h3>10 possíveis taglines</h3>
+  <ol>
+    <li><strong>Observability for AI coding sessions.</strong> <span class="small">(canônica)</span></li>
+    <li>See the session. Ship with evidence.</li>
+    <li>The observability layer for AI workflows.</li>
+    <li>Measure the session, not the hype.</li>
+    <li>Diagnose AI coding in real time.</li>
+    <li>Every session, on the record.</li>
+    <li>Stop guessing how AI is working for you.</li>
+    <li>Make every AI session accountable.</li>
+    <li>Your AI workflow, finally observable.</li>
+    <li>Active. Passive. Waste. Now visible.</li>
+  </ol>
+
+  <h3>10 comparações conceituais</h3>
+  <ol>
+    <li>Orbit is to AI sessions what APM was to web services.</li>
+    <li>A flight recorder for AI coding.</li>
+    <li>Tests tell you if the code works. Orbit tells you how you got there.</li>
+    <li>Logs for the AI part of your workflow.</li>
+    <li>Like a linter — but for how you collaborate with the model.</li>
+    <li>Orbit is git blame for your session behavior.</li>
+    <li>Think of it as observability, not analytics.</li>
+    <li>A black box, for the AI half of your process.</li>
+    <li>Orbit is the audit log your team already needed.</li>
+    <li>Telemetry, but for the human↔AI loop.</li>
+  </ol>
+
+  <h3>10 frases memoráveis</h3>
+  <ol>
+    <li>Orbit watches the session. It doesn't grade it.</li>
+    <li>When Orbit is quiet, you're shipping clean.</li>
+    <li>Every finding ships with an action and an id.</li>
+    <li>Orbit measures how you worked, not what you wrote.</li>
+    <li>Before Orbit: vibes. After Orbit: evidence.</li>
+    <li>Tokens are the bill. Orbit reads the receipt.</li>
+    <li>Orbit doesn't decide for you — it makes your decisions visible.</li>
+    <li>The session becomes a citizen of your pipeline.</li>
+    <li>Orbit turns "I think AI helps" into "here's where it did".</li>
+    <li>You can't operationalize what you can't observe.</li>
+  </ol>
+</section>
+
+<!-- 15 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">15</span><h2>Conversão</h2></div>
+
+  <h3>CTA primário em toda a jornada</h3>
+  <p><code>Install the free skill</code> — mesma copy, mesma cor, mesmo destino. Repetição deliberada aumenta conversão.</p>
+
+  <h3>CTA secundário</h3>
+  <p><code>See it in action</code> (home, hero). <code>Read the docs</code> (páginas internas). <code>Talk to us</code> (for teams, enterprise).</p>
+
+  <h3>Pontos de captura ao longo da home</h3>
+  <ol>
+    <li>Hero (primário + secundário).</li>
+    <li>How it works (botão terciário <code>Read the full guide</code>).</li>
+    <li>Product in action (botão <code>Explore the CLI reference</code>).</li>
+    <li>Before vs after (link <code>See methodology</code>).</li>
+    <li>Traceability (botão <code>Read the security model</code>).</li>
+    <li>Final CTA (primário + <code>Talk to us about teams</code>).</li>
+  </ol>
+
+  <div class="grid-3">
+    <div class="card"><h4>Visitantes frios</h4><p>Precisam de explicação mecânica antes do CTA. Não empurrar CTA alto em mobile. Confiar no funil.</p></div>
+    <div class="card"><h4>Visitantes técnicos</h4><p>Atalho para docs, CLI e security nos primeiros 30% de scroll. Link pequeno no topo: <code>Jump to CLI reference →</code>.</p></div>
+    <div class="card"><h4>Visitantes de times</h4><p>CTA paralelo <code>For teams</code>, destino dedicado. Dealbreaker: sem cadastro para falar.</p></div>
+  </div>
+
+  <h3>O que medir no funil</h3>
+  <ul>
+    <li>Visitantes únicos por origem.</li>
+    <li>Tempo até primeiro scroll significativo (&gt;50%).</li>
+    <li>Cliques em CTA primário por posição na página.</li>
+    <li>Taxa de chegada em <code>/docs/quickstart</code>.</li>
+    <li>Taxa de abertura de FAQ (quais itens).</li>
+    <li>Cliques em <code>For teams</code>.</li>
+    <li>Saídas por seção (drop-off map).</li>
+  </ul>
+</section>
+
+<!-- 16 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">16</span><h2>Instrumentação e métricas do site</h2></div>
+
+  <blockquote><p>Use um stack simples e privacy-first: Plausible, PostHog self-hosted, ou um endpoint próprio que recebe JSON versionado — coerente com a filosofia de Orbit.</p></blockquote>
+
+  <table>
+    <thead><tr><th>Evento</th><th>Por que importa</th></tr></thead>
+    <tbody>
+      <tr><td><code>hero_cta_primary_clicked</code></td><td>Principal sinal de intenção de instalação.</td></tr>
+      <tr><td><code>hero_cta_secondary_clicked</code></td><td>Mede vontade de aprender antes de agir.</td></tr>
+      <tr><td><code>install_command_copied</code></td><td>Forte sinal de install real (melhor que clique).</td></tr>
+      <tr><td><code>docs_cta_clicked</code></td><td>Converte leitor em usuário técnico.</td></tr>
+      <tr><td><code>pricing_viewed</code></td><td>Distingue curioso de comprador.</td></tr>
+      <tr><td><code>pricing_contact_clicked</code></td><td>Lead B2B qualificado.</td></tr>
+      <tr><td><code>faq_item_opened</code></td><td>Indica quais objeções dominam (com <code>faq_item</code>).</td></tr>
+      <tr><td><code>use_case_selected</code></td><td>Mostra qual público está chegando.</td></tr>
+      <tr><td><code>for_teams_clicked</code></td><td>Sinal de ticket maior.</td></tr>
+      <tr><td><code>security_page_viewed</code></td><td>Sinal de comprador técnico.</td></tr>
+      <tr><td><code>threat_model_downloaded</code></td><td>Sinal forte de security review.</td></tr>
+      <tr><td><code>changelog_viewed</code></td><td>Sinal de retorno/engajamento.</td></tr>
+      <tr><td><code>terminal_mockup_interacted</code></td><td>Valida se product-in-action está convertendo.</td></tr>
+      <tr><td><code>scroll_depth_75</code></td><td>Proxy para "leitura completa".</td></tr>
+      <tr><td><code>bottom_cta_clicked</code></td><td>Mede força do fechamento.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Boas práticas</h3>
+  <ul>
+    <li>Eventos com schema versionado: <code>site.event.v1</code>.</li>
+    <li>Zero cookies identificáveis sem consentimento.</li>
+    <li>Sem fingerprinting. Aderente ao próprio discurso de privacidade do produto.</li>
+  </ul>
+</section>
+
+<!-- 17 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">17</span><h2>Escopo realista de lançamento</h2></div>
+
+  <div class="grid-3">
+    <div class="card ok">
+      <h4>V1 (launch day)</h4>
+      <ul>
+        <li>Home completa (todas as seções do §05).</li>
+        <li>Product.</li>
+        <li>Docs / Quickstart.</li>
+        <li>Pricing (com <code>Contact</code> se necessário).</li>
+        <li>FAQ.</li>
+        <li>Security / Privacy + threat model.</li>
+        <li>Changelog com ≥3 entradas reais.</li>
+        <li>Contact.</li>
+        <li>Terminais mockups com output verdadeiro.</li>
+        <li>Instrumentação dos 8 eventos críticos.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>V1.1 (+4–8 semanas)</h4>
+      <ul>
+        <li>For Teams dedicada.</li>
+        <li>Evidence methodology.</li>
+        <li>Integrations.</li>
+        <li>Status page estático.</li>
+        <li>Blog com 2–3 posts técnicos (não marketing).</li>
+      </ul>
+    </div>
+    <div class="card danger">
+      <h4>Pode esperar</h4>
+      <ul>
+        <li>Customers / case studies.</li>
+        <li>Vídeos institucionais.</li>
+        <li>Locale adicional.</li>
+        <li>Roadmap público.</li>
+        <li>Comunidade (Discord/Slack).</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>O que não fazer no V1</h3>
+  <ul>
+    <li>Carrossel de logos vazios.</li>
+    <li>Vídeo explicativo com narração.</li>
+    <li>Calculadora interativa de ROI.</li>
+    <li>Chatbot no canto.</li>
+    <li>Sign-up obrigatório para ler docs.</li>
+  </ul>
+</section>
+
+<!-- 18 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">18</span><h2>Riscos de produto e de comunicação</h2></div>
+
+  <table>
+    <thead><tr><th>Risco</th><th>Por que acontece</th><th>Mitigação no site</th></tr></thead>
+    <tbody>
+      <tr><td>Parecer genérico</td><td>Categoria nova confundida com "mais uma dev tool"</td><td>Linguagem específica, comparações conceituais (§14), captura com terminal real</td></tr>
+      <tr><td>Parecer apenas token tool</td><td>Benefício secundário vira protagonista</td><td>Jamais abrir com "save tokens". Hero e tagline reforçam <em>visibility</em>. Before/after atrás, não na frente</td></tr>
+      <tr><td>Parecer complexo demais</td><td>Linguagem técnica afasta founder/lead</td><td>"How it works" em 3 passos + microcopy "30 seconds · no account"</td></tr>
+      <tr><td>Parecer não pronto</td><td>Produto beta soa frágil</td><td>Badge "Public Beta · v1.0" + changelog ativo + schema versionado</td></tr>
+      <tr><td>Parecer analytics vazio</td><td>Dashboards sem diagnóstico cansaram o mercado</td><td>Ênfase em <em>diagnosis + actions</em>, mostrar <code>orbit run</code>, não só gráficos</td></tr>
+      <tr><td>Parecer invasivo em privacidade</td><td>"Observabilidade" pode assustar</td><td>Três microcopy fixos ("Local by default", "No prompts stored", "No code uploaded")</td></tr>
+      <tr><td>Técnico demais para converter founder</td><td>Founder quer valor em uma linha</td><td>Subheadline traduz o técnico em resultado. Final CTA: "start measuring"</td></tr>
+      <tr><td>Parecer copiado de outra startup</td><td>Uso acrítico de tropos SaaS</td><td>Proibir logos genéricos, "join thousands", ilustrações de personagens, gradientes roxo-rosa</td></tr>
+      <tr><td>Parecer dependente de Claude Code</td><td>Virar "plugin de Claude Code" na cabeça do visitante</td><td>Proof strip com GPT, Gemini, qualquer CLI. FAQ item 3 reforça</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 19 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">19</span><h2>Entrega final</h2></div>
+
+  <h3>19.1 Sitemap recomendado</h3>
+  <pre>/                           Home
+/product                    Product (mechanics &amp; CLI)
+/pricing                    Pricing
+/docs                       Docs hub
+  /docs/quickstart          3-step install
+  /docs/cli                 CLI reference
+  /docs/schema              JSON schema reference
+  /docs/self-hosting        Self-host guide
+  /docs/evidence            Methodology for before/after
+/security                   Security &amp; Privacy
+  /security/threat-model    Public threat model
+/faq                        Full FAQ
+/changelog                  Public changelog
+/contact                    Contact (form + email)
+/for-teams                  (V1.1) Teams landing</pre>
+
+  <h3>19.2 Arquitetura da home</h3>
+  <pre>01. Hero
+02. Proof / compatibility strip
+03. The problem
+04. How it works (3 steps)
+05. What you get (6-card grid)
+06. Product in action (3 terminal tabs)
+07. Before vs after (table)
+08. Use cases (4 personas)
+09. Is Orbit for you?
+10. Traceability &amp; trust
+11. FAQ (top 6 + link to full)
+12. Final CTA
+13. Footer</pre>
+
+  <h3>19.3 CTAs principais</h3>
+  <ul>
+    <li><strong>Primário global:</strong> <code>Install the free skill</code>.</li>
+    <li><strong>Secundário global:</strong> <code>See it in action</code> (home) · <code>Read the docs</code> (interior).</li>
+    <li><strong>B2B:</strong> <code>Talk to us about teams</code> · <code>Book a 20-min intro</code>.</li>
+    <li><strong>Técnico:</strong> <code>Explore the CLI reference</code> · <code>Read the threat model</code>.</li>
+  </ul>
+
+  <h3>19.4 Estratégia de diferenciação (resumo executável)</h3>
+  <ul>
+    <li>Posicionar como <strong>observabilidade</strong>, não economia.</li>
+    <li>Provar com <strong>output real</strong>, não promessa.</li>
+    <li>Mostrar <strong>maturidade operacional</strong> (schema, evidence id, append-only) como diferencial contra produtos "demo".</li>
+    <li>Falar com <strong>quatro públicos</strong> claramente, sem se diluir.</li>
+    <li>Demonstrar <strong>privacidade por arquitetura</strong>, não por reassurance cosmético.</li>
+  </ul>
+
+  <h3>19.5 Plano de páginas futuras</h3>
+  <ol>
+    <li><strong>V1.1</strong> — For Teams, Evidence methodology, Integrations, Status.</li>
+    <li><strong>V1.2</strong> — Blog técnico, 2 case studies com números verificáveis.</li>
+    <li><strong>V2</strong> — Roadmap público, Customers, Comunidade.</li>
+  </ol>
+
+  <h3>19.6 Checklist de lançamento (go-live)</h3>
+  <div class="card">
+    <ul>
+      <li>☐ Hero com headline canônica, ambos CTAs, terminal com output real.</li>
+      <li>☐ Seção "How it works" com 3 passos e comando de install copiável.</li>
+      <li>☐ Seção "Product in action" com 3 terminais (<code>run</code>, <code>stats</code>, <code>doctor --json</code>).</li>
+      <li>☐ Tabela before/after com link para <code>/docs/evidence</code>.</li>
+      <li>☐ 4 cards de use case.</li>
+      <li>☐ Bloco Is/Skip (qualificação honesta).</li>
+      <li>☐ Seção de traceability com evidence ids visíveis.</li>
+      <li>☐ FAQ com 6 perguntas na home + página dedicada com 16.</li>
+      <li>☐ CTA final duplo.</li>
+      <li>☐ Footer com Product / Resources / Trust / Company.</li>
+      <li>☐ Páginas: Product, Pricing, Docs (Quickstart + CLI + Schema), Security (+ Threat Model), FAQ, Changelog, Contact.</li>
+      <li>☐ Dark mode default, light mode funcional.</li>
+      <li>☐ Responsivo até 375px, terminal vira carrossel em mobile.</li>
+      <li>☐ Instrumentação dos 8 eventos críticos (schema versionado).</li>
+      <li>☐ Meta tags + OG image em todas as páginas.</li>
+      <li>☐ <code>robots.txt</code>, <code>sitemap.xml</code>, 404 customizado.</li>
+      <li>☐ Privacidade: sem cookies identificáveis sem consentimento.</li>
+      <li>☐ Changelog com 3 entradas reais e data absoluta.</li>
+      <li>☐ Threat model linkado e acessível sem login.</li>
+      <li>☐ Teste de leitura fria: alguém que nunca ouviu falar entende em 10 segundos.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 20 -->
+<section class="break-before">
+  <div class="section-head"><span class="num">20</span><h2>Veredito final</h2></div>
+
+  <div class="verdict">
+    <h3>O que torna esse site forte</h3>
+    <ul>
+      <li>Uma <strong>categoria nova nomeada</strong> ("observability for AI coding sessions") em vez de briga diluída com token dashboards.</li>
+      <li><strong>Evidência visível</strong> em cada seção: output real de comandos reais, evidence ids, schema versionado — o visitante sente que o produto existe.</li>
+      <li><strong>Copy específica</strong>, com verbos mecânicos e substantivos concretos, livre de hype.</li>
+      <li><strong>Honestidade de escopo</strong> (Is / Skip) que paradoxalmente aumenta conversão.</li>
+      <li><strong>Privacidade como arquitetura</strong>, não como selo.</li>
+      <li><strong>Fluxo de conversão limpo</strong>: um CTA primário, repetido, consistente.</li>
+    </ul>
+
+    <h3>O que pode destruir a conversão</h3>
+    <ul>
+      <li>Tratar "token economy" como manchete → commoditiza o produto.</li>
+      <li>Encher a home de ilustrações genéricas de startup SaaS → mata a credibilidade técnica em 2 segundos.</li>
+      <li>Dashboards fake ou números inflados sem link para metodologia → vira vaporware percebido.</li>
+      <li>FAQ evasiva sobre privacidade ("we value your data") → comprador técnico desiste imediatamente.</li>
+      <li>Hero com duas ou três propostas competindo → dilui o 10-segundos-test.</li>
+      <li>Mostrar roadmap ou features que não existem → perde o "parece pronto".</li>
+    </ul>
+
+    <h3>Prioridade absoluta da V1</h3>
+    <p>Fazer a home executar perfeitamente três coisas, nessa ordem, com zero compromisso:</p>
+    <ol>
+      <li><strong>Explicar em 10 segundos</strong> o que é Orbit — "operational visibility for AI coding sessions", com terminal real ao lado.</li>
+      <li><strong>Provar em 45 segundos</strong> que o produto existe e mede de verdade — <code>orbit run</code> + tabela before/after + evidence ids.</li>
+      <li><strong>Converter em um clique</strong> — <code>Install the free skill</code>, sem conta, sem formulário, sem atrito.</li>
+    </ol>
+    <blockquote><p>Se a V1 acertar essas três, tudo depois (teams, integrations, case studies) é extensão natural. Se errar, nenhum recurso posterior compensa.</p></blockquote>
+  </div>
+
+  <div class="footer">
+    <span>ORBIT · Website Blueprint v1.0</span>
+    <span>2026-04-17</span>
+  </div>
+</section>
+
+</div><!-- /content -->
+
+</body>
+</html>
