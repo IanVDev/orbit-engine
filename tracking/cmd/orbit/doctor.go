@@ -102,11 +102,17 @@ func (r *doctorResult) counts() (ok, warn, crit int) {
 
 // runDoctor executa o diagnóstico e imprime o relatório.
 // strict: WARNINGs causam exit 1. fix: imprime/aplica correções.
-func runDoctor(strict, fix bool) error {
+// deep: ativa checks adicionais de consistência de ambiente (symlinks,
+// wrappers, commit mismatch, origem de narrativa conhecida).
+func runDoctor(strict, fix, deep bool) error {
 	res := &doctorResult{orbitBinPos: -1, localBinPos: -1}
 
 	fmt.Println()
-	fmt.Println("🩺  orbit doctor — diagnóstico de ambiente")
+	if deep {
+		fmt.Println("🩺  orbit doctor --deep — diagnóstico profundo de ambiente")
+	} else {
+		fmt.Println("🩺  orbit doctor — diagnóstico de ambiente")
+	}
 	fmt.Println("─────────────────────────────────────────────────")
 
 	collectBinaryInfo(res)
@@ -119,6 +125,14 @@ func runDoctor(strict, fix bool) error {
 	checkCommitStamp(res)
 	checkHMACSecret(res)
 	checkTrackingConnectivity(res)
+
+	if deep {
+		upgradeDuplicatesToCritical(res)
+		checkSymlinkChain(res)
+		checkWrapperScript(res)
+		checkCommitMismatch(res)
+		checkNarrativeOrigin(res)
+	}
 
 	printStructuredReport(res)
 

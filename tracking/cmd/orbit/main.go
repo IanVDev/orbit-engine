@@ -37,6 +37,7 @@ func main() {
 	}
 
 	printSessionBanner(os.Args[1])
+	enforceStartupIntegrity(os.Args[1])
 
 	switch os.Args[1] {
 	case "quickstart":
@@ -92,8 +93,9 @@ func main() {
 		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
 		fix := fs.Bool("fix", false, "sugere/aplica correções para problemas detectados")
+		deep := fs.Bool("deep", false, "diagnóstico profundo: symlinks, wrappers, commit mismatch, origem de texto")
 		_ = fs.Parse(os.Args[2:])
-		if err := runDoctor(*strict, *fix); err != nil {
+		if err := runDoctor(*strict, *fix, *deep); err != nil {
 			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
 			os.Exit(1)
 		}
