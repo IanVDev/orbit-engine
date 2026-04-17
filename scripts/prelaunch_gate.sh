@@ -45,6 +45,7 @@ SKIP_DEPLOY=0
 SKIP_MISSION=0
 SKIP_FAULTS=0
 SMOKE=0
+CHECK_ONLY=0
 MISSION_HOURS="${MISSION_HOURS:-24}"
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --skip-deploy)   SKIP_DEPLOY=1; shift ;;
     --skip-mission)  SKIP_MISSION=1; shift ;;
     --skip-faults)   SKIP_FAULTS=1; shift ;;
+    --check-only)    CHECK_ONLY=1; SKIP_DEPLOY=1; shift ;;
     *) echo "Argumento desconhecido: $1"; exit 1 ;;
   esac
 done
@@ -69,6 +71,13 @@ NC='\033[0m'
 GATE_PASS=0
 GATE_FAIL=0
 GATE_LOG="${REPO_ROOT}/prelaunch_gate.log"
+
+REQUIRED_METRICS=(
+  "orbit_skill_activations_total"
+  "orbit_tracking_rejected_total"
+  "orbit_behavior_abuse_total"
+  "orbit_tracking_up"
+)
 
 # ── Estado do sumário final ───────────────────────────────────────────
 SUMMARY_COMMIT="(não executado)"
@@ -194,21 +203,100 @@ fi
 
 _header "ETAPA 1 / 8 — Health Check dos Serviços"
 
-_step "Verificando tracking server (${TRACKING_HOST})"
-if curl -sf "http://${TRACKING_HOST}/health" >/dev/null 2>&1; then
-  _pass "tracking server responde em /health"
-  SUMMARY_HEALTH="OK"
-else
-  SUMMARY_HEALTH="FAIL"
-  _abort "tracking server não responde em http://${TRACKING_HOST}/health — suba o servidor antes de rodar o gate"
+_step "Verificando tracking server /health (validação JSON)"
+TRACKING_HEALTH_BODY=$(curl -s --max-time 5 "http://${TRACKING_HOST}/health" 2>/dev/null || echo "")
+if [[ -z "$TRACKING_HEALTH_BODY" ]]; then
+  SUMMARY_HEALTH="FAIL (sem resposta)"
+  _abort "tracking server não responde em /health — suba o servidor antes de rodar o gate"
+fi
+TRACKING_STATUS=$(echo "$TRACKING_HEALTH_BODY" | python3 -c "
+import json,sys
+raw=sys.stdin.read().strip()
+try:
+  d=json.loads(raw)
+  print(d.get('status','__no_status__'))
+except json.JSONDecodeError:
+  print(raw if raw=='ok' else '__invalid__')
+" 2>/dev/null || echo "__parse_error__")
+if [[ "$TRACKING_STATUS" != "ok" ]]; then
+  SUMMARY_HEALTH="FAIL (status=${TRACKING_STATUS})"
+  _abort "tracking /health retornou status='${TRACKING_STATUS}' (esperado: 'ok') — servidor degradado"
+fi
+_pass "tracking server saudável (status=ok)"
+SUMMARY_HEALTH="OK"
+
+_step "Verificando /metrics e métricas obrigatórias"
+METRICS_BODY=$(curl -s --max-time 5 "http://${TRACKING_HOST}/metrics" 2>/dev/null || echo "")
+if [[ -z "$METRICS_BODY" ]]; then
+  _abort "tracking /metrics não responde — endpoint inativo ou timeout"
+fi
+_pass "/metrics acessível (${#METRICS_BODY} bytes)"
+
+METRICS_ALL_OK=1
+for metric in "${REQUIRED_METRICS[@]}"; do
+  if echo "$METRICS_BODY" | grep -q "^${metric}"; then
+    _pass "métrica presente: ${metric}"
+  else
+    _fail "métrica obrigatória AUSENTE: ${metric}"
+    METRICS_ALL_OK=0
+  fi
+done
+[[ "$METRICS_ALL_OK" -eq 0 ]] && _abort "métricas obrigatórias ausentes em /metrics — não é seguro lançar"
+
+_step "Verificando orbit quickstart (executabilidade)"
+ORBIT_BIN=$(command -v orbit 2>/dev/null || echo "")
+if [[ -z "$ORBIT_BIN" ]]; then
+  _abort "binário 'orbit' não encontrado no PATH — instale antes de lançar"
+fi
+if ! "$ORBIT_BIN" version >/dev/null 2>&1; then
+  _abort "'orbit version' falhou — CLI corrompida ou incompatível"
+fi
+_pass "orbit quickstart executável (${ORBIT_BIN})"
+
+if [[ "${CHECK_ONLY}" -eq 1 ]]; then
+  END_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo ""
+  echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
+  echo -e "${BOLD}  Sumário — Modo check-only${NC}"
+  echo -e "${BOLD}════════════════════════════════════════════════════════${NC}"
+  echo ""
+  echo -e "  Fim:       ${END_TS}"
+  echo -e "  Gates PASS : ${GATE_PASS}"
+  echo -e "  Gates FAIL : ${GATE_FAIL}"
+  echo ""
+  echo "prelaunch_gate (check-only) ended at ${END_TS} — pass=${GATE_PASS} fail=${GATE_FAIL}" >> "${GATE_LOG}"
+  if [[ "${GATE_FAIL}" -gt 0 ]]; then
+    echo -e "${RED}${BOLD}  🔴 VEREDITO: NO-GO${NC}"
+    echo ""
+    echo "[VERDICT] NO-GO (check-only)" >> "${GATE_LOG}"
+    exit 1
+  fi
+  echo -e "${GREEN}${BOLD}  🟢 VEREDITO: GO (check-only)${NC}"
+  echo ""
+  echo -e "  ${GREEN}Tracking server ativo, /metrics funcional, métricas presentes, orbit executável.${NC}"
+  echo ""
+  echo "[VERDICT] GO (check-only)" >> "${GATE_LOG}"
+  exit 0
 fi
 
 _step "Verificando gateway (${GATEWAY_HOST})"
-if curl -sf "http://${GATEWAY_HOST}/health" >/dev/null 2>&1; then
-  _pass "gateway responde em /health"
-else
-  _abort "gateway não responde em http://${GATEWAY_HOST}/health — suba o gateway antes de rodar o gate"
+GW_HEALTH_BODY=$(curl -s --max-time 5 "http://${GATEWAY_HOST}/health" 2>/dev/null || echo "")
+if [[ -z "$GW_HEALTH_BODY" ]]; then
+  _abort "gateway não responde em /health — suba o gateway antes de rodar o gate"
 fi
+GW_STATUS=$(echo "$GW_HEALTH_BODY" | python3 -c "
+import json,sys
+raw=sys.stdin.read().strip()
+try:
+  d=json.loads(raw)
+  print(d.get('status','__no_status__'))
+except json.JSONDecodeError:
+  print(raw if raw=='ok' else '__invalid__')
+" 2>/dev/null || echo "__parse_error__")
+if [[ "$GW_STATUS" != "ok" ]]; then
+  _abort "gateway /health retornou status='${GW_STATUS}' (esperado: 'ok')"
+fi
+_pass "gateway saudável (status=ok)"
 
 _step "Verificando prometheus (porta 9090)"
 if curl -sf "http://127.0.0.1:9090/-/healthy" >/dev/null 2>&1; then
@@ -484,6 +572,28 @@ for i in "${!CHECKLIST[@]}"; do
       echo "[WARN] ${item}" >> "${GATE_LOG}"
       ALL_CONFIRMED=0
     fi
+  elif [ "$n" -eq 8 ]; then
+    if [ "$SKIP_MISSION" -eq 1 ]; then
+      echo -e "  [${n}/10] ${RED}❌ FAIL${NC} — ${item}"
+      echo -e "          Missão pulada via --skip-mission — sistema não testado sob carga contínua"
+      echo "[FAIL] ${item} — --skip-mission ativo" >> "${GATE_LOG}"
+      ((GATE_FAIL++)) || true
+      ALL_CONFIRMED=0
+    else
+      echo -e "  [${n}/10] ${GREEN}✅ AUTO${NC} — ${item}"
+      echo "[AUTO-PASS] ${item}" >> "${GATE_LOG}"
+    fi
+  elif [ "$n" -eq 9 ]; then
+    if [ "$SKIP_FAULTS" -eq 1 ]; then
+      echo -e "  [${n}/10] ${RED}❌ FAIL${NC} — ${item}"
+      echo -e "          Fault injection pulado via --skip-faults — gates não foram validados"
+      echo "[FAIL] ${item} — --skip-faults ativo" >> "${GATE_LOG}"
+      ((GATE_FAIL++)) || true
+      ALL_CONFIRMED=0
+    else
+      echo -e "  [${n}/10] ${GREEN}✅ AUTO${NC} — ${item}"
+      echo "[AUTO-PASS] ${item}" >> "${GATE_LOG}"
+    fi
   elif [ "$n" -eq 10 ]; then
     SEED_VAL=$(curl -s "http://${GATEWAY_HOST}/api/v1/query?query=orbit:seed_contamination" 2>/dev/null | \
       python3 -c "
@@ -503,6 +613,7 @@ except:
       echo -e "  [${n}/10] ${RED}❌ AUTO${NC} — ${item}"
       echo -e "          orbit:seed_contamination = ${SEED_VAL}"
       echo "[AUTO-FAIL] ${item} — seed_contamination=${SEED_VAL}" >> "${GATE_LOG}"
+      ((GATE_FAIL++)) || true
       ALL_CONFIRMED=0
     fi
   else
