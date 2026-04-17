@@ -18,6 +18,21 @@ The patterns that cause this are mechanical and detectable. This skill detects t
 
 ---
 
+## What you actually get
+
+Orbit Engine ships as two layers. Most users only need the first.
+
+| | **FREE — the skill** | **PRO — skill + measurement infra** |
+| --- | --- | --- |
+| What it is | A Claude Code skill (`.md` files) that activates during your session and outputs `DIAGNOSIS → ACTIONS → DO NOT DO NOW`. | The skill plus a Go backend (tracking server, PromQL gateway, Prometheus, Grafana) that records real token spend over time. |
+| What it needs | Claude Code. Nothing else. | Docker + Prometheus/Grafana on a host you control. |
+| What it answers | *"Is my current session wasting tokens, and what should I do right now?"* | *"How much did Orbit actually save me across N sessions? Where do patterns repeat? Is the skill still working in week 6?"* |
+| Who it's for | Every Claude Code user. | Teams, power users, anyone who needs longitudinal evidence (not just in-session advice). |
+
+If you are not sure which you want, you want FREE. The skill works standalone — the Go infrastructure in `tracking/` is *only* for measurement and is not required for the skill to do its job.
+
+---
+
 ## Before / After
 
 Real scenario: data ingestion service, no planning step, context not cleared.
