@@ -32,6 +32,7 @@ from orchestrator.router import (
     MAX_CONTEXT_TOKENS,
     MAX_OPUS_PER_HOUR,
     Model,
+    ModelControl,
     ModelRouter,
     RoutingDecision,
     RoutingRequest,
@@ -45,6 +46,10 @@ def make_router(daily_limit: float = 10.0) -> ModelRouter:
 
 
 def simple_request(prompt: str = "Fix the typo in README", **kwargs) -> RoutingRequest:
+    # Pre-model-control tests assume unrestricted routing; use AUTO so existing
+    # heuristic tests continue to pass. Tests that verify LOCKED behaviour
+    # pass model_control explicitly (see test_model_control.py).
+    kwargs.setdefault("model_control", ModelControl.AUTO)
     return RoutingRequest(
         prompt=prompt,
         session_id="test-session",

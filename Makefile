@@ -94,10 +94,101 @@ tag-v1:
 	git tag -a v1.0.0 -m "orbit-engine v1.0.0 — validated release"
 	@echo "✅ Tagged v1.0.0. Push with: git push origin v1.0.0"
 
-# ── Cleanup ──────────────────────────────────────────────────────────
+# ── orbit-check (production readiness) ──────────────────────────────
+
+# Verifica saúde do sistema ao vivo: health, métricas críticas, integridade SHA.
+# Em produção: ENV=production ORBIT_GATEWAY_SHA256=<sha> make orbit-check
+orbit-check:
+	@bash scripts/orbit-check.sh
+
+# Executa a suite de testes do orbit-check (servidores mock, sem dependências externas)
+test-orbit-check:
+	@bash tests/test_orbit_check.sh
+
+# ── Grafana Dashboards ───────────────────────────────────────────────
+
+# Valida o JSON do dashboard de segurança (requer python3)
+validate-dashboard-security:
+	@python3 -c "import json,sys; d=json.load(open('deploy/grafana-dashboard-security.json')); panels=[p for p in d['panels'] if p['type']!='row']; print(f'Dashboard valido: {len(panels)} paineis, uid={d[\"uid\"]}'); [print(f'  id={p[\"id\"]:2d}  {p[\"type\"]:12s}  {p[\"title\"]}') for p in panels]"
+
+# Valida a sintaxe YAML das regras de alerta de segurança (requer pyyaml)
+validate-alerts-security:
+	@python3 -c "import sys; import yaml; data=yaml.safe_load(open('deploy/prometheus-alerts-security.yml')); rules=[r for g in data.get('groups',[]) for r in g.get('rules',[])]; print(f'Alertas validos: {len(rules)} regras'); [print(f'  {r[\"alert\"]}  ({r[\"labels\"][\"severity\"]})') for r in rules]" 2>/dev/null || python3 -c "import json; print('pyyaml nao instalado — validando apenas JSON do dashboard')"
+
+# Importa dashboards Grafana via API HTTP
+# Uso: GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<token> make import-dashboards
+# Gera token em Grafana: Configuration → API Tokens → Create token (role: Admin)
+import-dashboards:
+	@bash scripts/import-grafana-dashboards.sh
+
+# Inicia stack de observabilidade: Prometheus + Grafana (docker-compose)
+# Requer Docker e docker-compose instalados
+# Acesso: Prometheus em http://localhost:9090, Grafana em http://localhost:3000 (admin/admin)
+obs-up:
+	@docker-compose up -d && echo "✅ Stack iniciada: Prometheus (9090) + Grafana (3000)" && sleep 3 && curl -s http://localhost:3000/api/health | grep -q '"ok"' && echo "✅ Grafana pronto para importar dashboards"
+
+# Para a stack de observabilidade
+obs-down:
+	@docker-compose down && echo "✅ Stack parada"
+
+# Logs em tempo real da stack de observabilidade
+obs-logs:
+	@docker-compose logs -f
+
+# Importa dashboards após stack estar rodando
+obs-import: obs-up
+	@echo "Aguardando Grafana ficar pronto..." && sleep 5
+	@GRAFANA_TOKEN=$$(bash scripts/generate-grafana-token.sh || echo "") && \
+	if [ -z "$$GRAFANA_TOKEN" ]; then \
+		echo "⚠️  Token não gerado automaticamente — use:"; \
+		echo "  GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<seu_token> make import-dashboards"; \
+	else \
+		GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=$$GRAFANA_TOKEN make import-dashboards; \
+	fi
+
+# ── Cleanup ──────────────────────────────────────────────────────────────
 
 clean:
 	cd tracking && go clean -testcache
+
+
+# ── Artifact build (para deploy soberano) ────────────────────────────────────
+#
+# Produz um binário versionado com commit SHA, versão e timestamp embutidos.
+# Usado pelo CI/CD para publicar artefatos no bucket de deploy.
+#
+# Uso:
+#   make build-artifact                 → usa commit atual
+#   VERSION=1.2.0 make build-artifact  → especifica versão
+#
+# Variáveis:
+#   VERSION   versão semântica  (padrão: 0.0.0)
+#   GOOS      sistema alvo      (padrão: local)
+#   GOARCH    arquitetura alvo  (padrão: local)
+
+VERSION ?= 0.0.0
+COMMIT  := $(shell git rev-parse --short HEAD)
+BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOS   ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
+ARTIFACT_NAME := tracking-server-$(COMMIT)-$(GOOS)-$(GOARCH)
+
+.PHONY: build-artifact
+
+build-artifact:
+	@echo "══ build-artifact ══"
+	@echo "  commit:  $(COMMIT)"
+	@echo "  version: $(VERSION)"
+	@echo "  target:  $(GOOS)/$(GOARCH)"
+	@echo "  output:  tracking/$(ARTIFACT_NAME)"
+	cd tracking && go build \
+		-ldflags "-X main.CommitSHA=$(COMMIT) -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)" \
+		-o $(ARTIFACT_NAME) \
+		./cmd/main.go
+	shasum -a 256 tracking/$(ARTIFACT_NAME) > tracking/$(ARTIFACT_NAME).sha256
+	@echo "  sha256:  $$(cat tracking/$(ARTIFACT_NAME).sha256 | cut -c1-16)..."
+	@echo "✅ Artifact pronto: tracking/$(ARTIFACT_NAME)"
+	@echo "   Checksum:        tracking/$(ARTIFACT_NAME).sha256"
 
 # ── SSH / Remote access ───────────────────────────────────────────────────────
 #

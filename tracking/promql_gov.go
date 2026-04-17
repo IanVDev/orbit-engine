@@ -50,6 +50,32 @@ var _allowedPrefixes = []string{
 	"orbit_behavior_abuse_ratio",                 // security: behavior abuse similarity ratio gauge
 	"orbit_security_mode",                        // security: active security mode gauge {mode}
 	"orbit_security_mode_reason",                 // security: reason for current mode transition
+	"orbit_security_mode_transitions_total",      // security: mode transition counter {from, to}
+	// Value-observability metrics (user-perceived value layer)
+	"orbit_user_perceived_value_total",     // value: perceived value events {level}
+	"orbit_user_returned_total",            // value: retention signal {fingerprint} (pseudonymous)
+	"orbit_user_accepted_suggestion_total", // value: suggestion accepted counter
+	"orbit_user_ignored_suggestion_total",  // value: suggestion ignored counter
+	"orbit_user_ignore_reason_total",       // value: inferred ignore reason {reason}
+	// Model-control metrics (override governance layer)
+	"orbit_model_override_total", // model-ctrl: override attempts {from, to, control, allowed}
+	"orbit_model_control_mode",   // model-ctrl: active control mode gauge {mode}
+	// Execution-governance metrics (exec-gov layer — runs before model_control)
+	"orbit_exec_gov_blocked_total",               // exec-gov: blocked verdicts {block_rule}
+	"orbit_exec_gov_allowed_total",               // exec-gov: allowed verdicts
+	"orbit_exec_gov_validation_duration_seconds", // exec-gov: validation latency histogram
+	// Token-budget metrics (cost-governor layer)
+	"orbit_token_spent_total",      // budget: tokens consumed {session_id}
+	"orbit_token_per_call",         // budget: per-call token histogram (buckets, sum, count)
+	"orbit_token_budget_remaining", // budget: remaining budget gauge
+	"orbit_token_allowed_total",    // budget: calls within budget {block_reason}
+	"orbit_token_blocked_total",    // budget: calls blocked {block_reason}
+	"orbit_token_usage_ratio",      // budget: used/max ratio gauge
+	// Token-reconcile metrics (actual-vs-estimated layer)
+	"orbit_token_actual_total",     // reconcile: actual tokens consumed {session_id}
+	"orbit_token_estimation_error", // reconcile: estimation error gauge (actual-estimated)
+	// Reconcile auth metrics
+	"orbit_reconcile_auth_rejected_total", // reconcile-auth: rejected requests {reason}
 }
 
 // ---------------------------------------------------------------------------

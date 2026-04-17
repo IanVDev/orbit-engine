@@ -1566,6 +1566,14 @@ func TestEnterElevatedMode(t *testing.T) {
 	ResetSecurityMode()
 	defer ResetSecurityMode()
 
+	// Advance mock clock so cooldown never blocks transitions in this test.
+	now := time.Now()
+	tick := 0
+	SetSecurityModeTimeNow(func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick) * 60 * time.Second)
+	})
+
 	// Below threshold → NORMAL
 	mode := EvaluateSecurityMode(0.05)
 	if mode != ModeNormal {
@@ -1607,6 +1615,13 @@ func TestEnterLockdownMode(t *testing.T) {
 	ResetSecurityMode()
 	defer ResetSecurityMode()
 
+	now := time.Now()
+	tick := 0
+	SetSecurityModeTimeNow(func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick) * 60 * time.Second)
+	})
+
 	mode := EvaluateSecurityMode(0.5)
 	if mode != ModeLockdown {
 		t.Fatalf("expected LOCKDOWN at ratio=0.5, got %s", SecurityModeName(mode))
@@ -1645,12 +1660,20 @@ func TestEnterLockdownMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 34. TestRecoverToNormal — mode returns to NORMAL when abuse ratio drops
+// 34. TestRecoverToNormal — hysteresis: recovery thresholds are lower than escalation
 // ---------------------------------------------------------------------------
 
 func TestRecoverToNormal(t *testing.T) {
 	ResetSecurityMode()
 	defer ResetSecurityMode()
+
+	// Each EvaluateSecurityMode call gets a clock 60s further — bypasses cooldown.
+	now := time.Now()
+	tick := 0
+	SetSecurityModeTimeNow(func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick) * 60 * time.Second)
+	})
 
 	// Escalate to LOCKDOWN
 	EvaluateSecurityMode(0.5)
@@ -1658,16 +1681,16 @@ func TestRecoverToNormal(t *testing.T) {
 		t.Fatal("should be LOCKDOWN")
 	}
 
-	// Drop to ELEVATED range
-	mode := EvaluateSecurityMode(0.2)
+	// Drop below lockdownRecovery (0.25) → ELEVATED
+	mode := EvaluateSecurityMode(0.20)
 	if mode != ModeElevated {
-		t.Fatalf("expected ELEVATED at ratio=0.2, got %s", SecurityModeName(mode))
+		t.Fatalf("expected ELEVATED at ratio=0.20 (< lockdownRecovery=0.25), got %s", SecurityModeName(mode))
 	}
 
-	// Drop to NORMAL range
+	// Drop below elevatedRecovery (0.08) → NORMAL
 	mode = EvaluateSecurityMode(0.05)
 	if mode != ModeNormal {
-		t.Fatalf("expected NORMAL at ratio=0.05, got %s", SecurityModeName(mode))
+		t.Fatalf("expected NORMAL at ratio=0.05 (< elevatedRecovery=0.08), got %s", SecurityModeName(mode))
 	}
 	if GetSecurityMode() != ModeNormal {
 		t.Fatal("GetSecurityMode should return NORMAL after recovery")
@@ -1681,15 +1704,243 @@ func TestRecoverToNormal(t *testing.T) {
 		t.Fatal("NORMAL should not adjust threshold")
 	}
 
-	// Edge: exact boundary (0.1) → NORMAL (need > 0.1 for ELEVATED)
-	mode = EvaluateSecurityMode(0.1)
+	// Hysteresis: ratio=0.09 while NORMAL → stays NORMAL (below escalation threshold 0.10)
+	mode = EvaluateSecurityMode(0.09)
 	if mode != ModeNormal {
-		t.Fatalf("exact 0.1 should be NORMAL (need > 0.1 for ELEVATED), got %s", SecurityModeName(mode))
+		t.Fatalf("ratio=0.09 should stay NORMAL (escalation needs > 0.10), got %s", SecurityModeName(mode))
 	}
 
-	// Edge: exact boundary (0.3) → ELEVATED (need > 0.3 for LOCKDOWN)
-	mode = EvaluateSecurityMode(0.3)
+	// Hysteresis: ratio=0.10 exactly → stays NORMAL (strictly > required)
+	mode = EvaluateSecurityMode(0.10)
+	if mode != ModeNormal {
+		t.Fatalf("exact 0.10 should be NORMAL (need > 0.10 for ELEVATED), got %s", SecurityModeName(mode))
+	}
+
+	// Escalation: ratio=0.11 → ELEVATED
+	mode = EvaluateSecurityMode(0.11)
 	if mode != ModeElevated {
-		t.Fatalf("exact 0.3 should be ELEVATED (need > 0.3 for LOCKDOWN), got %s", SecurityModeName(mode))
+		t.Fatalf("ratio=0.11 should trigger ELEVATED, got %s", SecurityModeName(mode))
+	}
+
+	// Hysteresis band: ratio=0.09 from ELEVATED → stays ELEVATED (recovery needs < 0.08)
+	mode = EvaluateSecurityMode(0.09)
+	if mode != ModeElevated {
+		t.Fatalf("ratio=0.09 from ELEVATED should stay ELEVATED (recovery needs < 0.08), got %s", SecurityModeName(mode))
+	}
+
+	// Edge: exact boundary (0.30) → ELEVATED (need strictly > 0.30 for LOCKDOWN)
+	mode = EvaluateSecurityMode(0.30)
+	if mode != ModeElevated {
+		t.Fatalf("exact 0.30 should be ELEVATED (need > 0.30 for LOCKDOWN), got %s", SecurityModeName(mode))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 35. TestNoFlappingUnderBoundary — hysteresis prevents flapping at the boundary
+//
+// Simulates a ratio oscillating between 0.09 and 0.11 — which would cause
+// constant NORMAL↔ELEVATED flapping with symmetric thresholds.
+// With hysteresis (up=0.10, down=0.08) the mode must stabilise in ELEVATED.
+// ---------------------------------------------------------------------------
+
+func TestNoFlappingUnderBoundary(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	// Each call advances clock by 60s → cooldown never blocks.
+	now := time.Now()
+	tick := 0
+	SetSecurityModeTimeNow(func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick) * 60 * time.Second)
+	})
+
+	// Step 1: push into ELEVATED (ratio=0.11 > escalation threshold 0.10)
+	mode := EvaluateSecurityMode(0.11)
+	if mode != ModeElevated {
+		t.Fatalf("initial push: expected ELEVATED, got %s", SecurityModeName(mode))
+	}
+
+	// Step 2: oscillate 10× in the hysteresis band [0.08, 0.10]
+	// Without hysteresis this would alternate NORMAL↔ELEVATED every cycle.
+	// With hysteresis: recovery from ELEVATED requires < 0.08, so mode must
+	// remain ELEVATED throughout.
+	for i := 0; i < 10; i++ {
+		// Alternate between 0.09 (below escalation but above recovery) and 0.11
+		var ratio float64
+		if i%2 == 0 {
+			ratio = 0.09 // inside band from ELEVATED: not low enough to recover
+		} else {
+			ratio = 0.11 // above escalation: stays ELEVATED
+		}
+		got := EvaluateSecurityMode(ratio)
+		if got != ModeElevated {
+			t.Errorf("oscillation step %d (ratio=%.2f): expected ELEVATED (no flapping), got %s",
+				i, ratio, SecurityModeName(got))
+		}
+	}
+
+	// Step 3: only a ratio clearly below recovery (0.07 < 0.08) drops to NORMAL
+	mode = EvaluateSecurityMode(0.07)
+	if mode != ModeNormal {
+		t.Fatalf("after recovery ratio 0.07: expected NORMAL, got %s", SecurityModeName(mode))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 36. TestCooldownRespected — mode must not change within cooldown window
+//
+// Verifies that even with extreme abuse ratios, a transition is blocked
+// until at least cooldownDuration (30s) has elapsed in the current mode.
+// ---------------------------------------------------------------------------
+
+func TestCooldownRespected(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	// Freeze clock at t=0
+	base := time.Now()
+	SetSecurityModeTimeNow(func() time.Time { return base })
+
+	// First call: modeEnteredAt is zero → cooldown is not in effect yet.
+	// ratio=0.5 → should escalate to LOCKDOWN immediately.
+	mode := EvaluateSecurityMode(0.5)
+	if mode != ModeLockdown {
+		t.Fatalf("first call should escalate to LOCKDOWN, got %s", SecurityModeName(mode))
+	}
+
+	// Immediately after: clock still at t=0 → cooldown (30s) not elapsed.
+	// Even a recovery ratio must NOT produce a transition.
+	mode = EvaluateSecurityMode(0.01)
+	if mode != ModeLockdown {
+		t.Fatalf("within cooldown: mode must remain LOCKDOWN, got %s", SecurityModeName(mode))
+	}
+
+	// At t=29s: still within cooldown window.
+	SetSecurityModeTimeNow(func() time.Time { return base.Add(29 * time.Second) })
+	mode = EvaluateSecurityMode(0.01)
+	if mode != ModeLockdown {
+		t.Fatalf("at 29s: mode must remain LOCKDOWN (cooldown=30s), got %s", SecurityModeName(mode))
+	}
+
+	// At t=30s: cooldown exactly elapsed → transition allowed.
+	SetSecurityModeTimeNow(func() time.Time { return base.Add(30 * time.Second) })
+	mode = EvaluateSecurityMode(0.01)
+	// 0.01 < lockdownRecovery (0.25) → should drop to ELEVATED
+	if mode != ModeElevated {
+		t.Fatalf("after cooldown at t=30s: expected ELEVATED (ratio=0.01 < 0.25), got %s", SecurityModeName(mode))
+	}
+
+	// Second cooldown starts now (t=30s). Advance to t=31s → still blocked.
+	SetSecurityModeTimeNow(func() time.Time { return base.Add(31 * time.Second) })
+	mode = EvaluateSecurityMode(0.01)
+	if mode != ModeElevated {
+		t.Fatalf("at t=31s: cooldown active — must remain ELEVATED, got %s", SecurityModeName(mode))
+	}
+
+	// At t=60s (30s after entering ELEVATED) → may recover to NORMAL
+	SetSecurityModeTimeNow(func() time.Time { return base.Add(60 * time.Second) })
+	mode = EvaluateSecurityMode(0.01)
+	// 0.01 < elevatedRecovery (0.08) → should drop to NORMAL
+	if mode != ModeNormal {
+		t.Fatalf("after second cooldown at t=60s: expected NORMAL, got %s", SecurityModeName(mode))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 37. TestSecurityMetricsExposedViaRegistry — orbit_tracking_rejected_total and
+//     orbit_behavior_abuse_total must be present in /metrics output.
+//
+// Verifies the fix for: RegisterSecurityMetrics not called at startup.
+// ---------------------------------------------------------------------------
+
+func TestSecurityMetricsExposedViaRegistry(t *testing.T) {
+	// newSecurityTestRegistry already calls RegisterSecurityMetrics — mirrors cmd/main.go.
+	reg := newSecurityTestRegistry()
+
+	// Trigger at least one increment so the series appears in the output.
+	IncrementRejected(RejectReasonHMAC)
+	behaviorAbuseTotal.Inc()
+
+	// Serve /metrics using the registry.
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /metrics returned %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	metricsText := string(body)
+
+	// Validate presence of the two previously-missing critical metrics.
+	requiredMetrics := []string{
+		"orbit_tracking_rejected_total",
+		"orbit_behavior_abuse_total",
+		"orbit_security_mode_transitions_total",
+	}
+	for _, name := range requiredMetrics {
+		if !strings.Contains(metricsText, name) {
+			t.Errorf("metric %q NOT found in /metrics — RegisterSecurityMetrics may not be called", name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 38. TestTransitionsMetric — orbit_security_mode_transitions_total increments
+//     on each mode change and is queryable via governance allow-list.
+// ---------------------------------------------------------------------------
+
+func TestTransitionsMetric(t *testing.T) {
+	ResetSecurityMode()
+	defer ResetSecurityMode()
+
+	reg := newSecurityTestRegistry()
+
+	// Advance clock 60s per call
+	now := time.Now()
+	tick := 0
+	SetSecurityModeTimeNow(func() time.Time {
+		tick++
+		return now.Add(time.Duration(tick) * 60 * time.Second)
+	})
+
+	// Produce two transitions: NORMAL→ELEVATED, ELEVATED→LOCKDOWN
+	EvaluateSecurityMode(0.15) // NORMAL → ELEVATED
+	EvaluateSecurityMode(0.40) // ELEVATED → LOCKDOWN
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	var found bool
+	var totalTransitions float64
+	for _, f := range families {
+		if f.GetName() == "orbit_security_mode_transitions_total" {
+			found = true
+			for _, m := range f.GetMetric() {
+				totalTransitions += m.GetCounter().GetValue()
+			}
+		}
+	}
+
+	if !found {
+		t.Fatal("orbit_security_mode_transitions_total not found in registry")
+	}
+	if totalTransitions < 2 {
+		t.Fatalf("expected at least 2 transitions, got %.0f", totalTransitions)
+	}
+
+	// Governance must allow the metric
+	if err := ValidatePromQLStrict("orbit_security_mode_transitions_total"); err != nil {
+		t.Errorf("governance rejected orbit_security_mode_transitions_total: %v", err)
 	}
 }

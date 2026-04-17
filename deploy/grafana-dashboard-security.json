@@ -1,0 +1,719 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource (localhost:9090)",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana",    "id": "grafana",    "name": "Grafana",    "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel",      "id": "timeseries", "name": "Time series",  "version": "" },
+    { "type": "panel",      "id": "stat",       "name": "Stat",         "version": "" },
+    { "type": "panel",      "id": "bargauge",   "name": "Bar gauge",    "version": "" }
+  ],
+  "annotations": { "list": [] },
+  "description": "orbit-engine — Segurança & Comportamento. Security mode, transições, behavior abuse, rejeições por motivo, sessões vs ativações.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "↗ Product Command Center",
+      "tooltip": "",
+      "type": "link",
+      "url": "/d/orbit-engine-command-center"
+    }
+  ],
+  "panels": [
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "🔐 Status do Sistema de Segurança",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Modo de segurança ativo: 0=NORMAL, 1=ELEVATED, 2=LOCKDOWN. Calculado via soma ponderada dos gauges orbit_security_mode{mode}.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "NORMAL",   "color": "green",   "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "ELEVATED", "color": "#EAB839", "index": 1 } } },
+            { "type": "value", "options": { "2": { "text": "LOCKDOWN", "color": "#E02F44", "index": 2 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",   "value": null },
+              { "color": "#EAB839", "value": 1    },
+              { "color": "#E02F44", "value": 2    }
+            ]
+          },
+          "noValue": "NORMAL",
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(orbit_security_mode{mode=\"elevated\"}) * 1 + sum(orbit_security_mode{mode=\"lockdown\"}) * 2",
+          "legendFormat": "mode",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "🔒 Security Mode Atual",
+      "type": "stat"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Razão de similaridade comportamental atual (0.0–1.0). Limiar de escalada: ELEVATED >0.10, LOCKDOWN >0.30.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",   "value": null },
+              { "color": "#EAB839", "value": 0.1  },
+              { "color": "#FF9830", "value": 0.25 },
+              { "color": "#E02F44", "value": 0.3  }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "noValue": "0.00"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 6, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_behavior_abuse_ratio",
+          "legendFormat": "abuse ratio",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "🧬 Abuse Ratio",
+      "type": "stat"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Indica se o modo LOCKDOWN está ativo agora. ALERTA dispara se permanecer ativo por mais de 5 minutos.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "⚠️ LOCKDOWN", "color": "#E02F44", "index": 0 } } },
+            { "type": "value", "options": { "0": { "text": "✅ OK",       "color": "green",   "index": 1 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",   "value": null },
+              { "color": "#E02F44", "value": 0.5  }
+            ]
+          },
+          "noValue": "OK"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 10, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_security_mode{mode=\"lockdown\"}",
+          "legendFormat": "lockdown",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "🔴 Lockdown Ativo?",
+      "type": "stat"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Taxa total de rejeições nos últimos 5 minutos (todos os motivos somados).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",   "value": null },
+              { "color": "#EAB839", "value": 0.1  },
+              { "color": "#E02F44", "value": 1.0  }
+            ]
+          },
+          "unit": "reqps",
+          "decimals": 3,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(orbit_tracking_rejected_total[5m]))",
+          "legendFormat": "total rejected/s",
+          "refId": "A"
+        }
+      ],
+      "title": "🚫 Rejeições / 5min",
+      "type": "stat"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "1 = eventos reais sendo recebidos. 0 = nenhum evento real nos últimos minutos (indica problema de conectividade ou inatividade).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "✅ ALIVE", "color": "green",   "index": 0 } } },
+            { "type": "value", "options": { "0": { "text": "💀 DEAD",  "color": "#E02F44", "index": 1 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#E02F44", "value": null },
+              { "color": "green",   "value": 0.5  }
+            ]
+          },
+          "noValue": "DEAD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_real_usage_alive",
+          "legendFormat": "alive",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "📡 Real Usage Alive",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "📈 Histórico do Modo de Segurança",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Evolução temporal do modo de segurança ativo. Cada série vale 1 quando ativa, 0 quando não. Cores: verde=NORMAL, amarelo=ELEVATED, vermelho=LOCKDOWN.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never",
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "scaleDistribution": { "type": "linear" },
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "min": 0,
+          "max": 1.2,
+          "unit": "none",
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Normal" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#37872D", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Elevated" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#EAB839", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Lockdown" },
+            "properties": [
+              { "id": "color",            "value": { "fixedColor": "#E02F44", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "custom.fillOpacity", "value": 30 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 6 },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": ["last"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_security_mode{mode=\"normal\"}",
+          "legendFormat": "Normal",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_security_mode{mode=\"elevated\"}",
+          "legendFormat": "Elevated",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_security_mode{mode=\"lockdown\"}",
+          "legendFormat": "Lockdown",
+          "refId": "C"
+        }
+      ],
+      "title": "🕐 Security Mode ao Longo do Tempo",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Taxa de transições de modo de segurança (por segundo, janela 5min). Cada série representa um par from→to. Cardinality máxima: 6 pares (excluindo auto-transições).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "auto"
+          },
+          "unit": "ops",
+          "decimals": 4,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 6 },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": ["last", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(orbit_security_mode_transitions_total[5m])",
+          "legendFormat": "{{from}} → {{to}}",
+          "refId": "A"
+        }
+      ],
+      "title": "🔄 Transições de Modo (rate 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 102,
+      "title": "🧬 Comportamento & Abuso",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Razão de similaridade comportamental em tempo real. Linhas de limiar: amarelo=0.08 (recovery ELEVATED), laranja=0.10 (escalada ELEVATED), laranja-escuro=0.25 (recovery LOCKDOWN), vermelho=0.30 (escalada LOCKDOWN).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "#5794F2", "mode": "fixed" },
+          "custom": {
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false,
+            "showPoints": "never",
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null  },
+              { "color": "#EAB839",     "value": 0.08  },
+              { "color": "#FF9830",     "value": 0.10  },
+              { "color": "#FA6400",     "value": 0.25  },
+              { "color": "#E02F44",     "value": 0.30  }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 3,
+          "noValue": "0.000"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": ["last", "max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "orbit_behavior_abuse_ratio",
+          "legendFormat": "abuse ratio",
+          "refId": "A"
+        }
+      ],
+      "title": "🧬 Behavior Abuse Ratio",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Taxa de eventos detectados como abuso comportamental (rate 5m). Inclui a série de rejeições por motivo 'behavior_abuse' para confirmar que estão sendo bloqueados.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "reqps",
+          "decimals": 4,
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Abuse Detectado/s" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Abuse Rejeitado/s" },
+            "properties": [
+              { "id": "color",            "value": { "fixedColor": "#E02F44", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 3 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": ["last", "max", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(orbit_behavior_abuse_total[5m])",
+          "legendFormat": "Abuse Detectado/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(orbit_tracking_rejected_total{reason=\"behavior_abuse\"}[5m])",
+          "legendFormat": "Abuse Rejeitado/s",
+          "refId": "B"
+        }
+      ],
+      "title": "💢 Behavior Abuse Events (rate 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 103,
+      "title": "🚫 Rejeições por Motivo",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Taxa de rejeições por motivo ao longo do tempo. Motivos possíveis: hmac, dedup, rate_limit, invalid, invalid_semantic, critical_replay, behavior_abuse, security_mode_lockdown.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 6,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "reqps",
+          "decimals": 4,
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": []
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 24 },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": ["last", "max"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(orbit_tracking_rejected_total[5m]) > 0",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "📊 Taxa de Rejeições por Motivo (rate 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Volume acumulado de rejeições por motivo na última hora. Permite identificar o vetor de ataque dominante de forma rápida.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",   "value": null },
+              { "color": "#EAB839", "value": 10   },
+              { "color": "#E02F44", "value": 100  }
+            ]
+          },
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 24 },
+      "id": 31,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sort_desc(sum by(reason) (increase(orbit_tracking_rejected_total[1h])))",
+          "legendFormat": "{{reason}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "🏆 Volume por Motivo (1h acumulado)",
+      "type": "bargauge"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 104,
+      "title": "📊 Sessões & Ativações de Skill",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Comparação entre volume de eventos reais recebidos e ativações de skill confirmadas. A diferença representa eventos rejeitados ou não ativadores.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "reqps",
+          "decimals": 4,
+          "noValue": "0"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Real Usage/s" },
+            "properties": [
+              { "id": "color",              "value": { "fixedColor": "#5794F2", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 15 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Skill Activations/s" },
+            "properties": [
+              { "id": "color",              "value": { "fixedColor": "#37872D", "mode": "fixed" } },
+              { "id": "custom.lineWidth",   "value": 3 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "id": 40,
+      "options": {
+        "legend": {
+          "calcs": ["last", "mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(orbit_real_usage_total[5m])",
+          "legendFormat": "Real Usage/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(orbit_skill_activation_total[5m]))",
+          "legendFormat": "Skill Activations/s",
+          "refId": "B"
+        }
+      ],
+      "title": "📡 Real Usage vs Skill Activations (rate 5m)",
+      "type": "timeseries"
+    }
+
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["orbit-engine", "security", "behavior", "abuse", "v1"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "orbit-engine — Security & Behavior",
+  "uid": "orbit-security-v1",
+  "version": 1
+}

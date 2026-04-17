@@ -1,0 +1,128 @@
+# prometheus-alerts-security.yml
+#
+# Regras de alerta do orbit-engine — Security & Behavior.
+#
+# Inclusão no prometheus.yml:
+#   rule_files:
+#     - /path/to/deploy/prometheus-alerts-security.yml
+#
+# Todos os thresholds refletem as constantes definidas em tracking/security.go:
+#   elevatedThreshold  = 0.10   lockdownThreshold  = 0.30
+#   elevatedRecovery   = 0.08   lockdownRecovery   = 0.25
+#   cooldownDuration   = 30s
+
+groups:
+  - name: orbit.security
+    interval: 30s
+    rules:
+
+      # -----------------------------------------------------------------------
+      # 1. LOCKDOWN ativo por mais de 5 minutos
+      #    Indica ataque sustentado — abuse_ratio permanece acima de 0.30.
+      # -----------------------------------------------------------------------
+      - alert: OrbitSecurityLockdown
+        expr: orbit_security_mode{mode="lockdown"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          team: orbit
+          component: security
+        annotations:
+          summary: "orbit-engine em modo LOCKDOWN há mais de 5 minutos"
+          description: >
+            O orbit-engine está em modo LOCKDOWN (abuse_ratio > 0.30) por mais de 5 minutos.
+            Requisições de baixa confiança estão sendo bloqueadas (fail-closed).
+            Verifique: orbit_behavior_abuse_ratio e orbit_tracking_rejected_total{reason="security_mode_lockdown"}.
+          runbook: "Verificar logs [SECURITY_MODE] e [BEHAVIOR_ABUSE] no servidor de tracking."
+
+      # -----------------------------------------------------------------------
+      # 2. Behavior abuse ratio acima do limiar de LOCKDOWN
+      #    Precede a transição para LOCKDOWN — alerta precoce.
+      # -----------------------------------------------------------------------
+      - alert: OrbitBehaviorAbuseRatioHigh
+        expr: orbit_behavior_abuse_ratio > 0.3
+        for: 1m
+        labels:
+          severity: warning
+          team: orbit
+          component: security
+        annotations:
+          summary: "Behavior abuse ratio acima do limiar de lockdown (0.30)"
+          description: >
+            orbit_behavior_abuse_ratio={{ $value | printf "%.3f" }} está acima de 0.30.
+            O sistema pode escalar para LOCKDOWN se a situação persistir além do cooldown de 30s.
+            Histórico de transições: orbit_security_mode_transitions_total.
+
+      # -----------------------------------------------------------------------
+      # 3. Ausência de métricas críticas de segurança no endpoint /metrics
+      #    Causa: RegisterSecurityMetrics() não foi chamado no startup.
+      # -----------------------------------------------------------------------
+      - alert: OrbitCriticalMetricsMissing
+        expr: >
+          absent(orbit_tracking_rejected_total) == 1
+          or absent(orbit_behavior_abuse_total) == 1
+          or absent(orbit_security_mode) == 1
+        for: 2m
+        labels:
+          severity: critical
+          team: orbit
+          component: observability
+        annotations:
+          summary: "Métricas críticas de segurança ausentes no /metrics"
+          description: >
+            Uma ou mais métricas críticas estão ausentes: orbit_tracking_rejected_total,
+            orbit_behavior_abuse_total ou orbit_security_mode.
+            Causa provável: RegisterSecurityMetrics() não foi chamado em cmd/main.go.
+            Verifique o startup do servidor de tracking (porta 9100).
+
+      # -----------------------------------------------------------------------
+      # 4. Real usage sem eventos por 5 minutos
+      #    Indica inatividade do cliente ou problema de conectividade.
+      # -----------------------------------------------------------------------
+      - alert: OrbitRealUsageDown
+        expr: orbit_real_usage_alive == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: orbit
+          component: ingestion
+        annotations:
+          summary: "Nenhum evento real de uso recebido nos últimos 5 minutos"
+          description: >
+            orbit_real_usage_alive=0. O endpoint /track não recebeu nenhum evento
+            de uso real (real_usage_client) nos últimos minutos.
+            Verifique conectividade do plugin/extension e logs do servidor de tracking.
+
+      # -----------------------------------------------------------------------
+      # 5. Taxa de rejeições HMAC elevada — possível ataque de auth spoofing
+      # -----------------------------------------------------------------------
+      - alert: OrbitHMACFailureRateHigh
+        expr: rate(orbit_tracking_hmac_failures_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          team: orbit
+          component: security
+        annotations:
+          summary: "Taxa de falhas HMAC acima de 0.5/s"
+          description: >
+            rate(orbit_tracking_hmac_failures_total[5m])={{ $value | printf "%.3f" }}/s.
+            Pode indicar tentativas de spoofing ou cliente com segredo HMAC desatualizado.
+            Verifique ORBIT_HMAC_SECRET no cliente e servidor.
+
+      # -----------------------------------------------------------------------
+      # 6. Modo ELEVATED persistente — abuse em nível intermediário
+      # -----------------------------------------------------------------------
+      - alert: OrbitSecurityElevatedPersistent
+        expr: orbit_security_mode{mode="elevated"} == 1
+        for: 15m
+        labels:
+          severity: warning
+          team: orbit
+          component: security
+        annotations:
+          summary: "Security mode ELEVATED há mais de 15 minutos"
+          description: >
+            O orbit-engine está em modo ELEVATED (abuse_ratio entre 0.08 e 0.30)
+            por mais de 15 minutos. A capacidade do token bucket está reduzida em 50%.
+            Se abuse_ratio continuar crescendo, o sistema escalará para LOCKDOWN.

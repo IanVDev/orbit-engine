@@ -1,0 +1,21 @@
+# Grafana provisioning datasource — Prometheus automático
+# Path: /etc/grafana/provisioning/datasources/prometheus.yml
+# 
+# Grafana carrega automaticamente esta configuração ao iniciar.
+# O datasource fica disponível como "Prometheus" com UID DS_PROMETHEUS.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: DS_PROMETHEUS
+    access: proxy
+    orgId: 1
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+    secureJsonFields: {}

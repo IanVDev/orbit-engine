@@ -942,14 +942,22 @@ func CleanupBehaviorState() int {
 }
 
 // ---------------------------------------------------------------------------
-// 15. Security Mode — automatic escalation based on abuse ratio
+// 15. Security Mode — automatic escalation with hysteresis and cooldown
 // ---------------------------------------------------------------------------
 //
 // Three modes: NORMAL → ELEVATED → LOCKDOWN.
-// Transitions are driven by the current behaviorAbuseRatio gauge:
-//   abuse_ratio > 0.3 → LOCKDOWN
-//   abuse_ratio > 0.1 → ELEVATED
-//   abuse_ratio ≤ 0.1 → NORMAL   (recovery)
+//
+// Transitions use ASYMMETRIC thresholds (hysteresis) to prevent flapping:
+//
+//   Escalation (harder to go up):
+//     NORMAL    → ELEVATED  : abuse_ratio > 0.10
+//     ELEVATED  → LOCKDOWN  : abuse_ratio > 0.30
+//
+//   De-escalation (harder to come down):
+//     LOCKDOWN  → ELEVATED  : abuse_ratio < 0.25
+//     ELEVATED  → NORMAL    : abuse_ratio < 0.08
+//
+// Cooldown: minimum 30s in each mode before any transition is allowed.
 //
 // Effects:
 //   ELEVATED  — rate limit capacity reduced 50%, behavior threshold reduced by 1
@@ -966,15 +974,26 @@ const (
 	ModeLockdown
 )
 
-// Security mode thresholds (abuse ratio → mode).
+// Escalation thresholds (going UP — stricter).
 const (
-	elevatedThreshold = 0.1
-	lockdownThreshold = 0.3
+	elevatedThreshold = 0.10 // NORMAL  → ELEVATED  when ratio > this
+	lockdownThreshold = 0.30 // ELEVATED → LOCKDOWN  when ratio > this
 )
+
+// De-escalation thresholds (going DOWN — hysteresis band).
+const (
+	elevatedRecovery = 0.08 // ELEVATED → NORMAL   when ratio < this
+	lockdownRecovery = 0.25 // LOCKDOWN → ELEVATED  when ratio < this
+)
+
+// cooldownDuration is the minimum time that must elapse in a mode before
+// any transition (up or down) is allowed. Prevents rapid flapping.
+const cooldownDuration = 30 * time.Second
 
 var (
 	securityModeMu      sync.RWMutex
 	currentSecurityMode SecurityMode = ModeNormal
+	modeEnteredAt       time.Time    // when we entered the current mode
 
 	// securityModeTimeNow allows deterministic testing.
 	securityModeTimeNow = time.Now
@@ -999,32 +1018,80 @@ func GetSecurityMode() SecurityMode {
 	return currentSecurityMode
 }
 
-// EvaluateSecurityMode reads the current abuse ratio and transitions the
-// security mode accordingly. Returns the new mode. Safe for concurrent use.
-// Call this on every request — it is O(1) with no allocations on no-change path.
+// EvaluateSecurityMode applies the hysteresis+cooldown state machine:
+//
+//	Escalation (strict thresholds):
+//	  NORMAL  → ELEVATED  : ratio > 0.10
+//	  ELEVATED → LOCKDOWN : ratio > 0.30
+//
+//	De-escalation (relaxed thresholds — hysteresis band):
+//	  LOCKDOWN → ELEVATED  : ratio < 0.25
+//	  ELEVATED → NORMAL    : ratio < 0.08
+//
+//	Cooldown: no transition is allowed unless at least 30s have elapsed
+//	in the current mode (prevents rapid flapping under boundary values).
+//
+// Safe for concurrent use. O(1), no allocations on no-change path.
 func EvaluateSecurityMode(abuseRatio float64) SecurityMode {
-	var newMode SecurityMode
-	switch {
-	case abuseRatio > lockdownThreshold:
-		newMode = ModeLockdown
-	case abuseRatio > elevatedThreshold:
-		newMode = ModeElevated
-	default:
-		newMode = ModeNormal
-	}
-
 	securityModeMu.Lock()
-	prev := currentSecurityMode
-	currentSecurityMode = newMode
-	securityModeMu.Unlock()
+	defer securityModeMu.Unlock()
 
-	// Emit log + update metrics only on transition
-	if newMode != prev {
-		securityModeLog(prev, newMode, abuseRatio)
-		updateSecurityModeMetrics(newMode, abuseRatio)
+	now := securityModeTimeNow()
+	prev := currentSecurityMode
+
+	// Enforce cooldown: if we entered the current mode less than
+	// cooldownDuration ago, skip evaluation and return unchanged.
+	if !modeEnteredAt.IsZero() && now.Sub(modeEnteredAt) < cooldownDuration {
+		return prev
 	}
 
-	return newMode
+	// Compute desired next mode using hysteresis:
+	//   - when going UP use strict escalation thresholds
+	//   - when going DOWN use relaxed recovery thresholds
+	var next SecurityMode
+	switch prev {
+	case ModeNormal:
+		switch {
+		case abuseRatio > lockdownThreshold:
+			next = ModeLockdown // skip ELEVATED — direct escalation when ratio is extreme
+		case abuseRatio > elevatedThreshold:
+			next = ModeElevated
+		default:
+			next = ModeNormal
+		}
+	case ModeElevated:
+		switch {
+		case abuseRatio > lockdownThreshold:
+			next = ModeLockdown
+		case abuseRatio < elevatedRecovery:
+			next = ModeNormal
+		default:
+			next = ModeElevated // stay — inside hysteresis band
+		}
+	case ModeLockdown:
+		switch {
+		case abuseRatio < lockdownRecovery:
+			next = ModeElevated
+		default:
+			next = ModeLockdown // stay — still above recovery threshold
+		}
+	default:
+		// Unknown state: fail-closed → LOCKDOWN.
+		next = ModeLockdown
+	}
+
+	if next != prev {
+		currentSecurityMode = next
+		modeEnteredAt = now
+		// Release lock before logging/metrics (they may acquire their own locks).
+		securityModeMu.Unlock()
+		securityModeLog(prev, next, abuseRatio)
+		updateSecurityModeMetrics(next, abuseRatio)
+		securityModeTransitions.WithLabelValues(SecurityModeName(prev), SecurityModeName(next)).Inc()
+		securityModeMu.Lock() // re-acquire before deferred Unlock
+	}
+
+	return currentSecurityMode
 }
 
 // EffectiveRateLimitCapacity returns the adjusted token bucket capacity
@@ -1101,11 +1168,20 @@ func updateSecurityModeMetrics(mode SecurityMode, abuseRatio float64) {
 	securityModeReasonGauge.WithLabelValues(reason).Set(1)
 }
 
-// ResetSecurityMode resets the security mode to NORMAL. For testing ONLY.
+// ResetSecurityMode resets the security mode to NORMAL and clears cooldown.
+// For testing ONLY.
 func ResetSecurityMode() {
 	securityModeMu.Lock()
 	currentSecurityMode = ModeNormal
+	modeEnteredAt = time.Time{} // zero → no cooldown on first evaluation
 	securityModeMu.Unlock()
+	securityModeTimeNow = time.Now // restore real clock
+}
+
+// SetSecurityModeTimeNow overrides the clock used by EvaluateSecurityMode.
+// For testing ONLY — allows fast-forwarding time to bypass cooldown.
+func SetSecurityModeTimeNow(fn func() time.Time) {
+	securityModeTimeNow = fn
 }
 
 // getCurrentAbuseRatio reads the latest abuse ratio stored by CheckBehaviorAbuse.
@@ -1287,6 +1363,16 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	// orbit_security_mode_transitions_total{from,to}: counts each mode change.
+	// Cardinality: 3 modes × 3 modes = 9 max series (most never fire).
+	securityModeTransitions = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_security_mode_transitions_total",
+			Help: "Total security mode transitions. Labels: from, to (normal|elevated|lockdown).",
+		},
+		[]string{"from", "to"},
+	)
 )
 
 // RejectReason constants for the unified rejection metric.
@@ -1319,6 +1405,7 @@ func RegisterSecurityMetrics(reg prometheus.Registerer) {
 		behaviorAbuseRatio,
 		securityModeGauge,
 		securityModeReasonGauge,
+		securityModeTransitions,
 	)
 }
 
