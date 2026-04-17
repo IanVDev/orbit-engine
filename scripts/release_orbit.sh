@@ -156,6 +156,17 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "comando obrigatório não encontrado: $1"
 }
 
+_gate_sha() {
+  local f="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${f}" 2>/dev/null | awk '{print $1}' || echo "(indisponível)"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${f}" 2>/dev/null | awk '{print $1}' || echo "(indisponível)"
+  else
+    echo "(sha indisponível)"
+  fi
+}
+
 # trap qualquer erro não tratado
 on_err() {
   local code=$?
@@ -269,22 +280,46 @@ ok "tag ${VERSION} disponível"
 # ── STEP 6 — prelaunch_gate.sh ──────────────────────────────────────────────
 
 step "Executar prelaunch_gate.sh"
-GATE_SCRIPT="${SCRIPT_DIR}/prelaunch_gate.sh"
+GATE_LOG="${REPO_ROOT}/prelaunch_gate.log"
+# ORBIT_GATE_SCRIPT: ponto de injeção para testes automatizados.
+# Em produção deixar unset — release usa sempre o gate do repositório.
+GATE_SCRIPT="${ORBIT_GATE_SCRIPT:-${SCRIPT_DIR}/prelaunch_gate.sh}"
 [[ -x "${GATE_SCRIPT}" ]] || fail "prelaunch_gate.sh ausente ou sem +x: ${GATE_SCRIPT}"
 
 if [[ "${SKIP_GATE}" == "1" ]]; then
   warn "--skip-gate ativado: assumindo que o gate foi rodado em outro terminal"
-  if [[ ! -f "${REPO_ROOT}/prelaunch_gate.log" ]]; then
-    fail "--skip-gate exige prelaunch_gate.log existente como evidência"
-  fi
-  if ! grep -q '\[VERDICT\] GO' "${REPO_ROOT}/prelaunch_gate.log"; then
+  [[ -f "${GATE_LOG}" ]] || fail "--skip-gate exige prelaunch_gate.log existente como evidência"
+  if ! grep -q '\[VERDICT\] GO' "${GATE_LOG}"; then
     fail "prelaunch_gate.log não contém [VERDICT] GO — gate não passou"
   fi
-  ok "gate validado via log prévio ([VERDICT] GO encontrado)"
+  GATE_HASH="$(_gate_sha "${GATE_LOG}")"
+  ok "gate validado via log prévio — [VERDICT] GO presente (log sha256: ${GATE_HASH:0:16}…)"
+  log GATE "source=skip verdict=GO log_sha256=${GATE_HASH}"
+
+elif [[ "${DRY_RUN}" == "1" ]]; then
+  dryrun_skip "prelaunch_gate.sh — use --skip-gate com log pré-existente para validar gate em dry-run"
+
 else
   gate_args=()
   [[ "${SMOKE_GATE}" == "1" ]] && gate_args+=("--smoke")
-  run_step "prelaunch_gate.sh ${gate_args[*]:-completo}" "${GATE_SCRIPT}" "${gate_args[@]}"
+
+  # Reset do log para garantir que a leitura pós-execução reflita apenas esta rodada.
+  : > "${GATE_LOG}"
+
+  log CMD "executando: ${GATE_SCRIPT} ${gate_args[*]:-}"
+  if ! "${GATE_SCRIPT}" "${gate_args[@]}"; then
+    fail "prelaunch_gate.sh retornou exit ≠ 0 — sistema não está pronto para release"
+  fi
+
+  # Defesa em profundidade: [VERDICT] GO deve estar no log, independente do exit code.
+  # Garante que release não prossegue se o gate for interrompido silenciosamente.
+  if ! grep -q '\[VERDICT\] GO' "${GATE_LOG}"; then
+    fail "[VERDICT] GO ausente em ${GATE_LOG} — gate pode ter sido interrompido ou manipulado"
+  fi
+
+  GATE_HASH="$(_gate_sha "${GATE_LOG}")"
+  ok "prelaunch_gate.sh passou — [VERDICT] GO confirmado (log sha256: ${GATE_HASH:0:16}…)"
+  log GATE "source=run verdict=GO log_sha256=${GATE_HASH}"
 fi
 
 # ── STEP 7 — go test -race ──────────────────────────────────────────────────
