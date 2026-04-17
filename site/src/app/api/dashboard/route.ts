@@ -45,6 +45,8 @@ interface LedgerEntry {
   parent_event_id?: string;
   link_method?: "temporal";
   link_confidence?: "low";
+  link_semantic?: "non_causal";
+  link_window_seconds?: 60;
   [key: string]: unknown;
 }
 

@@ -348,6 +348,77 @@ class TestTemporalLinking:
             f"{len(high_confidence)} entries com link_confidence='high' (proibido)"
         )
 
+    # ── Contrato completo: todos os campos obrigatórios ──────────────────────
+
+    def test_linked_entry_has_full_contract(self):
+        """Todo entry com parent_event_id deve ter TODOS os 4 campos de link."""
+        execs = [self._make_exec("exec-X", "2026-04-01T12:00:00Z")]
+        ledger = [self._make_ledger_entry("2026-04-01T12:00:10Z")]  # 10s depois
+        p._link_skill_events(execs, ledger)
+        entry = ledger[0]
+        assert entry.get("parent_event_id") == "exec-X"
+        assert entry.get("link_method") == "temporal"
+        assert entry.get("link_confidence") == "low"
+        assert entry.get("link_semantic") == "non_causal"
+        assert entry.get("link_window_seconds") == 60
+
+    def test_link_window_seconds_is_always_60(self):
+        """link_window_seconds deve ser sempre 60 — nunca outro valor."""
+        execs = [
+            self._make_exec("e1", "2026-04-01T10:00:00Z"),
+            self._make_exec("e2", "2026-04-01T11:00:00Z"),
+        ]
+        ledger = [
+            self._make_ledger_entry("2026-04-01T10:00:05Z"),
+            self._make_ledger_entry("2026-04-01T11:00:05Z"),
+        ]
+        p._link_skill_events(execs, ledger)
+        for entry in ledger:
+            if "parent_event_id" in entry:
+                assert entry["link_window_seconds"] == 60, (
+                    f"link_window_seconds={entry['link_window_seconds']} (esperado 60)"
+                )
+
+    def test_link_semantic_is_always_non_causal(self):
+        """link_semantic deve ser sempre 'non_causal' — nunca outro valor."""
+        execs = [self._make_exec("exec-Y", "2026-04-01T08:00:00Z")]
+        ledger = [self._make_ledger_entry("2026-04-01T08:00:20Z")]
+        p._link_skill_events(execs, ledger)
+        entry = ledger[0]
+        assert entry.get("link_semantic") == "non_causal"
+
+    def test_unlinked_entry_has_no_new_fields(self):
+        """Entry sem link não deve ter link_semantic nem link_window_seconds."""
+        execs = [self._make_exec("exec-Z", "2026-04-01T00:00:00Z")]
+        ledger = [self._make_ledger_entry("2026-04-01T01:00:00Z")]  # 3600s depois
+        p._link_skill_events(execs, ledger)
+        entry = ledger[0]
+        assert "link_semantic" not in entry
+        assert "link_window_seconds" not in entry
+
+    def test_real_data_full_contract(self):
+        """Nos dados reais, todo entry com parent_event_id tem os 4 campos corretos."""
+        REQUIRED = {
+            "link_method": "temporal",
+            "link_confidence": "low",
+            "link_semantic": "non_causal",
+            "link_window_seconds": 60,
+        }
+        executions, _ = p.parse_logs()
+        ledger = p.parse_ledger()
+        p._link_skill_events(executions, ledger)
+        violations = []
+        for entry in ledger:
+            if "parent_event_id" not in entry:
+                continue
+            for field, expected in REQUIRED.items():
+                if entry.get(field) != expected:
+                    violations.append(
+                        f"entry@{entry.get('timestamp','?')}: "
+                        f"{field}={entry.get(field)!r} (esperado {expected!r})"
+                    )
+        assert not violations, "\n".join(violations)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -118,7 +118,11 @@ func main() {
 		printUsage()
 
 	default:
-		fmt.Fprintf(os.Stderr, "orbit: comando desconhecido %q\n\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "orbit: comando desconhecido %q\n", os.Args[1])
+		if s := suggestCommand(os.Args[1]); s != "" {
+			fmt.Fprintf(os.Stderr, "\n    Você quis dizer:  orbit %s\n", s)
+		}
+		fmt.Fprintln(os.Stderr, "")
 		printUsage()
 		os.Exit(1)
 	}

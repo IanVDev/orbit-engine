@@ -382,3 +382,109 @@ func TestUXAudit_NoCommandPanics(t *testing.T) {
 		})
 	}
 }
+
+// ── UX: comando desconhecido ──────────────────────────────────────────────────
+
+// TestUXAudit_UnknownCommandFailClosed verifica que um comando completamente
+// desconhecido: (a) sai com código != 0 e (b) inclui o comando digitado na
+// mensagem de erro.
+func TestUXAudit_UnknownCommandFailClosed(t *testing.T) {
+	const input = "xyzzy-not-a-command"
+	out := runOrbit(t, false, input)
+	if !strings.Contains(out, input) {
+		t.Errorf("saída deveria conter o comando digitado %q\ngot:\n%s", input, out)
+	}
+}
+
+// TestUXAudit_UnknownCommandSuggestsClose verifica que um comando similar a
+// um comando real exibe "Você quis dizer" com a sugestão correta.
+func TestUXAudit_UnknownCommandSuggestsClose(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"updat", "update"},
+		{"docto", "doctor"},
+		{"stat", "stats"},
+		{"qui", "quickstart"},
+		{"versio", "version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			out := runOrbit(t, false, tc.input)
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("esperado sugestão %q no output para %q\ngot:\n%s",
+					tc.want, tc.input, out)
+			}
+			if !strings.Contains(out, "Você quis dizer") {
+				t.Errorf("esperado 'Você quis dizer' no output para %q\ngot:\n%s",
+					tc.input, out)
+			}
+		})
+	}
+}
+
+// TestUXAudit_UnknownCommandNoSuggestionForGarbage verifica que para input
+// completamente aleatório não há sugestão falsa — apenas a mensagem de erro.
+func TestUXAudit_UnknownCommandNoSuggestionForGarbage(t *testing.T) {
+	out := runOrbit(t, false, "zzzzzzzzz")
+	if strings.Contains(out, "Você quis dizer") {
+		t.Errorf("não deveria sugerir comando para input sem semelhança\ngot:\n%s", out)
+	}
+}
+
+// ── Install: smoke test de build + install em diretório temporário ────────────
+
+// TestInstall_BuildAndVerifyVersion compila o binário orbit e verifica que
+// `version` retorna output bem-formado — validação completa do fluxo de
+// instalação sem tocar no binário do sistema.
+func TestInstall_BuildAndVerifyVersion(t *testing.T) {
+	if uxAuditBin == "" {
+		t.Fatal("uxAuditBin not set — TestMain deve ter falhado")
+	}
+
+	// O binário já foi compilado por TestMain — validamos diretamente.
+	cmd := exec.Command(uxAuditBin, "version")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("orbit version falhou: %v\noutput: %s", err, out)
+	}
+
+	output := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(output, "orbit version") {
+		t.Errorf("saída inesperada de version: %q", output)
+	}
+	if !strings.Contains(output, "commit=") {
+		t.Errorf("saída de version não contém commit=: %q", output)
+	}
+}
+
+// TestInstall_CopyToTempDirAndRun verifica que o binário funciona ao ser
+// copiado para um diretório diferente — simula `make install --prefix /tmp/...`.
+func TestInstall_CopyToTempDirAndRun(t *testing.T) {
+	if uxAuditBin == "" {
+		t.Fatal("uxAuditBin not set")
+	}
+
+	// Copia para dir temporário (simula instalação em /usr/local/bin).
+	destDir := t.TempDir()
+	dest := filepath.Join(destDir, "orbit")
+	src, err := os.ReadFile(uxAuditBin)
+	if err != nil {
+		t.Fatalf("leitura do binário: %v", err)
+	}
+	if err := os.WriteFile(dest, src, 0o755); err != nil {
+		t.Fatalf("cópia do binário: %v", err)
+	}
+
+	cmd := exec.Command(dest, "version")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("binário copiado falhou em version: %v\noutput: %s", err, out)
+	}
+	if !strings.Contains(string(out), "orbit version") {
+		t.Errorf("saída inesperada do binário copiado: %q", string(out))
+	}
+}

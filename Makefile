@@ -270,3 +270,11 @@ orbit-check:
 .PHONY: build
 build:
 	@bash scripts/install.sh
+
+# ── System install ────────────────────────────────────────────────────────────
+# Instala em /usr/local/bin/orbit (caminho canônico global).
+# Pode requerer sudo dependendo das permissões do diretório.
+# Equivalente a: bash scripts/install.sh --prefix /usr/local/bin
+.PHONY: install
+install:
+	@bash scripts/install.sh --prefix /usr/local/bin

@@ -167,6 +167,8 @@ def _link_skill_events(executions: list[dict], ledger: list[dict]) -> None:
             entry["parent_event_id"] = closest_id
             entry["link_method"] = "temporal"
             entry["link_confidence"] = "low"
+            entry["link_semantic"] = "non_causal"
+            entry["link_window_seconds"] = 60
 
 
 def aggregate(
