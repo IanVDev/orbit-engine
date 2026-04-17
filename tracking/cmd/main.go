@@ -129,7 +129,9 @@ func main() {
 	reconcileAuth := tracking.NewReconcileAuth([]byte(reconcileSecret), 30*time.Second)
 	http.HandleFunc("/reconcile", reconcileAuth.Middleware(tracking.ReconcileHandler(tokenBudget)))
 
-	addr := ":9100"
-	log.Printf("[orbit-tracking] listening on %s", addr)
+	// Fail-closed bind: default to loopback unless ORBIT_BIND_ALL=1 opts in.
+	// See tracking/bind.go for rationale.
+	addr := tracking.ResolveListenAddr(":9100")
+	log.Printf("[orbit-tracking] listening on %s (set %s=1 to bind all interfaces)", addr, tracking.BindAllEnv)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
