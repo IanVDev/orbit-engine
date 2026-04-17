@@ -7,16 +7,43 @@ const ORBIT_DIR = path.join(os.homedir(), ".orbit");
 const LOGS_DIR = path.join(ORBIT_DIR, "logs");
 const LEDGER_PATH = path.join(ORBIT_DIR, "client_ledger.jsonl");
 
-interface ExecLog {
+const FAILURE_TYPES: Record<number, string> = {
+  0: "none",
+  1: "runtime_error",
+  7: "verification_failed",
+  127: "command_not_found",
+  254: "system_error",
+};
+
+// Padrão de nome de arquivo: {ts}_{nano?}_{hex8}_exit{code}.json
+const FILENAME_SESSION_RE = /([0-9a-f]{8})_exit\d+\.json$/;
+
+// Campos obrigatórios em logs versionados (version >= 1)
+const EXECUTION_ESSENTIAL = ["timestamp", "exit_code", "command", "language"] as const;
+
+interface RawLog {
+  version?: number;
   timestamp?: string;
   command?: string;
   language?: string;
   exit_code?: number;
   duration_ms?: number;
+  execution_id?: string;
+  anchor_status?: string;
+  [key: string]: unknown;
+}
+
+interface ExecLog extends RawLog {
+  session_id: string | null;
+  parent_event_id: string | null;
+  failure_type: string;
 }
 
 interface LedgerEntry {
+  timestamp?: string;
   impact_estimated_tokens?: number;
+  parent_event_id?: string;
+  [key: string]: unknown;
 }
 
 interface DashboardStats {
@@ -25,30 +52,122 @@ interface DashboardStats {
   falhas: number;
   taxa_verificacao_pct: number;
   tempo_medio_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  failure_types: Record<string, number>;
   comandos: Record<string, number>;
   linguagens: Record<string, number>;
+  session_count: number;
+  anchor_events: number;
   skill_events: number;
   tokens_estimados: number;
   ultimo_evento: string | null;
   atualizado_em: string;
 }
 
-async function parseLogs(): Promise<ExecLog[]> {
-  if (!existsSync(LOGS_DIR)) return [];
+function failureType(exitCode: number | undefined): string {
+  if (exitCode === undefined) return "unknown";
+  return FAILURE_TYPES[exitCode] ?? `exit_${exitCode}`;
+}
 
-  const files = await readdir(LOGS_DIR);
-  const jsonFiles = files.filter((f) => f.endsWith(".json")).sort();
+function deriveSessionId(filename: string): string | null {
+  const m = filename.match(FILENAME_SESSION_RE);
+  return m ? m[1] : null;
+}
 
-  const logs: ExecLog[] = [];
-  for (const file of jsonFiles) {
+function percentile(data: number[], pct: number): number {
+  if (!data.length) return 0;
+  const s = [...data].sort((a, b) => a - b);
+  const idx = (pct / 100) * (s.length - 1);
+  const lo = Math.floor(idx);
+  const hi = lo + 1;
+  if (hi >= s.length) return Math.round(s[s.length - 1] * 10) / 10;
+  const frac = idx - lo;
+  return Math.round((s[lo] + frac * (s[hi] - s[lo])) * 10) / 10;
+}
+
+function isExecutionLog(data: RawLog): boolean {
+  return "exit_code" in data || "version" in data;
+}
+
+function validateExecution(data: RawLog, file: string): void {
+  if (data.version !== undefined) {
+    for (const field of EXECUTION_ESSENTIAL) {
+      if (!(field in data)) {
+        throw new Error(`Campo essencial '${field}' ausente em ${file}`);
+      }
+    }
+  }
+}
+
+function tsToEpoch(iso: string): number {
+  try {
+    return new Date(iso).getTime() / 1000;
+  } catch {
+    return 0;
+  }
+}
+
+function linkSkillEvents(executions: ExecLog[], ledger: LedgerEntry[]): void {
+  if (!executions.length || !ledger.length) return;
+
+  const execTimes = executions.map((e) => ({
+    id: e.execution_id ?? null,
+    ts: tsToEpoch(e.timestamp ?? ""),
+  }));
+
+  for (const entry of ledger) {
+    const entryTs = tsToEpoch(entry.timestamp ?? "");
+    if (!entryTs) continue;
+
+    let closestId: string | null = null;
+    let closestDelta = Infinity;
+
+    for (const { id, ts } of execTimes) {
+      const delta = Math.abs(entryTs - ts);
+      if (delta < closestDelta && delta <= 60) {
+        closestDelta = delta;
+        closestId = id;
+      }
+    }
+
+    if (closestId) entry.parent_event_id = closestId;
+  }
+}
+
+async function parseLogs(): Promise<{ executions: ExecLog[]; anchors: RawLog[] }> {
+  if (!existsSync(LOGS_DIR)) return { executions: [], anchors: [] };
+
+  const files = (await readdir(LOGS_DIR)).filter((f) => f.endsWith(".json")).sort();
+  const executions: ExecLog[] = [];
+  const anchors: RawLog[] = [];
+
+  for (const file of files) {
     const content = await readFile(path.join(LOGS_DIR, file), "utf-8");
-    const data = JSON.parse(content);
+    const data = JSON.parse(content) as RawLog;
+
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
       throw new Error(`Evento inválido em ${file}: esperado objeto`);
     }
-    logs.push(data as ExecLog);
+
+    if (!data.timestamp) {
+      throw new Error(`Campo essencial 'timestamp' ausente em ${file}`);
+    }
+
+    if (isExecutionLog(data)) {
+      validateExecution(data, file);
+      executions.push({
+        ...data,
+        session_id: deriveSessionId(file),
+        parent_event_id: null,
+        failure_type: failureType(data.exit_code),
+      });
+    } else {
+      anchors.push(data);
+    }
   }
-  return logs;
+
+  return { executions, anchors };
 }
 
 async function parseLedger(): Promise<LedgerEntry[]> {
@@ -66,8 +185,12 @@ async function parseLedger(): Promise<LedgerEntry[]> {
   });
 }
 
-function aggregate(logs: ExecLog[], ledger: LedgerEntry[]): DashboardStats {
-  const total = logs.length;
+function aggregate(
+  executions: ExecLog[],
+  anchors: RawLog[],
+  ledger: LedgerEntry[],
+): DashboardStats {
+  const total = executions.length;
 
   if (total === 0) {
     return {
@@ -76,8 +199,13 @@ function aggregate(logs: ExecLog[], ledger: LedgerEntry[]): DashboardStats {
       falhas: 0,
       taxa_verificacao_pct: 0,
       tempo_medio_ms: 0,
+      p50_ms: 0,
+      p95_ms: 0,
+      failure_types: {},
       comandos: {},
       linguagens: {},
+      session_count: 0,
+      anchor_events: anchors.length,
       skill_events: ledger.length,
       tokens_estimados: 0,
       ultimo_evento: null,
@@ -85,36 +213,39 @@ function aggregate(logs: ExecLog[], ledger: LedgerEntry[]): DashboardStats {
     };
   }
 
-  const sucesso = logs.filter((e) => e.exit_code === 0).length;
+  const sucesso = executions.filter((e) => e.exit_code === 0).length;
   const falhas = total - sucesso;
 
-  const durations = logs
+  const durations = executions
     .map((e) => e.duration_ms)
     .filter((d): d is number => typeof d === "number");
+
   const tempo_medio = durations.length
     ? durations.reduce((a, b) => a + b, 0) / durations.length
     : 0;
 
   const comandos: Record<string, number> = {};
   const linguagens: Record<string, number> = {};
+  const failure_types: Record<string, number> = {};
+  const sessionIds = new Set<string>();
   const timestamps: string[] = [];
 
-  for (const e of logs) {
+  for (const e of executions) {
     const cmd = e.command ?? "unknown";
     comandos[cmd] = (comandos[cmd] ?? 0) + 1;
 
     const lang = e.language ?? "unknown";
     linguagens[lang] = (linguagens[lang] ?? 0) + 1;
 
+    const ft = e.failure_type;
+    failure_types[ft] = (failure_types[ft] ?? 0) + 1;
+
+    if (e.session_id) sessionIds.add(e.session_id);
     if (e.timestamp) timestamps.push(e.timestamp);
   }
 
-  const sortedCmds = Object.fromEntries(
-    Object.entries(comandos).sort(([, a], [, b]) => b - a),
-  );
-  const sortedLangs = Object.fromEntries(
-    Object.entries(linguagens).sort(([, a], [, b]) => b - a),
-  );
+  const sorted = (r: Record<string, number>) =>
+    Object.fromEntries(Object.entries(r).sort(([, a], [, b]) => b - a));
 
   const tokens_estimados = ledger.reduce(
     (acc, e) => acc + (e.impact_estimated_tokens ?? 0),
@@ -127,8 +258,13 @@ function aggregate(logs: ExecLog[], ledger: LedgerEntry[]): DashboardStats {
     falhas,
     taxa_verificacao_pct: Math.round((sucesso / total) * 1000) / 10,
     tempo_medio_ms: Math.round(tempo_medio * 10) / 10,
-    comandos: sortedCmds,
-    linguagens: sortedLangs,
+    p50_ms: percentile(durations, 50),
+    p95_ms: percentile(durations, 95),
+    failure_types: sorted(failure_types),
+    comandos: sorted(comandos),
+    linguagens: sorted(linguagens),
+    session_count: sessionIds.size,
+    anchor_events: anchors.length,
     skill_events: ledger.length,
     tokens_estimados,
     ultimo_evento: timestamps.length ? [...timestamps].sort().at(-1)! : null,
@@ -138,15 +274,16 @@ function aggregate(logs: ExecLog[], ledger: LedgerEntry[]): DashboardStats {
 
 export async function GET() {
   try {
-    const [logs, ledger] = await Promise.all([parseLogs(), parseLedger()]);
-    const stats = aggregate(logs, ledger);
+    const [{ executions, anchors }, ledger] = await Promise.all([
+      parseLogs(),
+      parseLedger(),
+    ]);
+    linkSkillEvents(executions, ledger);
+    const stats = aggregate(executions, anchors, ledger);
     return Response.json(stats);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return Response.json(
-      { error: message, fail_closed: true },
-      { status: 500 },
-    );
+    return Response.json({ error: message, fail_closed: true }, { status: 500 });
   }
 }
 
