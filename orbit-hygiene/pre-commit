@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# pre-commit — inspect staged blob sizes.
+# orbit-hygiene/pre-commit — inspect staged blob sizes.
 #
 # Reads the index (git cat-file -s :<path>) rather than the working
 # tree so local modifications cannot lie about size. Only ACMR paths
 # are inspected — deletions don't inflate the repo.
 #
-# Two thresholds:
-#   >5MB  → fail-closed (exit 1), blocks the commit.
-#   >1MB  → warning on stderr, commit proceeds.
-# Both thresholds evaluate every staged file; multiple offenders and
-# multiple warnings are reported together.
+# Thresholds (override via env):
+#   ORBIT_HYGIENE_MAX_BYTES   default 5242880 (5 MiB)  — fail-closed, blocks commit
+#   ORBIT_HYGIENE_WARN_BYTES  default 1048576 (1 MiB)  — warning on stderr
+#
+# Portable across macOS and Linux: bash + git only, no external deps.
 set -euo pipefail
 
-WARN_BYTES=1048576    # 1 MiB
-LIMIT_BYTES=5242880   # 5 MiB
+MAX_BYTES="${ORBIT_HYGIENE_MAX_BYTES:-5242880}"
+WARN_BYTES="${ORBIT_HYGIENE_WARN_BYTES:-1048576}"
 
 offenders=()
 warnings=()
 while IFS= read -r -d '' path; do
     size=$(git cat-file -s ":$path" 2>/dev/null || echo 0)
-    if (( size > LIMIT_BYTES )); then
+    if (( size > MAX_BYTES )); then
         offenders+=("$(printf '  %10d bytes  %s' "$size" "$path")")
     elif (( size > WARN_BYTES )); then
         warnings+=("$(printf '  %10d bytes  %s' "$size" "$path")")
@@ -28,14 +28,14 @@ done < <(git diff --cached --name-only --diff-filter=ACMR -z)
 
 if (( ${#warnings[@]} > 0 )); then
     {
-        echo "pre-commit: warning — ${#warnings[@]} staged file(s) exceed ${WARN_BYTES} bytes (1MB):"
+        echo "orbit-hygiene: warning — ${#warnings[@]} staged file(s) exceed ${WARN_BYTES} bytes:"
         printf '%s\n' "${warnings[@]}"
     } >&2
 fi
 
 if (( ${#offenders[@]} > 0 )); then
     {
-        echo "pre-commit: refused — ${#offenders[@]} staged file(s) exceed ${LIMIT_BYTES} bytes (5MB):"
+        echo "orbit-hygiene: refused — ${#offenders[@]} staged file(s) exceed ${MAX_BYTES} bytes:"
         printf '%s\n' "${offenders[@]}"
         echo
         echo "Fix: git restore --staged <file>   (or move to external storage)"
