@@ -43,6 +43,8 @@ interface LedgerEntry {
   timestamp?: string;
   impact_estimated_tokens?: number;
   parent_event_id?: string;
+  link_method?: "temporal";
+  link_confidence?: "low";
   [key: string]: unknown;
 }
 

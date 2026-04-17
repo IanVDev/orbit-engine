@@ -267,5 +267,87 @@ class TestAggregateUnit:
         assert stats["falhas"] == 2
 
 
+# ---------------------------------------------------------------------------
+# Linking temporal: todo link inferido deve ser marcado explicitamente
+# ---------------------------------------------------------------------------
+
+class TestTemporalLinking:
+    def _make_exec(self, execution_id: str, timestamp: str) -> dict:
+        return {
+            **make_log(execution_id=execution_id, timestamp=timestamp),
+            "session_id": None,
+            "parent_event_id": None,
+            "failure_type": "none",
+        }
+
+    def _make_ledger_entry(self, timestamp: str) -> dict:
+        return {"timestamp": timestamp, "impact_estimated_tokens": 10}
+
+    def test_linked_entry_has_method_and_confidence(self):
+        """Ledger entry dentro da janela de 60s deve ter link_method e link_confidence."""
+        execs = [self._make_exec("exec-001", "2026-04-01T00:00:00Z")]
+        ledger = [self._make_ledger_entry("2026-04-01T00:00:30Z")]  # 30s depois
+        p._link_skill_events(execs, ledger)
+        assert ledger[0]["parent_event_id"] == "exec-001"
+        assert ledger[0]["link_method"] == "temporal"
+        assert ledger[0]["link_confidence"] == "low"
+
+    def test_unlinked_entry_has_no_method_or_confidence(self):
+        """Ledger entry fora da janela de 60s não deve receber nenhum campo de link."""
+        execs = [self._make_exec("exec-001", "2026-04-01T00:00:00Z")]
+        ledger = [self._make_ledger_entry("2026-04-01T00:02:01Z")]  # 121s depois
+        p._link_skill_events(execs, ledger)
+        assert "parent_event_id" not in ledger[0]
+        assert "link_method" not in ledger[0]
+        assert "link_confidence" not in ledger[0]
+
+    def test_no_deterministic_link_without_marker(self):
+        """Nenhum evento com parent_event_id pode estar sem link_method."""
+        execs = [
+            self._make_exec("exec-A", "2026-04-01T00:00:00Z"),
+            self._make_exec("exec-B", "2026-04-01T00:01:00Z"),
+        ]
+        ledger = [
+            self._make_ledger_entry("2026-04-01T00:00:10Z"),
+            self._make_ledger_entry("2026-04-01T00:01:05Z"),
+            self._make_ledger_entry("2026-04-01T00:05:00Z"),  # fora da janela
+        ]
+        p._link_skill_events(execs, ledger)
+        for entry in ledger:
+            if "parent_event_id" in entry:
+                assert entry.get("link_method") == "temporal", (
+                    "parent_event_id presente sem link_method='temporal'"
+                )
+                assert entry.get("link_confidence") == "low", (
+                    "parent_event_id presente sem link_confidence='low'"
+                )
+
+    def test_real_data_all_linked_entries_marked(self):
+        """Nos dados reais, todo entry com parent_event_id deve ter os marcadores."""
+        executions, _ = p.parse_logs()
+        ledger = p.parse_ledger()
+        p._link_skill_events(executions, ledger)
+        violations = [
+            e for e in ledger
+            if "parent_event_id" in e
+            and (e.get("link_method") != "temporal" or e.get("link_confidence") != "low")
+        ]
+        assert not violations, (
+            f"{len(violations)} entries com parent_event_id sem marcadores corretos"
+        )
+
+    def test_link_confidence_is_never_high(self):
+        """link_confidence nunca pode ser 'high' — inferência temporal é sempre baixa."""
+        executions, _ = p.parse_logs()
+        ledger = p.parse_ledger()
+        p._link_skill_events(executions, ledger)
+        high_confidence = [
+            e for e in ledger if e.get("link_confidence") == "high"
+        ]
+        assert not high_confidence, (
+            f"{len(high_confidence)} entries com link_confidence='high' (proibido)"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

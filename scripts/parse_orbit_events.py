@@ -138,6 +138,8 @@ def _link_skill_events(executions: list[dict], ledger: list[dict]) -> None:
     """
     Relaciona skill events com execuções por proximidade temporal (±60s).
     Preenche parent_event_id no ledger entry quando há correspondência única.
+    Todo link gerado aqui é marcado como inferido: link_method="temporal",
+    link_confidence="low". Nunca deve ser tratado como determinístico.
     """
     if not executions or not ledger:
         return
@@ -163,6 +165,8 @@ def _link_skill_events(executions: list[dict], ledger: list[dict]) -> None:
                 closest_id = exec_id
         if closest_id:
             entry["parent_event_id"] = closest_id
+            entry["link_method"] = "temporal"
+            entry["link_confidence"] = "low"
 
 
 def aggregate(

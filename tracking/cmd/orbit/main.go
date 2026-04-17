@@ -7,6 +7,7 @@
 //	stats         Tokens processados, execuções e decisões automáticas
 //	context-pack  Gera context-pack para transição entre conversas (alias: ctx)
 //	doctor        Diagnóstico de instalação e conflitos de PATH
+//	update        Atualiza o binário orbit via GitHub Releases
 //	version       Versão instalada
 //
 // Fail-closed: qualquer erro retorna exit 1.
@@ -104,6 +105,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "update":
+		if err := runUpdate(); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("orbit version %s (commit=%s build=%s)\n", Version, Commit, BuildTime)
 
@@ -127,6 +134,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  analyze       Alerta silencioso: imprime apenas se risco >= HIGH")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
+	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")
