@@ -40,6 +40,7 @@ except ImportError:
     pass  # Should never happen in Python 3
 
 from orchestrator.skill_router import ActivationDecision
+from orchestrator import compact_guard
 
 logger = logging.getLogger("orbit.client")
 
@@ -159,6 +160,44 @@ class SkillTrackingClient:
         )
 
         return self._send_event(event)
+
+    def track_activation_with_guard(
+        self,
+        decision: ActivationDecision,
+        input_text: str = "",
+        output_text: str = "",
+    ) -> tuple[TrackingResult, Optional[dict]]:
+        """
+        Wrap track_activation with the compact guard lifecycle:
+          1. snapshot(session_id, ...) antes de enviar o evento
+          2. track_activation (comportamento original, fail-closed)
+          3. detect(output_text) — se "Compacted" detectado, rehydrate
+
+        Returns (tracking_result, rehydrated_context_or_None).
+
+        Fail-closed em qualquer etapa do guard (snapshot ausente/corrompido
+        ou session_id divergente propagam CompactGuardError).
+        """
+        reason = self._extract_reason(decision) if decision.activated else ""
+        phase = ""
+        if decision.activated:
+            phase = decision.phase if isinstance(decision.phase, str) else decision.phase.value
+
+        compact_guard.snapshot(
+            session_id=self._session_id,
+            current_task=reason or "unknown",
+            objective=phase or "unknown",
+            constraints="",
+            last_output=output_text,
+        )
+
+        result = self.track_activation(decision, input_text=input_text, output_text=output_text)
+
+        rehydrated: Optional[dict] = None
+        if compact_guard.detect(output_text):
+            rehydrated = compact_guard.rehydrate(session_id=self._session_id)
+
+        return result, rehydrated
 
     def track_raw_usage(
         self,
