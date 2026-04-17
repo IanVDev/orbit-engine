@@ -69,8 +69,8 @@ mk_entry "sess-A" "2026-04-17T10:00:00.000Z" 0   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 mk_entry "sess-A" "2026-04-17T10:00:05.000Z" 100 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "/tmp/fake-repo"   >> "$LEDGER"
 
 OUT="$("$EXPLAIN" sess-A 2>&1)"
-echo "$OUT" | grep -q "HEAD ao iniciar   aaaaaaaaaaaa" || fail "case A: HEAD inicial ausente"
-echo "$OUT" | grep -q "HEAD ao encerrar  bbbbbbbbbbbb" || fail "case A: HEAD final ausente"
+echo "$OUT" | grep -q "HEAD no 1º evento   aaaaaaaaaaaa" || fail "case A: HEAD 1º evento ausente"
+echo "$OUT" | grep -q "HEAD no último evento  bbbbbbbbbbbb" || fail "case A: HEAD último evento ausente"
 echo "$OUT" | grep -q "HEAD avançou durante a sessão" || fail "case A: mensagem avançou ausente"
 echo "$OUT" | grep -qE "cd /tmp/fake-repo" || fail "case A: 'cd <repo>' ausente"
 echo "$OUT" | grep -qE "git log --oneline aaaa.*\.\.bbbb" || fail "case A: comando git log ausente"

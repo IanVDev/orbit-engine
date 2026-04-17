@@ -36,6 +36,19 @@
 
 set -uo pipefail
 
+# Pre-scan: strip --ignore-intent before positional arg extraction.
+IGNORE_INTENT=0
+_FILTERED=()
+for _a in "$@"; do
+    if [ "$_a" = "--ignore-intent" ]; then
+        IGNORE_INTENT=1
+    else
+        _FILTERED+=("$_a")
+    fi
+done
+[ "$IGNORE_INTENT" = "1" ] && set -- "${_FILTERED[@]+"${_FILTERED[@]}"}"
+unset _a _FILTERED
+
 ARG1="${1:-}"
 ARG2="${2:-}"
 ARG3="${3:-}"
@@ -62,6 +75,14 @@ uso:
         --since <ISO8601>   filtra por ultimo_ts >= valor
         --repo  <caminho>   filtra por repositório git (substring)
 
+  orbit_explain.sh --resume
+      Exibe intent pendente salvo em active_task.intent.
+      Exit 2 se nenhum intent existir (fail-closed).
+
+  orbit_explain.sh --ignore-intent <comando>
+      Ignora active_task.intent e executa <comando> normalmente.
+      Uso para debug — não limpa o intent.
+
   orbit_explain.sh -h | --help
       Esta mensagem.
 
@@ -72,15 +93,88 @@ Env:
   ORBIT_EXPLAIN_LOCAL_ONLY   "1" pula fases 2 e 3 (escopo de teste)
 
 Exemplos de investigação:
+  orbit_explain.sh --resume
   orbit_explain.sh --list --since 2026-04-17T00:00:00Z --repo /tmp/meu-repo
   orbit_explain.sh --list --repo /home/dev/project
   orbit_explain.sh drill-sessC-1776446786
 USAGE
 }
 
+# _check_and_print_intent — bloqueia execução se intent pendente existir.
+# Se IGNORE_INTENT=1 (flag --ignore-intent) → não faz nada (debug).
+# Se intent ausente → return 0 (execução normal).
+# Se intent válido → imprime banner + INTERROMPIDA e exit 3.
+# Se intent corrompido (JSON inválido) → fail-closed exit 2.
+_check_and_print_intent() {
+    [ "$IGNORE_INTENT" = "1" ] && return 0
+    local intent_path="$ORBIT_HOME/active_task.intent"
+    [ -f "$intent_path" ] || return 0
+    local rc
+    INTENT_PATH="$intent_path" python3 <<'PY'
+import json, os, sys
+path = os.environ["INTENT_PATH"]
+try:
+    with open(path, encoding="utf-8") as f:
+        intent = json.load(f)
+except (OSError, json.JSONDecodeError) as e:
+    print(f"orbit_explain: FAIL — active_task.intent corrompido: {e}", file=sys.stderr)
+    sys.exit(2)
+sid  = intent.get("session_id", "<desconhecido>")
+desc = intent.get("description", "<sem descrição>")
+at   = intent.get("written_at", "?")
+print("! INTENT PENDENTE ───────────────────────────────────────────────")
+print(f"  sessão   : {sid}")
+print(f"  descrição: {desc}")
+print(f"  desde    : {at}")
+print("─────────────────────────────────────────────────────────────────")
+print("")
+print("EXECUÇÃO INTERROMPIDA (intent ativo não reconciliado)")
+print("  Retome com: orbit_explain.sh --resume")
+print("  Debug:      orbit_explain.sh --ignore-intent <comando>")
+print("")
+PY
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        fail "active_task.intent corrompido (JSON inválido)"
+    fi
+    exit 3
+}
+
 if [ "$ARG1" = "-h" ] || [ "$ARG1" = "--help" ] || [ -z "$ARG1" ]; then
     print_help
     [ -z "$ARG1" ] && exit 2 || exit 0
+fi
+
+# --resume: exibe intent pendente ou fail-closed se não existir.
+if [ "$ARG1" = "--resume" ]; then
+    intent_path="$ORBIT_HOME/active_task.intent"
+    [ -f "$intent_path" ] || fail "nenhum intent pendente em $intent_path — nada a retomar"
+    INTENT_PATH="$intent_path" python3 <<'PY'
+import json, os, sys
+path = os.environ["INTENT_PATH"]
+try:
+    with open(path, encoding="utf-8") as f:
+        intent = json.load(f)
+except (OSError, json.JSONDecodeError) as e:
+    print(f"orbit_explain: FAIL — active_task.intent corrompido: {e}", file=sys.stderr)
+    sys.exit(2)
+sid    = intent.get("session_id", "<desconhecido>")
+desc   = intent.get("description", "<sem descrição>")
+at     = intent.get("written_at", "?")
+status = intent.get("status", "?")
+print("==================================================================")
+print("  RETOMADA DE TASK INTERROMPIDA")
+print("==================================================================")
+print(f"  session_id : {sid}")
+print(f"  descrição  : {desc}")
+print(f"  registrado : {at}")
+print(f"  status     : {status}")
+print("")
+print("  Ação imediata: retomar a task acima antes de qualquer outra.")
+print("  Ao concluir: --action reconcile no entrypoint limpa este intent.")
+print("==================================================================")
+PY
+    exit $?
 fi
 
 # --list [--since <ISO>] [--repo <caminho>]
@@ -115,6 +209,7 @@ if [ "$ARG1" = "--list" ]; then
         esac
     done
 
+    _check_and_print_intent
     LEDGER="$LEDGER" SINCE="$SINCE" REPO_FILTER="$REPO_FILTER" python3 <<'PY'
 import json, os
 from collections import defaultdict
@@ -169,9 +264,11 @@ for sid, evs in sess.items():
     else:
         head_range = "<sem git>"
 
-    # Repo mais frequente (ou único) para exibir abreviado.
+    # Repo: basename truncado a 18 chars pelo sufixo — sufixos costumam ser
+    # mais únicos que prefixos (ex: repos com mesmo prefixo + timestamp).
     all_repos = [e.get("git_repo") or "" for e in evs if e.get("git_repo")]
-    repo_display = os.path.basename(all_repos[0]) if all_repos else ""
+    repo_raw   = os.path.basename(all_repos[0]) if all_repos else ""
+    repo_display = ("…" + repo_raw[-17:]) if len(repo_raw) > 18 else repo_raw
 
     rows.append((last_ts, sid, len(evs), tok,
                  evs[0].get("timestamp", ""), last_ts,
@@ -189,9 +286,24 @@ if not rows:
     print(f"(nenhuma sessão com {filt})" if filt else "(ledger vazio)")
     raise SystemExit(0)
 
-print(f"{'SESSION_ID':<42}  {'EV':>3}  {'TOK':>5}  {'HEAD_RANGE':<16}  {'REPO':<20}  ULTIMO_TS")
+# Timestamps compactos: se todas as entradas são do mesmo dia, exibir
+# apenas HH:MM:SS — a data repetida é ruído. Se dias diferentes, exibir
+# YYYY-MM-DD HH:MM:SS completo.
+unique_days = {last[:10] for _, _, _, _, _, last, _, _ in rows if last}
+same_day    = len(unique_days) == 1
+def fmt_ts(ts):
+    if not ts:
+        return ""
+    return ts[11:19] if same_day else ts[:19].replace("T", " ")
+
+day_hint = f"  (data: {next(iter(unique_days))} UTC)" if same_day else ""
+ts_header = "HORA(UTC) " if same_day else "QUANDO(UTC)      "
+
+print(f"{'SESSION_ID':<42}  {'EV':>3}  {'TOK':>5}  {'HEAD_RANGE':<16}  {'REPO':<18}  {ts_header}{day_hint}")
 for _, sid, n, tok, first, last, hr, repo in rows:
-    print(f"{sid:<42}  {n:>3}  {tok:>5}  {hr:<16}  {repo:<20}  {last}")
+    print(f"{sid:<42}  {n:>3}  {tok:>5}  {hr:<16}  {repo:<18}  {fmt_ts(last)}")
+print()
+print("  ≡ HEAD estável entre eventos  |  aaa→bbb HEAD avançou entre eventos  |  <sem git> sem captura")
 print()
 parts = []
 if since:
@@ -199,7 +311,9 @@ if since:
 if repo_filter:
     parts.append(f"--repo {repo_filter}")
 suffix = " (" + ", ".join(parts) + ")" if parts else ""
-print(f"total: {len(rows)} sessões{suffix}. Use: orbit_explain.sh <session_id>")
+n_rows = len(rows)
+label = "sessão" if n_rows == 1 else "sessões"
+print(f"total: {n_rows} {label}{suffix}. Use: orbit_explain.sh <session_id>")
 PY
     exit 0
 fi
@@ -235,7 +349,7 @@ print_scope_block() {
     echo "       no skill_event_hash da versão atual)."
     echo "  [--] Existência desta sessão em prova externa independente."
     if [ -n "$GIT_FIRST" ]; then
-        echo "  [--] Que os commits entre HEAD inicial e final foram CAUSADOS"
+        echo "  [--] Que os commits entre o 1º e último evento rastreado foram CAUSADOS"
         echo "       por esta sessão — orbit registra correlação temporal,"
         echo "       não causalidade. git log é quem prova o que mudou."
     fi
@@ -382,7 +496,7 @@ echo "=================================================================="
 echo "  orbit explain  —  session_id=$SESSION_ID"
 echo "=================================================================="
 echo ""
-echo "SUMARIO              eventos=$LOCAL_COUNT  tokens=$TOTAL_TOK  duração=${DURATION_S}s"
+echo "SUMARIO              eventos=$LOCAL_COUNT  tokens_est=$TOTAL_TOK  intervalo=${DURATION_S}s (entre eventos rastreados)"
 echo "                     primeiro=$FIRST_TS"
 echo "                     ultimo  =$LAST_TS"
 echo ""
@@ -401,24 +515,24 @@ if [ -n "$GIT_FIRST" ] || [ -n "$GIT_LAST" ] || [ -n "$GIT_REPO" ]; then
         echo "  repo              $GIT_REPO"
     fi
     if [ -n "$GIT_FIRST" ]; then
-        echo "  HEAD ao iniciar   ${GIT_FIRST:0:12}"
+        echo "  HEAD no 1º evento   ${GIT_FIRST:0:12}"
     else
-        echo "  HEAD ao iniciar   <não capturado>"
+        echo "  HEAD no 1º evento   <não capturado>"
     fi
     if [ -n "$GIT_LAST" ]; then
-        echo "  HEAD ao encerrar  ${GIT_LAST:0:12}"
+        echo "  HEAD no último evento  ${GIT_LAST:0:12}"
     else
-        echo "  HEAD ao encerrar  <não capturado>"
+        echo "  HEAD no último evento  <não capturado>"
     fi
     if [ -n "$GIT_FIRST" ] && [ -n "$GIT_LAST" ] && [ "$GIT_FIRST" != "$GIT_LAST" ]; then
         echo "  HEAD avançou durante a sessão."
         echo ""
-        echo "  Para investigar o que mudou nesta sessão:"
+        echo "  Para investigar o que mudou entre os eventos rastreados:"
         echo "    cd ${GIT_REPO:-.}"
         echo "    git log --oneline ${GIT_FIRST:0:12}..${GIT_LAST:0:12}"
         echo "    git diff          ${GIT_FIRST:0:12} ${GIT_LAST:0:12}"
     elif [ -n "$GIT_FIRST" ] && [ "$GIT_FIRST" = "$GIT_LAST" ]; then
-        echo "  HEAD não avançou — nenhum commit publicado durante a sessão."
+        echo "  HEAD não avançou entre eventos rastreados."
         echo "  (mudanças podem existir em working tree/stash; verifique separadamente)"
     fi
     echo ""
@@ -437,6 +551,7 @@ if [ "$LOCAL_ONLY" = "1" ]; then
     echo "[3/3] METRICA AGREGADA     pulado"
     echo ""
     print_scope_block "local-only"
+    _check_and_print_intent
     echo "Status: OK (local-only)"
     exit 0
 fi
@@ -469,5 +584,6 @@ echo "[3/3] CONTEXTO GLOBAL      $QUERY = $VALUE  (todas as sessões; não compa
 echo "                           com esta sessão — valor apenas de contexto)"
 echo ""
 print_scope_block "full"
+_check_and_print_intent
 echo "Status: OK (evidência local validada; não ancorado)"
 exit 0
