@@ -83,6 +83,10 @@ uso:
       Ignora active_task.intent e executa <comando> normalmente.
       Uso para debug — não limpa o intent.
 
+  orbit_explain.sh --verify-intent-log
+      Verifica integridade da cadeia de hash em intent_overrides.jsonl.
+      Exit 0 se íntegro, exit 2 se corrompido ou arquivo ausente.
+
   orbit_explain.sh -h | --help
       Esta mensagem.
 
@@ -246,6 +250,82 @@ print("")
 print("  Ação imediata: retomar a task acima antes de qualquer outra.")
 print("  Ao concluir: --action reconcile no entrypoint limpa este intent.")
 print("==================================================================")
+PY
+    exit $?
+fi
+
+# --verify-intent-log: verifica integridade da cadeia de hash em intent_overrides.jsonl.
+# Exit 0 se íntegro, exit 2 se corrompido ou arquivo ausente.
+# Entradas legadas (sem campo "hash") são puladas — cadeia reinicia a partir delas.
+if [ "$ARG1" = "--verify-intent-log" ]; then
+    log_path="$ORBIT_HOME/intent_overrides.jsonl"
+    [ -f "$log_path" ] || fail "log não encontrado: $log_path"
+    LOG_PATH="$log_path" python3 <<'PY'
+import hashlib, json, os, sys
+
+log_path = os.environ["LOG_PATH"]
+with open(log_path, encoding="utf-8") as f:
+    raw_lines = [l.strip() for l in f if l.strip()]
+
+print("VERIFY intent_overrides.jsonl")
+print(f"  arquivo: {log_path}")
+
+if not raw_lines:
+    print("  (arquivo vazio — nenhuma entrada)")
+    print("")
+    print("Status: ÍNTEGRO (0 entradas)")
+    sys.exit(0)
+
+entries = []
+for i, line in enumerate(raw_lines, 1):
+    try:
+        entries.append(json.loads(line))
+    except json.JSONDecodeError as e:
+        print(f"\nFAIL: linha {i} não é JSON válido: {e}", file=sys.stderr)
+        sys.exit(2)
+
+checked = 0
+skipped = 0
+for i, entry in enumerate(entries):
+    stored_hash = entry.get("hash", "")
+    if not stored_hash:
+        skipped += 1
+        continue  # entrada legada sem hash — pular, cadeia reinicia
+
+    prev_hash = entry.get("prev_hash", "")
+
+    # Recomputa: sha256(prev_hash + canonical_json_sem_hash)
+    entry_for_hash = {k: v for k, v in entry.items() if k != "hash"}
+    entry_json     = json.dumps(entry_for_hash, separators=(",", ":"), sort_keys=True)
+    recomputed     = hashlib.sha256((prev_hash + entry_json).encode()).hexdigest()
+
+    if recomputed != stored_hash:
+        print(f"\nCHAIN BROKEN — entrada {i+1}: hash diverge")
+        print(f"  armazenado  : {stored_hash[:32]}...")
+        print(f"  recomputado : {recomputed[:32]}...")
+        print("")
+        print("Status: CORROMPIDO")
+        sys.exit(2)
+
+    # Encadeamento: prev_hash deve igualar hash da entrada anterior.
+    if i > 0:
+        prev_entry_hash = entries[i-1].get("hash", "")
+        if prev_hash != prev_entry_hash:
+            print(f"\nCHAIN BROKEN — entrada {i+1}: prev_hash não corresponde ao hash anterior")
+            print(f"  prev_hash esperado : {prev_entry_hash[:32]}...")
+            print(f"  prev_hash presente : {prev_hash[:32]}...")
+            print("")
+            print("Status: CORROMPIDO")
+            sys.exit(2)
+
+    checked += 1
+
+print(f"  entradas   : {len(entries)}")
+print(f"  verificadas: {checked}")
+if skipped:
+    print(f"  legadas    : {skipped} (sem hash, puladas — cadeia reiniciou)")
+print("")
+print("Status: ÍNTEGRO")
 PY
     exit $?
 fi
