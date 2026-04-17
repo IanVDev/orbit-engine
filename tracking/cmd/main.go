@@ -63,6 +63,8 @@ func main() {
 	tracking.RegisterSecurityMetrics(prometheus.DefaultRegisterer)
 	// Register value-observability metrics (perceived_value, returned, accepted, ignored).
 	tracking.RegisterValueMetrics(prometheus.DefaultRegisterer)
+	// Register product-layer counters (proofs_generated, quickstart_completed, verify_*).
+	tracking.RegisterProductMetrics(prometheus.DefaultRegisterer)
 	// Register model-control metrics (override_total, control_mode gauge).
 	tracking.RegisterModelControlMetrics(prometheus.DefaultRegisterer)
 	// Register token budget metrics (spent_total, per_call histogram, remaining gauge, blocked_total).

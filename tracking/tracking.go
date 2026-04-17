@@ -599,6 +599,12 @@ func TrackSkillEvent(event SkillEvent) error {
 	// 5. Count every successfully processed event.
 	realUsageTotal.Inc()
 
+	// 5b. Product-layer counter: one accepted event == one proof minted.
+	//     EventHash is computed upstream (SessionTracker.RecordEvent) or by
+	//     TrackHandler callers; either way, a successful TrackSkillEvent
+	//     means a proof has been produced and recorded.
+	RecordProofGenerated()
+
 	// 6. Record user-perceived value from suggestion engagement data.
 	//    Fail-closed: if classification is not possible (no suggestions), nothing happens.
 	RecordEventValue(event)

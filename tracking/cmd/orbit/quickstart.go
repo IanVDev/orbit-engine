@@ -80,8 +80,10 @@ func runQuickstart(host string) error {
 	printStep(3, 3, "Verificando proof...")
 	recomputed := tracking.ComputeHash(sessionID, now.Time, tokens)
 	if proof != recomputed {
+		tracking.RecordVerifyFailure()
 		return fmt.Errorf("proof inválido: esperado=%s obtido=%s", recomputed, proof)
 	}
+	tracking.RecordVerifySuccess()
 	fmt.Printf("      ✓  proof válido (sha256 verificado)\n")
 
 	// ── Sumário ─────────────────────────────────────────────────────────
@@ -96,6 +98,9 @@ func runQuickstart(host string) error {
 	fmt.Println()
 	PrintTip("Próximo passo → orbit stats")
 	fmt.Println()
+
+	// Product-layer counter: a full, verified onboarding run just happened.
+	tracking.RecordQuickstartCompleted()
 	return nil
 }
 
@@ -109,6 +114,7 @@ func startEmbedded() (addr string, srv *http.Server, err error) {
 	tracking.RegisterMetrics(reg)
 	tracking.RegisterSecurityMetrics(reg)
 	tracking.RegisterValueMetrics(reg)
+	tracking.RegisterProductMetrics(reg)
 	tracking.RegisterModelControlMetrics(reg)
 	tracking.RegisterTokenBudgetMetrics(reg)
 	tracking.RegisterTokenReconcileMetrics(reg)
