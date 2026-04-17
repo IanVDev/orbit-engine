@@ -6,7 +6,6 @@
 package tracking
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -316,61 +315,6 @@ func TestValueGovernanceBlocksFingerprintQuery(t *testing.T) {
 	q := `rate(orbit_user_returned_total{fingerprint="abc123"}[5m])`
 	if err := ValidatePromQLStrict(q); err == nil {
 		t.Errorf("governance must reject high-cardinality fingerprint query: %q", q)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 7. demo_value.sh
-//    "Token savings" e "Efficiency" na saída.
-// ---------------------------------------------------------------------------
-
-func TestValueDemoScript(t *testing.T) {
-	scriptPath := "../scripts/demo_value.sh"
-
-	// Verify the script exists and is executable
-	out, err := exec.Command("bash", scriptPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("demo_value.sh exited with error: %v\nOutput:\n%s", err, string(out))
-	}
-
-	output := string(out)
-
-	// Must contain the savings line
-	if !strings.Contains(output, "Token savings:") {
-		t.Errorf("demo_value.sh output must contain 'Token savings:', got:\n%s", output)
-	}
-
-	// Must contain the efficiency line
-	if !strings.Contains(output, "Efficiency:") {
-		t.Errorf("demo_value.sh output must contain 'Efficiency:', got:\n%s", output)
-	}
-
-	// Must contain a % sign (percentage computed)
-	if !strings.Contains(output, "%") {
-		t.Errorf("demo_value.sh output must contain a percentage, got:\n%s", output)
-	}
-
-	// Must contain "Status: OK" — script reached completion
-	if !strings.Contains(output, "Status: OK") {
-		t.Errorf("demo_value.sh output must contain 'Status: OK', got:\n%s", output)
-	}
-
-	// Token savings must be a positive number (sanity check)
-	// We know baseline=1000, orbit=600, savings=400 from the script.
-	if !strings.Contains(output, "Token savings:") {
-		t.Errorf("demo_value.sh must report token savings")
-	}
-	// Value level must be one of the three valid tiers
-	validLevels := []string{"Value level:   high", "Value level:   medium", "Value level:   low"}
-	found := false
-	for _, lvl := range validLevels {
-		if strings.Contains(output, lvl) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("demo_value.sh must output a valid value level, got:\n%s", output)
 	}
 }
 

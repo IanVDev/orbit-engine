@@ -36,7 +36,7 @@
 
 set -uo pipefail
 
-SESSION_ID="${1:-}"
+ARG1="${1:-}"
 ORBIT_HOME="${ORBIT_HOME:-$HOME/.orbit}"
 LEDGER="$ORBIT_HOME/client_ledger.jsonl"
 BACKEND="${ORBIT_BACKEND_URL:-http://localhost:9100}"
@@ -44,6 +44,52 @@ GATEWAY="${ORBIT_GATEWAY_URL:-http://localhost:9091}"
 LOCAL_ONLY="${ORBIT_EXPLAIN_LOCAL_ONLY:-0}"
 
 fail() { echo "orbit_explain: FAIL — $*" >&2; exit 2; }
+
+# --list — imprime tabela de sessões presentes no ledger. Resolve a fricção
+# "qual session_id eu passo pro explain?" sem virar um subcomando separado.
+if [ "$ARG1" = "--list" ]; then
+    [ -f "$LEDGER" ] || fail "ledger não encontrado: $LEDGER"
+    LEDGER="$LEDGER" python3 <<'PY'
+import json, os
+from collections import defaultdict
+
+path = os.environ["LEDGER"]
+sess = defaultdict(list)
+with open(path, "r", encoding="utf-8") as f:
+    for raw in f:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            e = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        sid = e.get("session_id")
+        if sid:
+            sess[sid].append(e)
+
+if not sess:
+    print("(ledger vazio)")
+    raise SystemExit(0)
+
+rows = []
+for sid, evs in sess.items():
+    evs.sort(key=lambda x: x.get("timestamp", ""))
+    tok = sum(int(x.get("impact_estimated_tokens", 0)) for x in evs)
+    rows.append((evs[-1].get("written_at", ""), sid, len(evs), tok,
+                 evs[0].get("timestamp", ""), evs[-1].get("timestamp", "")))
+rows.sort(reverse=True)
+
+print(f"{'SESSION_ID':<40}  {'EVENTOS':>7}  {'TOKENS':>7}  PRIMEIRO_TS                ULTIMO_TS")
+for _, sid, n, tok, first, last in rows:
+    print(f"{sid:<40}  {n:>7}  {tok:>7}  {first:<25}  {last}")
+print()
+print(f"total: {len(rows)} sessões. Use: orbit_explain.sh <session_id>")
+PY
+    exit 0
+fi
+
+SESSION_ID="$ARG1"
 
 # print_scope_block <mode>  — imprime o que foi verificado e o que NÃO foi.
 # mode: "full" (todas as 3 fases) | "local-only" (fase 1 apenas).
@@ -57,6 +103,10 @@ print_scope_block() {
     echo "  [OK] $LOCAL_COUNT eventos deste session_id existem no ledger"
     echo "  [OK] sha256(session_id|timestamp|impact_estimated_tokens) de"
     echo "       cada evento bate com skill_event_hash armazenado"
+    if [ -n "$GIT_FIRST" ]; then
+        echo "  [OK] git HEAD capturado no momento de cada evento — permite"
+        echo "       correlação externa via git log (ver bloco ARTEFATO)"
+    fi
     if [ "$mode" = "full" ]; then
         echo "  [OK] backend orbit-engine responde em $BACKEND/health"
         echo "  [OK] recording rule $QUERY retorna valor agregado"
@@ -69,6 +119,11 @@ print_scope_block() {
     echo "  [--] Ordem cronológica dos eventos (prev_hash não é encadeado"
     echo "       no skill_event_hash da versão atual)."
     echo "  [--] Existência desta sessão em prova externa independente."
+    if [ -n "$GIT_FIRST" ]; then
+        echo "  [--] Que os commits entre HEAD inicial e final foram CAUSADOS"
+        echo "       por esta sessão — orbit registra correlação temporal,"
+        echo "       não causalidade. git log é quem prova o que mudou."
+    fi
     echo ""
     echo "PROXIMO PASSO (prova soberana):"
     echo "  orbit anchor $SESSION_ID   # publica batch_hash em AURYA"
@@ -151,7 +206,25 @@ for idx, (lineno, e) in enumerate(events, 1):
         )
 
 print("\n".join(out_lines))
-print(f"__SUMMARY__ count={len(events)} bad={bad}")
+first_ts = events[0][1].get("timestamp", "")
+last_ts = events[-1][1].get("timestamp", "")
+total_tok = sum(int(e.get("impact_estimated_tokens", 0)) for _, e in events)
+
+# Git correlation: primeiro e ultimo HEAD observados na sessao. Campos
+# podem estar ausentes (ledger antigo) ou vazios (sessao fora de git repo).
+first_git_head = events[0][1].get("git_head", "") or ""
+last_git_head = events[-1][1].get("git_head", "") or ""
+# Repo: assume estavel dentro de uma sessao; primeiro nao-vazio vence.
+git_repo = ""
+for _, e in events:
+    r = e.get("git_repo", "") or ""
+    if r:
+        git_repo = r
+        break
+
+print(f"__SUMMARY__ count={len(events)} bad={bad} "
+      f"first={first_ts} last={last_ts} tokens={total_tok}")
+print(f"__GIT__ repo={git_repo} first={first_git_head} last={last_git_head}")
 if bad > 0:
     sys.exit(2)
 PY
@@ -165,16 +238,76 @@ fi
 
 SUMMARY=$(printf '%s\n' "$LOCAL_REPORT" | grep '^__SUMMARY__' | head -1)
 LOCAL_COUNT=$(printf '%s' "$SUMMARY" | sed -n 's/.*count=\([0-9]*\).*/\1/p')
-REPORT_BODY=$(printf '%s\n' "$LOCAL_REPORT" | grep -v '^__SUMMARY__')
+FIRST_TS=$(printf '%s' "$SUMMARY"    | sed -n 's/.*first=\([^ ]*\).*/\1/p')
+LAST_TS=$(printf '%s' "$SUMMARY"     | sed -n 's/.*last=\([^ ]*\).*/\1/p')
+TOTAL_TOK=$(printf '%s' "$SUMMARY"   | sed -n 's/.*tokens=\([0-9]*\).*/\1/p')
+
+GIT_LINE=$(printf '%s\n' "$LOCAL_REPORT" | grep '^__GIT__' | head -1)
+GIT_REPO=$(printf '%s' "$GIT_LINE"       | sed -n 's/.*repo=\([^ ]*\).*/\1/p')
+GIT_FIRST=$(printf '%s' "$GIT_LINE"      | sed -n 's/.*first=\([^ ]*\).*/\1/p')
+GIT_LAST=$(printf '%s' "$GIT_LINE"       | sed -n 's/.*last=\([^ ]*\).*/\1/p')
+
+REPORT_BODY=$(printf '%s\n' "$LOCAL_REPORT" | grep -v '^__SUMMARY__' | grep -v '^__GIT__')
+
+# Duração em segundos (0 se só houver 1 evento ou se timestamps quebrarem).
+DURATION_S=$(FIRST="$FIRST_TS" LAST="$LAST_TS" python3 -c '
+import os
+from datetime import datetime
+def p(s):
+    s = s.replace("Z", "+00:00")
+    return datetime.fromisoformat(s)
+try:
+    d = (p(os.environ["LAST"]) - p(os.environ["FIRST"])).total_seconds()
+    print(f"{d:.1f}")
+except Exception:
+    print("0.0")
+' 2>/dev/null)
 
 echo "=================================================================="
 echo "  orbit explain  —  session_id=$SESSION_ID"
 echo "=================================================================="
 echo ""
+echo "SUMARIO              eventos=$LOCAL_COUNT  tokens=$TOTAL_TOK  duração=${DURATION_S}s"
+echo "                     primeiro=$FIRST_TS"
+echo "                     ultimo  =$LAST_TS"
+echo ""
 echo "[1/3] LEDGER LOCAL   $LEDGER"
 printf '%s\n' "$REPORT_BODY"
 echo "      integridade: OK ($LOCAL_COUNT eventos)"
 echo ""
+
+# Bloco ARTEFATO — correlação com estado do repositório git ao tempo da
+# ativação. Não infere causalidade: apenas mostra qual HEAD estava corrente
+# quando cada evento foi gravado. A verificação do que mudou é do usuário,
+# via `git log`.
+if [ -n "$GIT_FIRST" ] || [ -n "$GIT_LAST" ] || [ -n "$GIT_REPO" ]; then
+    echo "ARTEFATO CORRELACIONADO (git)"
+    if [ -n "$GIT_REPO" ]; then
+        echo "  repo        $GIT_REPO"
+    fi
+    if [ -n "$GIT_FIRST" ]; then
+        echo "  HEAD inicial  ${GIT_FIRST:0:12}  (no 1º evento da sessão)"
+    else
+        echo "  HEAD inicial  <não capturado>"
+    fi
+    if [ -n "$GIT_LAST" ]; then
+        echo "  HEAD final    ${GIT_LAST:0:12}  (no último evento)"
+    else
+        echo "  HEAD final    <não capturado>"
+    fi
+    if [ -n "$GIT_FIRST" ] && [ -n "$GIT_LAST" ] && [ "$GIT_FIRST" != "$GIT_LAST" ]; then
+        echo "  HEAD avançou durante a sessão. Inspecione os commits com:"
+        echo "    git -C ${GIT_REPO:-.} log --oneline $GIT_FIRST..$GIT_LAST"
+    elif [ -n "$GIT_FIRST" ] && [ "$GIT_FIRST" = "$GIT_LAST" ]; then
+        echo "  HEAD não avançou durante a sessão"
+    fi
+    echo ""
+else
+    echo "ARTEFATO CORRELACIONADO (git)"
+    echo "  <não capturado — ledger gravado antes da captura git, ou"
+    echo "   ativações ocorreram fora de um repositório>"
+    echo ""
+fi
 
 # ---------------------------------------------------------------------------
 # Fase 2 e 3 — backend + métrica agregada
@@ -212,7 +345,8 @@ total = sum(float(x["value"][1]) for x in r) if r else 0.0
 print(int(total))
 ' 2>/dev/null) || fail "gateway $GATEWAY retornou resposta inválida: ${RAW:0:120}"
 
-echo "[3/3] METRICA AGREGADA     $QUERY = $VALUE  (via $GATEWAY)"
+echo "[3/3] CONTEXTO GLOBAL      $QUERY = $VALUE  (todas as sessões; não compara"
+echo "                           com esta sessão — valor apenas de contexto)"
 echo ""
 print_scope_block "full"
 echo "Status: OK (evidência local validada; não ancorado)"
