@@ -44,6 +44,10 @@ type RunResult struct {
 // runRun executa o comando fornecido e exibe o resultado com proof.
 // Se jsonMode==true, emite JSON estruturado em vez de texto colorido.
 func runRun(args []string, jsonMode bool) error {
+	if err := enforceRuntimePathIntegrity(); err != nil {
+		return err
+	}
+
 	if len(args) == 0 {
 		return fmt.Errorf(
 			"uso: orbit run [--json] <comando> [args...]\n\n" +

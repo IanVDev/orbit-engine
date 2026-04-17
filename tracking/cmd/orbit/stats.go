@@ -48,6 +48,10 @@ var metricsPanel = []displayMetric{
 // Se share=true, exibe apenas o snippet de compartilhamento e retorna sem
 // acessar o servidor (dados puramente locais).
 func runStats(host string, share bool) error {
+	if err := enforceRuntimePathIntegrity(); err != nil {
+		return err
+	}
+
 	PrintSection("Orbit Stats")
 	fmt.Println()
 
