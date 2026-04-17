@@ -39,6 +39,9 @@ type RunResult struct {
 	SessionID   string   `json:"session_id"`
 	Timestamp   string   `json:"timestamp"`
 	OutputBytes int64    `json:"output_bytes"`
+	Event       string   `json:"event"`
+	Decision    string   `json:"decision"`
+	Reason      string   `json:"decision_reason,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
@@ -115,6 +118,13 @@ func runRun(args []string, jsonMode bool) error {
 
 	// ── Montagem do resultado ─────────────────────────────────────────────
 
+	// ── Decision engine (MVP) ─────────────────────────────────────────────
+	// Classifica o comando e avalia a próxima ação. Fail-closed: se a
+	// classificação não reconhecer o comando, Decide retorna ActionNone
+	// e o fluxo original de orbit run segue inalterado.
+	event := ClassifyCommand(cmdName, cmdArgs)
+	decision := Decide(event, exitCode)
+
 	result := RunResult{
 		Command:     cmdName,
 		Args:        cmdArgs,
@@ -124,6 +134,9 @@ func runRun(args []string, jsonMode bool) error {
 		SessionID:   sessionID,
 		Timestamp:   ts.Time.Format(time.RFC3339),
 		OutputBytes: outputBytes,
+		Event:       string(event),
+		Decision:    string(decision.Action),
+		Reason:      decision.Reason,
 	}
 
 	if jsonMode {
@@ -156,6 +169,11 @@ func runRun(args []string, jsonMode bool) error {
 	fmt.Println("  ✨ proof generated")
 	PrintKV("Session:", sessionID)
 	PrintKV("Timestamp:", ts.Time.Format(time.RFC3339))
+	PrintKV("Event:", string(event))
+	PrintKV("Decision:", string(decision.Action))
+	if decision.Action != ActionNone {
+		PrintTip("Decision: " + decision.Reason)
+	}
 	PrintDivider()
 	fmt.Println()
 
