@@ -1,0 +1,124 @@
+name: release
+
+# Dispara ao empurrar uma tag começando com v (ex.: v1.0.0, v1.2.3-rc1).
+# Fail-closed: qualquer falha em build, validação, shasum ou upload aborta
+# o release inteiro — o GitHub Release não é publicado sem todos os assets.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tracking/go.mod
+          cache-dependency-path: tracking/go.sum
+
+      - name: resolve build metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "version=${VERSION}"       >> "${GITHUB_OUTPUT}"
+          echo "commit=${COMMIT}"         >> "${GITHUB_OUTPUT}"
+          echo "build_time=${BUILD_TIME}" >> "${GITHUB_OUTPUT}"
+
+      - name: build binary
+        working-directory: tracking
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          OUT="../dist/orbit-${{ steps.meta.outputs.version }}-${GOOS}-${GOARCH}"
+          LDFLAGS="-s -w \
+            -X main.Version=${{ steps.meta.outputs.version }} \
+            -X main.Commit=${{ steps.meta.outputs.commit }} \
+            -X main.BuildTime=${{ steps.meta.outputs.build_time }}"
+          go build -trimpath -ldflags "${LDFLAGS}" -o "${OUT}" ./cmd/orbit
+          test -x "${OUT}"
+
+      - name: validate binary (linux/amd64 only — runner arch)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          set -euo pipefail
+          BIN="dist/orbit-${{ steps.meta.outputs.version }}-linux-amd64"
+          OUT="$(ORBIT_SKIP_GUARD=1 "${BIN}" version)"
+          echo "${OUT}"
+          echo "${OUT}" | grep -F "${{ steps.meta.outputs.version }}" \
+            || { echo "::error::binário não reporta a tag ${{ steps.meta.outputs.version }}"; exit 1; }
+          echo "${OUT}" | grep -F "commit=${{ steps.meta.outputs.commit }}" \
+            || { echo "::error::binário não reporta commit=${{ steps.meta.outputs.commit }}"; exit 1; }
+
+      - name: generate SHA256
+        run: |
+          set -euo pipefail
+          cd dist
+          BIN="orbit-${{ steps.meta.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          sha256sum "${BIN}" > "${BIN}.sha256"
+          cat "${BIN}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/orbit-*-${{ matrix.goos }}-${{ matrix.goarch }}
+            dist/orbit-*-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: list assets
+        run: ls -la dist/
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/orbit-*-linux-amd64
+            dist/orbit-*-linux-amd64.sha256
+            dist/orbit-*-linux-arm64
+            dist/orbit-*-linux-arm64.sha256
+            dist/orbit-*-darwin-amd64
+            dist/orbit-*-darwin-amd64.sha256
+            dist/orbit-*-darwin-arm64
+            dist/orbit-*-darwin-arm64.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true

@@ -68,6 +68,31 @@ DO NOT DO NOW
 
 ---
 
+## Install (CLI binary)
+
+Pre-built binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` are published on every tagged release.
+
+```bash
+# pick your platform
+VERSION="v1.0.0"
+OS="darwin"   # or: linux
+ARCH="arm64"  # or: amd64
+
+BASE="https://github.com/IanVDev/orbit-engine/releases/download/${VERSION}"
+BIN="orbit-${VERSION}-${OS}-${ARCH}"
+
+# download + verify + install
+curl -fsSLo "${BIN}" "${BASE}/${BIN}"
+curl -fsSLo "${BIN}.sha256" "${BASE}/${BIN}.sha256"
+sha256sum -c "${BIN}.sha256"
+chmod +x "${BIN}"
+sudo install -m 0755 "${BIN}" /usr/local/bin/orbit
+
+orbit version  # expects: orbit version v1.0.0 (commit=... build=...)
+```
+
+Fail-closed: `sha256sum -c` aborts if the binary does not match the published checksum. Do not skip it.
+
 ## Usage
 
 ### Claude Code
