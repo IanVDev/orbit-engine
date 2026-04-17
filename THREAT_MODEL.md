@@ -25,12 +25,15 @@
 | **Tipo** | Tampering / Spoofing |
 | **Vetor** | POST `/track` com JSON manipulado |
 | **Impacto** | Métricas corrompidas, falso positivo de tokens economizados |
-| **Mitigação** | ✅ IMPLEMENTADA |
+| **Mitigação** | ✅ IMPLEMENTADA (MITIGADA) |
 | **Código** | `tracking.go:Validate()` — rejeita event_type vazio, session_id vazio, mode inválido |
 | **Código** | `tracking.go:FlexTime.UnmarshalJSON()` — rejeita timestamps sem timezone, futuros >5min, passados >24h |
+| **Código** | `security.go:ValidateHMAC()` — HMAC-SHA256 sobre payload via header `X-Orbit-Signature` |
+| **Código** | `realusage.go:151` — gate HMAC fail-closed antes de qualquer decode/dedupe |
+| **Código** | `security.go:SetHMACSecret()` — bootstrap fail-closed em `ORBIT_ENV=production` quando `ORBIT_HMAC_SECRET` está ausente |
 | **Teste** | `tracking_test.go:TestTrackFailClosed`, `TestFlexTimeRejectsNoTimezone`, `TestFlexTimeRejectsInvalid` |
-| **Gap** | ⚠️ Sem autenticação no /track — qualquer processo local pode injetar eventos |
-| **Remediação** | P3 backlog: bearer token ou mTLS |
+| **Teste** | `security_init_test.go:TestSecurity_FailClosedOnMissingHMACInProduction` — subprocess confirma abort em produção sem segredo |
+| **Gap** | Nenhum — autenticação no /track exigida em produção, opcional em dev para backward-compat |
 
 ### T2 — Bypass de governança PromQL
 
@@ -118,7 +121,6 @@
 
 | Gap | Ameaça | Severidade | Prioridade | Remediação |
 | --- | ------ | ---------- | ---------- | ---------- |
-| Sem auth no /track | T1 | Média | P3 | Bearer token |
 | Prometheus acessível diretamente | T2 | Média | P1 (doc) | Bind localhost + doc |
 | Sem rate limiting | T4 | Baixa | P2 | Middleware |
 | Sem dedup de eventos | T6 | Baixa | P3 | Hash set com TTL |
