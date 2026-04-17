@@ -104,6 +104,33 @@ func PrintDivider() {
 	fmt.Println(col(ansiDim, strings.Repeat("─", 49)))
 }
 
+// printActiveHeartbeat emits a single-line status signal to stderr. The
+// wording makes the usage model explicit: Orbit does NOT run
+// automatically in the background; tracking only happens inside an
+// `orbit run <cmd>` invocation. Outside of that, Orbit is idle/ready.
+//
+// Goes to stderr because it is status, not content — piping stdout to
+// a file or to `--json` consumers is unaffected.
+//
+// Format is stable; changing it is a UX-observable change.
+func printActiveHeartbeat() {
+	fmt.Fprintln(os.Stderr, col(ansiDim, "orbit: ● ready (use 'orbit run' to track)"))
+}
+
+// printTrackingStart emits the "this run is being tracked" status line
+// at the top of an `orbit run` invocation. Stderr, so `--json` stdout
+// stays clean.
+func printTrackingStart() {
+	fmt.Fprintln(os.Stderr, col(ansiDim, "orbit: tracking this execution"))
+}
+
+// printExecutionRecorded emits the closing status line of an `orbit run`
+// invocation, signalling the execution was persisted (proof + tracking
+// event). Stderr, same reasoning as printTrackingStart.
+func printExecutionRecorded() {
+	fmt.Fprintln(os.Stderr, col(ansiDim, "orbit: execution recorded"))
+}
+
 // PrintJSON serializa v como JSON indentado e escreve em stdout usando
 // o contrato de emissão atômica (ver writeJSONAtomic).
 func PrintJSON(v any) error {

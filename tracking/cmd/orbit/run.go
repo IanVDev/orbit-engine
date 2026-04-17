@@ -19,7 +19,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,6 +59,9 @@ func runRun(args []string, jsonMode bool) error {
 
 	sessionID := fmt.Sprintf("run-%d", time.Now().UnixNano())
 	ts := tracking.NowUTC()
+
+	printActiveHeartbeat()
+	printTrackingStart()
 
 	if !jsonMode {
 		PrintSection("orbit run")
@@ -118,7 +123,13 @@ func runRun(args []string, jsonMode bool) error {
 	}
 
 	if jsonMode {
-		return PrintJSON(result)
+		// Emit the closing status line AFTER the JSON body so stderr
+		// shows: heartbeat → tracking → [JSON on stdout] → recorded.
+		if err := PrintJSON(result); err != nil {
+			return err
+		}
+		printExecutionRecorded()
+		return nil
 	}
 
 	// ── Output text ───────────────────────────────────────────────────────
@@ -138,6 +149,7 @@ func runRun(args []string, jsonMode bool) error {
 	PrintKV("Exit code:", fmt.Sprintf("%d", exitCode))
 	PrintKV("Output bytes:", fmt.Sprintf("%d", outputBytes))
 	PrintKV("Proof (sha256):", proof[:16]+"...")
+	fmt.Println("  ✨ proof generated")
 	PrintKV("Session:", sessionID)
 	PrintKV("Timestamp:", ts.Time.Format(time.RFC3339))
 	PrintDivider()
@@ -147,11 +159,46 @@ func runRun(args []string, jsonMode bool) error {
 		PrintError(fmt.Sprintf("Comando retornou exit %d", exitCode))
 		PrintTip("Verifique o output acima para detalhes do erro.")
 		fmt.Println()
+		// Even a failed exec is tracked with a proof — emit the closing
+		// status so the narrative (tracking → recorded) stays intact.
+		printExecutionRecorded()
 		return fmt.Errorf("comando %q retornou exit code %d", cmdName, exitCode)
 	}
 
 	PrintSuccess("Comando concluído com sucesso (exit 0)")
 	PrintTip("Proof registrado — use 'orbit stats' para ver métricas de execução.")
+	maybePrintRunFirstRunTip()
 	fmt.Println()
+	printExecutionRecorded()
 	return nil
+}
+
+// runFirstMarkerName is the sentinel file (inside $ORBIT_HOME) whose
+// absence signals that this is the first successful `orbit run` on this
+// machine. It is touched the first time and never read again.
+const runFirstMarkerName = ".run-first-done"
+
+// maybePrintRunFirstRunTip prints an onboarding hint after the user's
+// very first successful `orbit run`. Idempotent: after the first run, a
+// marker file in $ORBIT_HOME prevents the hint from reappearing.
+//
+// Fail-soft: any error resolving the home dir or writing the marker is
+// ignored — a missing hint is a UX regression, not a correctness issue.
+func maybePrintRunFirstRunTip() {
+	home, err := tracking.ResolveStoreHome()
+	if err != nil {
+		return
+	}
+	marker := filepath.Join(home, runFirstMarkerName)
+	if _, statErr := os.Stat(marker); statErr == nil {
+		return // not the first run
+	}
+	// Emit the hint and persist the marker. MkdirAll is required because
+	// ResolveStoreHome only resolves the path; the directory may not exist
+	// yet on a clean user install.
+	PrintTip("Primeira execução — veja também 'orbit stats' e 'orbit analyze'.")
+	if mkErr := os.MkdirAll(home, 0o700); mkErr != nil {
+		return
+	}
+	_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
 }

@@ -48,6 +48,7 @@ func runQuickstart(host string) error {
 		}()
 	}
 
+	printActiveHeartbeat()
 	fmt.Println()
 	PrintSection("orbit quickstart")
 
@@ -85,6 +86,7 @@ func runQuickstart(host string) error {
 	}
 	tracking.RecordVerifySuccess()
 	fmt.Printf("      ✓  proof válido (sha256 verificado)\n")
+	fmt.Println("      ✨ proof generated")
 
 	// ── Sumário ─────────────────────────────────────────────────────────
 	fmt.Println()
@@ -96,12 +98,44 @@ func runQuickstart(host string) error {
 	PrintKV("Proof      :", proof[:16]+"...")
 	PrintKV("Event ID   :", eventID[:12]+"...")
 	fmt.Println()
-	PrintTip("Próximo passo → orbit stats")
-	fmt.Println()
+	printHowItWorksBlock()
+	printOnboardingBlock()
 
 	// Product-layer counter: a full, verified onboarding run just happened.
 	tracking.RecordQuickstartCompleted()
 	return nil
+}
+
+// printHowItWorksBlock makes the usage model explicit, preventing the
+// common misconception that Orbit runs continuously in the background.
+// Short, stable format; appears once per quickstart completion.
+//
+//	Como o Orbit funciona:
+//	  • Orbit NÃO roda automaticamente
+//	  • Tracking acontece apenas dentro de 'orbit run <cmd>'
+//	  • Fora disso, Orbit permanece idle/ready
+func printHowItWorksBlock() {
+	fmt.Println("  Como o Orbit funciona:")
+	fmt.Println("    • Orbit NÃO roda automaticamente")
+	fmt.Println("    • Tracking acontece apenas dentro de 'orbit run <cmd>'")
+	fmt.Println("    • Fora disso, Orbit permanece idle/ready")
+	fmt.Println()
+}
+
+// printOnboardingBlock emits a short, aligned block of next-step commands
+// after quickstart completes. Kept terse on purpose — visual pollution
+// here defeats its own goal. Format is stable; any change must pass G5.
+//
+//	Próximos passos:
+//	  orbit run <cmd>     → executa comando com proof
+//	  orbit stats         → ver métricas acumuladas
+//	  orbit analyze       → alerta se risco >= HIGH
+func printOnboardingBlock() {
+	fmt.Println("  Próximos passos:")
+	fmt.Println("    orbit run <cmd>     → executa comando com proof")
+	fmt.Println("    orbit stats         → ver métricas acumuladas")
+	fmt.Println("    orbit analyze       → alerta se risco >= HIGH")
+	fmt.Println()
 }
 
 // startEmbedded inicia um tracking-server em processo (porta aleatória).
