@@ -21,8 +21,9 @@ import (
 //
 //	go build -ldflags "-X main.Version=1.0.0 -X main.Commit=abc1234" ./cmd/orbit
 var (
-	Version = "dev"
-	Commit  = "unknown"
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
 )
 
 // defaultTrackingHost é o endereço padrão do tracking-server em produção.
@@ -73,7 +74,7 @@ func main() {
 		}
 
 	case "version":
-		fmt.Printf("orbit version %s (commit=%s)\n", Version, Commit)
+		fmt.Printf("orbit version %s (commit=%s build=%s)\n", Version, Commit, BuildTime)
 
 	case "help", "--help", "-h":
 		printUsage()
