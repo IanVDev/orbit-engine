@@ -8,6 +8,11 @@
 # externa (ex.: ancoragem em cadeia imutável). NÃO substitui uma camada de
 # atestação externa.
 #
+# Separação explícita de camadas:
+#   Orbit  →  produz evidência local, reproduzível (este comando)
+#   AURYA  →  ancora evidência em sistema imutável (orbit anchor, futuro)
+# Contrato orbit→aurya: docs/ORBIT_ANCHOR_CONTRACT.md
+#
 # Fluxo (fail-closed em qualquer etapa):
 #   [1/3] LEDGER LOCAL — lê todas as entradas do session_id, recomputa
 #         sha256(session_id|timestamp|impact_estimated_tokens) e compara
@@ -39,6 +44,37 @@ GATEWAY="${ORBIT_GATEWAY_URL:-http://localhost:9091}"
 LOCAL_ONLY="${ORBIT_EXPLAIN_LOCAL_ONLY:-0}"
 
 fail() { echo "orbit_explain: FAIL — $*" >&2; exit 2; }
+
+# print_scope_block <mode>  — imprime o que foi verificado e o que NÃO foi.
+# mode: "full" (todas as 3 fases) | "local-only" (fase 1 apenas).
+print_scope_block() {
+    local mode="$1"
+    echo "=================================================================="
+    echo "  ESCOPO DESTA VERIFICACAO"
+    echo "=================================================================="
+    echo ""
+    echo "VERIFICADO (reproduzível a partir dos arquivos locais):"
+    echo "  [OK] $LOCAL_COUNT eventos deste session_id existem no ledger"
+    echo "  [OK] sha256(session_id|timestamp|impact_estimated_tokens) de"
+    echo "       cada evento bate com skill_event_hash armazenado"
+    if [ "$mode" = "full" ]; then
+        echo "  [OK] backend orbit-engine responde em $BACKEND/health"
+        echo "  [OK] recording rule $QUERY retorna valor agregado"
+    fi
+    echo ""
+    echo "NAO VERIFICADO (fora do escopo deste comando):"
+    echo "  [--] Que $LEDGER não foi reescrito — é mutável pelo usuário"
+    echo "       local. Orbit registra evidência; não ancora em sistema"
+    echo "       externo imutável."
+    echo "  [--] Ordem cronológica dos eventos (prev_hash não é encadeado"
+    echo "       no skill_event_hash da versão atual)."
+    echo "  [--] Existência desta sessão em prova externa independente."
+    echo ""
+    echo "PROXIMO PASSO (prova soberana):"
+    echo "  orbit anchor $SESSION_ID   # publica batch_hash em AURYA"
+    echo "  Contrato: docs/ORBIT_ANCHOR_CONTRACT.md (ainda não implementado)"
+    echo ""
+}
 
 [ -n "$SESSION_ID" ] || fail "uso: orbit_explain.sh <session_id>"
 [ -f "$LEDGER" ]     || fail "ledger não encontrado: $LEDGER"
@@ -147,10 +183,7 @@ if [ "$LOCAL_ONLY" = "1" ]; then
     echo "[2/3] BACKEND              pulado (ORBIT_EXPLAIN_LOCAL_ONLY=1)"
     echo "[3/3] METRICA AGREGADA     pulado"
     echo ""
-    echo "AVISO: ledger local NÃO é prova soberana. $LEDGER é mutável pelo"
-    echo "       usuário local. Para prova externa, ancorar em camada de"
-    echo "       atestação imutável (ex.: AURYA)."
-    echo ""
+    print_scope_block "local-only"
     echo "Status: OK (local-only)"
     exit 0
 fi
@@ -181,9 +214,6 @@ print(int(total))
 
 echo "[3/3] METRICA AGREGADA     $QUERY = $VALUE  (via $GATEWAY)"
 echo ""
-echo "AVISO: ledger local NÃO é prova soberana. $LEDGER é mutável pelo"
-echo "       usuário local. Para prova externa, ancorar em camada de"
-echo "       atestação imutável (ex.: AURYA)."
-echo ""
-echo "Status: OK"
+print_scope_block "full"
+echo "Status: OK (evidência local validada; não ancorado)"
 exit 0
