@@ -1,0 +1,75 @@
+name: regression-guards
+
+# Purpose: lock in the three classes of regression we've already paid
+# to fix — committed build artifacts, inconsistent environment, and
+# broken tests — so none of them come back silently.
+#
+# Constraint: 3 meaningful steps, no external dependencies, fast.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tracking/go.mod
+          cache-dependency-path: tracking/go.sum
+
+      # Guard 1 — No tracked file over 5MB.
+      # Uses `git cat-file -s` (blob size in index) rather than stat'ing
+      # the working tree, so LFS pointers and staged deletions are both
+      # judged by what is *actually* stored in git.
+      - name: No tracked files over 5MB
+        run: |
+          set -euo pipefail
+          limit=5242880
+          offenders=""
+          while IFS= read -r -d '' path; do
+            size=$(git cat-file -s ":${path}" 2>/dev/null || echo 0)
+            if [ "$size" -gt "$limit" ]; then
+              offenders="${offenders}${size}  ${path}"$'\n'
+            fi
+          done < <(git ls-files -z)
+          if [ -n "$offenders" ]; then
+            echo "::error::tracked files exceed ${limit} bytes (5MB):"
+            printf '%s' "$offenders"
+            exit 1
+          fi
+
+      # Guard 2 — `orbit doctor --deep` reports zero CRITICAL findings.
+      # doctor's /health check requires the tracking-server; we spin it
+      # up in-process just long enough for the probe, then tear it down.
+      # Any CRITICAL finding makes orbit exit non-zero → the step fails.
+      - name: orbit doctor --deep (no CRITICAL)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          cd tracking
+          commit="${GITHUB_SHA:0:7}"
+          build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ldflags="-s -w -X main.Commit=${commit} -X main.BuildTime=${build_time}"
+          CGO_ENABLED=0 go build -trimpath -ldflags "${ldflags}" -o "$HOME/.local/bin/orbit" ./cmd/orbit
+          CGO_ENABLED=0 go build -trimpath -o /tmp/tracking-server ./cmd
+          /tmp/tracking-server >/tmp/tracking-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://127.0.0.1:9100/health >/dev/null; then break; fi
+            sleep 0.5
+          done
+          export PATH="$HOME/.local/bin:$PATH"
+          orbit doctor --deep
+
+      # Guard 3 — Full Go test suite.
+      # Includes the in-tree anti-regression test
+      # (tracking/repo_hygiene_test.go) so contributors who run tests
+      # locally see the same gate CI enforces.
+      - name: Go tests
+        working-directory: tracking
+        run: go test ./... -count=1
