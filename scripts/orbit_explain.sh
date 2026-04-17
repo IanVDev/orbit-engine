@@ -183,15 +183,16 @@ PY
         return 0
     fi
 
-    echo "orbit: evento enviado para AURYA"
+    echo "orbit: registro remoto iniciado"
 
     local aurya_url="${ORBIT_AURYA_URL:-http://localhost:26657/v1/declarations/snapshot}"
     local payload
     payload=$(printf '{"type":"orbit.intent.override","session_id":"%s","timestamp":"%s","reason":"manual_override"}' \
         "$session_id" "$timestamp")
 
-    # Envio assíncrono (fail-open). Todas as fds são fechadas antes do &
-    # para que $(...) do chamador não espere o curl terminar.
+    # Envio assíncrono (fail-open). stdin/stdout fechados para que $(...)
+    # do chamador não espere o curl; stderr herdado para expor o hash ao
+    # usuário. Silencioso quando não há hash — verbose apenas sob demanda.
     (
         response=$(curl -s --max-time 2 -X POST "$aurya_url" \
             -H "Content-Type: application/json" \
@@ -200,11 +201,11 @@ PY
             | grep -o '"event_hash":"[^"]*"' \
             | head -n1 | cut -d':' -f2 | tr -d '"')
         if [ -n "$event_hash" ]; then
-            echo "orbit: evento registrado (hash: $event_hash)" >&2
-        else
-            echo "orbit: falha ao registrar evento na AURYA" >&2
+            echo "orbit: override registrado remotamente (ref: $event_hash) - by Orbit" >&2
+        elif [ "${ORBIT_VERBOSE:-0}" = "1" ]; then
+            echo "orbit: falha no registro remoto" >&2
         fi
-    ) </dev/null >/dev/null 2>&1 & disown
+    ) </dev/null >/dev/null & disown
 }
 
 # _check_and_print_intent — bloqueia execução se intent pendente existir.
@@ -217,7 +218,7 @@ _check_and_print_intent() {
     if [ "$IGNORE_INTENT" = "1" ]; then
         local intent_path="$ORBIT_HOME/active_task.intent"
         if [ -f "$intent_path" ]; then
-            echo "! execution override manual (--ignore-intent)"
+            echo "! execution override manual (--ignore-intent) - by Orbit"
             echo ""
             _log_intent_override "$intent_path"
         fi
@@ -238,6 +239,8 @@ except (OSError, json.JSONDecodeError) as e:
 sid  = intent.get("session_id", "<desconhecido>")
 desc = intent.get("description", "<sem descrição>")
 at   = intent.get("written_at", "?")
+print("proteção de continuidade acionada - by Orbit")
+print("")
 print("! INTENT PENDENTE ───────────────────────────────────────────────")
 print(f"  sessão   : {sid}")
 print(f"  descrição: {desc}")
@@ -278,6 +281,8 @@ sid    = intent.get("session_id", "<desconhecido>")
 desc   = intent.get("description", "<sem descrição>")
 at     = intent.get("written_at", "?")
 status = intent.get("status", "?")
+print("retomada de continuidade acionada - by Orbit")
+print("")
 print("==================================================================")
 print("  RETOMADA DE TASK INTERROMPIDA")
 print("==================================================================")
@@ -306,6 +311,8 @@ log_path = os.environ["LOG_PATH"]
 with open(log_path, encoding="utf-8") as f:
     raw_lines = [l.strip() for l in f if l.strip()]
 
+print("verificação de integridade acionada - by Orbit")
+print("")
 print("VERIFY intent_overrides.jsonl")
 print(f"  arquivo: {log_path}")
 
@@ -547,7 +554,7 @@ print_scope_block() {
     fi
     echo ""
     echo "PROXIMO PASSO (prova soberana):"
-    echo "  orbit anchor $SESSION_ID   # publica batch_hash em AURYA"
+    echo "  orbit anchor $SESSION_ID   # ancora batch_hash externamente"
     echo "  Contrato: docs/ORBIT_ANCHOR_CONTRACT.md (ainda não implementado)"
     echo ""
 }

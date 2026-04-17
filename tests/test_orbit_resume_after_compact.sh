@@ -175,7 +175,8 @@ OUT="$(unset ORBIT_AURYA_ENABLED; "$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$
 [ "$RC" = "0" ] || fail_test "case 10: exit $RC (esperado 0)"
 echo "$OUT" | grep -q "execution override manual" || fail_test "case 10: aviso de bypass (execution override) ausente"
 echo "$OUT" | grep -q "orbit: modo local" || fail_test "case 10: mensagem de modo local ausente (default deve ser opt-out)"
-echo "$OUT" | grep -q "enviado para AURYA" && fail_test "case 10: mensagem AURYA nao deveria aparecer sem flag"
+echo "$OUT" | grep -q "registro remoto iniciado" && fail_test "case 10: registro remoto nao deveria aparecer sem flag"
+echo "$OUT" | grep -qi "aurya" && fail_test "case 10: menção a AURYA não pode aparecer no terminal"
 [ -f "$OVERRIDES" ] || fail_test "case 10: intent_overrides.jsonl nao criado"
 python3 - "$OVERRIDES" <<'PY' || fail_test "case 10: log estruturado invalido"
 import json, sys
@@ -217,10 +218,12 @@ pass "case 12: bypass mantém exit 0 e tabela idêntica à execução limpa"
 # ---------------------------------------------------------------------------
 rm -f "$OVERRIDES"
 mk_intent "sess-intent-aurya" "task com flag AURYA ligada"
-OUT="$(ORBIT_AURYA_ENABLED=1 "$EXPLAIN" --list --ignore-intent 2>&1)"; RC=$?
+OUT="$(ORBIT_AURYA_ENABLED=1 ORBIT_AURYA_URL="http://127.0.0.1:1/unreachable" \
+    "$EXPLAIN" --list --ignore-intent 2>/dev/null)"; RC=$?
 [ "$RC" = "0" ] || fail_test "case 13: exit $RC (esperado 0)"
-echo "$OUT" | grep -q "orbit: evento enviado para AURYA" || fail_test "case 13: mensagem AURYA ausente com flag ligada"
+echo "$OUT" | grep -q "orbit: registro remoto iniciado" || fail_test "case 13: mensagem de registro remoto ausente com flag ligada"
 echo "$OUT" | grep -q "orbit: modo local" && fail_test "case 13: modo local nao deveria aparecer com flag ligada"
+echo "$OUT" | grep -qi "aurya" && fail_test "case 13: menção a AURYA não pode aparecer no terminal"
 python3 - "$OVERRIDES" <<'PY' || fail_test "case 13: contrato interno alterado (event != intent_ignored)"
 import json, sys
 e = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
@@ -229,6 +232,87 @@ PY
 rm -f "$INTENT"
 pass "case 13: ORBIT_AURYA_ENABLED=1 → mensagem AURYA, contrato interno preservado"
 
+# ---------------------------------------------------------------------------
+# Mock curl: casos 14–16 simulam respostas AURYA sem tocar na rede.
+# Troca apenas curl no PATH; python3/date/etc continuam resolvendo normal.
+# ---------------------------------------------------------------------------
+MOCK_BIN="$TMP/bin"
+mkdir -p "$MOCK_BIN"
+make_mock_curl() {
+    cat > "$MOCK_BIN/curl" <<MOCK
+#!/usr/bin/env bash
+cat <<'BODY'
+$1
+BODY
+MOCK
+    chmod +x "$MOCK_BIN/curl"
+}
+
+# Aguarda até 1.5s pela escrita assíncrona no arquivo de stderr.
+wait_for_stderr() {
+    local file="$1" pattern="$2" i
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        grep -q "$pattern" "$file" 2>/dev/null && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# case 14: resposta AURYA com event_hash → mensagem em stderr após async
+# ---------------------------------------------------------------------------
+rm -f "$OVERRIDES"
+mk_intent "sess-hash-ok" "task com hash retornado"
+make_mock_curl '{"event_hash":"mock-abc-123","status":"ok"}'
+ERR14="$TMP/case14.err"
+PATH="$MOCK_BIN:$PATH" ORBIT_AURYA_ENABLED=1 \
+    "$EXPLAIN" --list --ignore-intent >/dev/null 2>"$ERR14"
+RC=$?
+[ "$RC" = "0" ] || fail_test "case 14: exit $RC (esperado 0)"
+wait_for_stderr "$ERR14" "ref: mock-abc-123" \
+    || fail_test "case 14: hash remoto não apareceu em stderr (conteúdo: $(cat "$ERR14"))"
+grep -q "orbit: override registrado remotamente (ref: mock-abc-123) - by Orbit" "$ERR14" \
+    || fail_test "case 14: mensagem nao bate formato exato (ou assinatura ausente)"
+grep -qi "aurya" "$ERR14" && fail_test "case 14: stderr nao pode mencionar AURYA"
+rm -f "$INTENT"
+pass "case 14: event_hash retornado → mensagem assinada em stderr (async não bloqueia)"
+
+# ---------------------------------------------------------------------------
+# case 15: resposta sem event_hash → nada em stderr (silencio total default)
+# ---------------------------------------------------------------------------
+rm -f "$OVERRIDES"
+mk_intent "sess-hash-none" "task sem hash"
+make_mock_curl '{"status":"error","message":"invalid payload"}'
+ERR15="$TMP/case15.err"
+PATH="$MOCK_BIN:$PATH" ORBIT_AURYA_ENABLED=1 \
+    "$EXPLAIN" --list --ignore-intent >/dev/null 2>"$ERR15"
+RC=$?
+[ "$RC" = "0" ] || fail_test "case 15: exit $RC (esperado 0)"
+sleep 0.3  # dar tempo pro background escrever se fosse o caso
+grep -qi "aurya"            "$ERR15" && fail_test "case 15: menção a AURYA não pode aparecer"
+grep -q "registrado remotamente" "$ERR15" && fail_test "case 15: nao deveria confirmar registro sem hash"
+grep -q "falha"             "$ERR15" && fail_test "case 15: verbose desligado nao deveria exibir falha"
+rm -f "$INTENT"
+pass "case 15: resposta sem hash → stderr silencioso por padrão"
+
+# ---------------------------------------------------------------------------
+# case 16: ORBIT_VERBOSE=1 + resposta sem hash → mensagem de falha em stderr
+# ---------------------------------------------------------------------------
+rm -f "$OVERRIDES"
+mk_intent "sess-hash-verbose" "task verbose"
+make_mock_curl '{"status":"error"}'
+ERR16="$TMP/case16.err"
+PATH="$MOCK_BIN:$PATH" ORBIT_AURYA_ENABLED=1 ORBIT_VERBOSE=1 \
+    "$EXPLAIN" --list --ignore-intent >/dev/null 2>"$ERR16"
+RC=$?
+[ "$RC" = "0" ] || fail_test "case 16: exit $RC (esperado 0)"
+wait_for_stderr "$ERR16" "falha no registro remoto" \
+    || fail_test "case 16: verbose ligado, mensagem de falha ausente (conteúdo: $(cat "$ERR16"))"
+grep -qi "aurya" "$ERR16" && fail_test "case 16: falha verbose não pode mencionar AURYA"
+grep -q "by Orbit" "$ERR16" && fail_test "case 16: falha verbose é diagnóstico, não leva assinatura"
+rm -f "$INTENT"
+pass "case 16: ORBIT_VERBOSE=1 → mensagem de falha (sem AURYA, sem assinatura) em stderr"
+
 echo ""
-echo "OK: orbit_explain enforcement + rastreabilidade de bypass em 13 casos"
+echo "OK: orbit_explain enforcement + rastreabilidade de bypass em 16 casos"
 exit 0
