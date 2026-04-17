@@ -46,6 +46,10 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/", gw.Handler())
 
-	log.Printf("[GATEWAY] listening on %s → upstream %s", *listen, *upstream)
-	log.Fatal(http.ListenAndServe(*listen, mux))
+	// Fail-closed bind: default to loopback unless ORBIT_BIND_ALL=1 opts in.
+	// See tracking/bind.go for rationale.
+	addr := tracking.ResolveListenAddr(*listen)
+	log.Printf("[GATEWAY] listening on %s → upstream %s (set %s=1 to bind all interfaces)",
+		addr, *upstream, tracking.BindAllEnv)
+	log.Fatal(http.ListenAndServe(addr, mux))
 }

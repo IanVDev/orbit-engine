@@ -66,3 +66,13 @@ deploy/ssh_config          # rendered config (contains host/user)
 tests/.baseline.json
 tests/evidence_log.jsonl
 *.bak
+
+# --- Compiled Go binaries (must NEVER be committed) ---
+# The `orbit` CLI is produced by scripts/build_orbit.sh.
+# Each build changes 13MB of bytes; tracking it pollutes git history
+# and breaks every merge. Rebuild locally instead.
+tracking/orbit
+
+# --- Claude Code local state (per-machine, not shareable) ---
+.claude/settings.local.json
+.claude/worktrees/

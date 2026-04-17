@@ -64,8 +64,9 @@ func init() {
 	} else {
 		if isProduction {
 			// Fail-closed: HMAC is mandatory in production.
-			// Panic on startup prevents running an unprotected prod instance.
-			panic("orbit-engine: ORBIT_HMAC_SECRET is required when ORBIT_ENV=production (fail-closed)")
+			// log.Fatalf mirrors the ORBIT_RECONCILE_SECRET gate in tracking/cmd/main.go
+			// so operators see a single consistent shape of fatal config error.
+			log.Fatalf("[SECURITY] FATAL: ORBIT_HMAC_SECRET is required when ORBIT_ENV=production (fail-closed)")
 		}
 		log.Printf("[SECURITY] HMAC authentication DISABLED (set ORBIT_HMAC_SECRET to enable)")
 	}

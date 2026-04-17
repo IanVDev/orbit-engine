@@ -38,6 +38,7 @@ func main() {
 
 	printSessionBanner(os.Args[1])
 	enforceStartupIntegrity(os.Args[1])
+	printTrustBanner(currentTrustLevel(os.Args[1]))
 
 	switch os.Args[1] {
 	case "quickstart":
