@@ -208,6 +208,163 @@ func TestUXAudit_Doctor(t *testing.T) {
 	}
 }
 
+// ── TestAllCommandsUseStandardOutput — G5 strict audit ──────────────────────
+//
+// Goal: every command documented in `orbit help` must emit output that
+// matches at least one of the three canonical UX patterns. The command
+// list is extracted at runtime from the help listing, so adding a new
+// command automatically brings it under the audit.
+//
+// The three patterns (exclusive — any additional shape must be justified
+// by updating the patterns here, not by exempting commands):
+//
+//   1. Status keyword   — OK | WARNING | CRITICAL | INSTALLED | ALREADY_PRESENT
+//                         | ERROR | HIGH | MEDIUM | LOW | SKIPPED | DEGRADED
+//   2. Step marker      — [n/N]
+//   3. KV line          — "label<sep>value" with : or = as separator
+//
+// Pre-validation, we strip two known lines of startup noise — the stdlib
+// log banner and the trust-level banner — so they can't trivially satisfy
+// the audit for any command.
+
+// helpCommandPattern captures command names from `orbit help`. The listing
+// format is "  name    description", stable across sessions.
+var helpCommandPattern = regexp.MustCompile(`^\s{2}([a-z][a-z0-9-]+)\s{2,}\S`)
+
+// bannerLines are the known-invariant startup lines emitted by the orbit
+// process before any command-specific output. They must be stripped for
+// the audit — they are not the command's UX.
+var bannerLines = []*regexp.Regexp{
+	regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\s+\[`), // stdlib log prefix
+	regexp.MustCompile(`^orbit: trust=`),                             // trust banner
+}
+
+// standardOutputPatterns is the CLOSED SET of recognized UX shapes. The
+// audit fails if a command's output (post-banner-strip) contains no line
+// matching any of these.
+var standardOutputPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b(OK|WARNING|CRITICAL|INSTALLED|ALREADY_PRESENT|ERROR|HIGH|MEDIUM|LOW|SKIPPED|DEGRADED)\b`),
+	regexp.MustCompile(`\[\d+/\d+\]`),
+	regexp.MustCompile(`\w+\s*[:=]\s*\S`),
+}
+
+// extractCommandsFromHelp parses the command listing from help output.
+// Returns the command names in the order they appear (stable).
+func extractCommandsFromHelp(help string) []string {
+	var cmds []string
+	inSection := false
+	for _, line := range strings.Split(help, "\n") {
+		if strings.HasPrefix(line, "Comandos:") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			break // section ends on blank line
+		}
+		if m := helpCommandPattern.FindStringSubmatch(line); m != nil {
+			cmds = append(cmds, m[1])
+		}
+	}
+	return cmds
+}
+
+// stripBannerLines removes known startup-noise lines from output.
+func stripBannerLines(raw string) string {
+	var kept []string
+	for _, line := range strings.Split(raw, "\n") {
+		banner := false
+		for _, re := range bannerLines {
+			if re.MatchString(line) {
+				banner = true
+				break
+			}
+		}
+		if !banner {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// matchesStandardPattern returns true if any non-empty, non-whitespace line
+// of s matches at least one pattern in standardOutputPatterns.
+func matchesStandardPattern(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		for _, re := range standardOutputPatterns {
+			if re.MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestAllCommandsUseStandardOutput is the G5 fail-closed audit. It
+// extracts the full command list from `orbit help` and asserts that every
+// command's output (after banner strip) exhibits at least one recognized
+// UX pattern.
+//
+// Commands that require arguments are invoked with `--help` instead, so
+// they still produce command-specific output. Quickstart is exempted here
+// because it has dedicated E2E coverage (TestQuickstart_*) and running it
+// on every audit iteration would be wasteful.
+func TestAllCommandsUseStandardOutput(t *testing.T) {
+	// runOrbit uses the binary built by TestMain in this file. No extra
+	// build helper is required.
+
+	// 1. Extract command list from help (dynamic — new commands auto-audit).
+	helpRaw := runOrbit(t, false, "help")
+	commands := extractCommandsFromHelp(helpRaw)
+	if len(commands) < 3 {
+		t.Fatalf("expected several commands in help output, got %d: %v\n---\n%s",
+			len(commands), commands, helpRaw)
+	}
+
+	// No commands currently need special flag handling — each one either
+	// has default behaviour that emits structured stdout or emits a
+	// structured error on stderr when called with no args. We prefer the
+	// natural invocation over --help, because Go's default flag-help format
+	// is distinct from our 3-pattern UX and would force a false exemption.
+	needsHelpFlag := map[string]bool{}
+
+	// Commands skipped with explicit justification (NOT a free pass — each
+	// entry must be backed by dedicated coverage elsewhere).
+	skip := map[string]string{
+		"quickstart": "covered end-to-end by TestQuickstart_* (slow, uses embedded server)",
+	}
+
+	for _, cmd := range commands {
+		cmd := cmd
+		t.Run(cmd, func(t *testing.T) {
+			if reason, ok := skip[cmd]; ok {
+				t.Skipf("audit skip — %s", reason)
+			}
+
+			args := []string{cmd}
+			if needsHelpFlag[cmd] {
+				args = append(args, "--help")
+			}
+
+			raw := runOrbit(t, false, args...)
+			stripped := stripBannerLines(raw)
+			if strings.TrimSpace(stripped) == "" {
+				t.Fatalf("`orbit %s` produced no output after stripping startup banner — unaudited UX\nraw:\n%s",
+					strings.Join(args, " "), raw)
+			}
+			if !matchesStandardPattern(stripped) {
+				t.Fatalf("`orbit %s` output does not match any of the 3 UX patterns (Status / Step / KV):\n%s",
+					strings.Join(args, " "), stripped)
+			}
+		})
+	}
+}
+
 // TestUXAudit_NoCommandPanics verifies that every documented command
 // (when invoked with no args or --help) exits cleanly without a Go panic
 // stack trace in the output.
