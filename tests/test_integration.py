@@ -24,6 +24,7 @@ from orchestrator.client import (
     TrackingResult,
     estimate_tokens,
 )
+from orchestrator.compact_guard import CompactGuardError
 from orchestrator.skill_router import (
     ActivationDecision,
     ActivationRequest,
@@ -221,6 +222,91 @@ class TestFullPipeline(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.error, "not_activated")
         self.assertEqual(client.events_sent, 0)
+
+
+# ---------------------------------------------------------------------------
+# compact_guard auto-activation via track_activation
+# ---------------------------------------------------------------------------
+
+
+class TestCompactGuardAutoActivation(unittest.TestCase):
+    """track_activation deve ativar compact_guard automaticamente."""
+
+    def _make_client(self, session_id: str = "guard-test") -> SkillTrackingClient:
+        return SkillTrackingClient("http://localhost:9100", session_id)
+
+    def _make_decision(self) -> ActivationDecision:
+        return ActivationDecision(
+            activated=True,
+            score=3,
+            signals=["explicit_activation_command"],
+            phase=Phase.ANALYSIS,
+        )
+
+    @patch("orchestrator.compact_guard.snapshot")
+    @patch("orchestrator.compact_guard.detect", return_value=False)
+    @patch.object(SkillTrackingClient, "_send_event")
+    def test_track_activation_ativa_guard_automaticamente(
+        self, mock_send, mock_detect, mock_snapshot
+    ):
+        """track_activation deve acionar snapshot do guard com session_id correto."""
+        mock_send.return_value = TrackingResult(success=True, status_code=200)
+        client = self._make_client("sess-guard-auto")
+        decision = self._make_decision()
+
+        result = client.track_activation(decision, "input", "output sem marcador")
+
+        self.assertTrue(result.success)
+        mock_snapshot.assert_called_once()
+        self.assertEqual(
+            mock_snapshot.call_args.kwargs.get("session_id"), "sess-guard-auto"
+        )
+
+    @patch("orchestrator.compact_guard.rehydrate")
+    @patch("orchestrator.compact_guard.detect", return_value=True)
+    @patch("orchestrator.compact_guard.snapshot")
+    @patch.object(SkillTrackingClient, "_send_event")
+    def test_rehydrate_com_session_id_correto(
+        self, mock_send, mock_snapshot, mock_detect, mock_rehydrate
+    ):
+        """detect True → rehydrate chamado com session_id correto e resultado retornado."""
+        mock_send.return_value = TrackingResult(success=True, status_code=200)
+        mock_rehydrate.return_value = {
+            "session_id": "sess-rehydrate",
+            "current_task": "tarefa-X",
+        }
+        client = self._make_client("sess-rehydrate")
+        decision = self._make_decision()
+
+        result, rehydrated = client.track_activation_with_guard(
+            decision, "in", "[Compacted previous conversation]"
+        )
+
+        self.assertTrue(result.success)
+        self.assertIsNotNone(rehydrated)
+        self.assertEqual(rehydrated["session_id"], "sess-rehydrate")
+        mock_rehydrate.assert_called_once_with(session_id="sess-rehydrate")
+
+    @patch("orchestrator.compact_guard.rehydrate")
+    @patch("orchestrator.compact_guard.detect", return_value=True)
+    @patch("orchestrator.compact_guard.snapshot")
+    @patch.object(SkillTrackingClient, "_send_event")
+    def test_rehydrate_falha_com_session_id_divergente(
+        self, mock_send, mock_snapshot, mock_detect, mock_rehydrate
+    ):
+        """rehydrate com session_id divergente deve propagar CompactGuardError (fail-closed)."""
+        mock_send.return_value = TrackingResult(success=True, status_code=200)
+        mock_rehydrate.side_effect = CompactGuardError(
+            "session_id divergente — fail-closed"
+        )
+        client = self._make_client("sess-correto")
+        decision = self._make_decision()
+
+        with self.assertRaises(CompactGuardError):
+            client.track_activation_with_guard(
+                decision, "in", "[Compacted previous conversation]"
+            )
+        mock_rehydrate.assert_called_once_with(session_id="sess-correto")
 
 
 # ---------------------------------------------------------------------------

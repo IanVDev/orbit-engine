@@ -130,8 +130,8 @@ class SkillTrackingClient:
         """
         Send an activation event to the tracking server.
 
-        Fail-closed: raises TrackingError on any failure.
-        Caller MUST handle this error and abort the skill activation.
+        Automaticamente ativa o compact_guard (snapshot + detect + rehydrate).
+        Fail-closed: raises TrackingError ou CompactGuardError em qualquer falha.
 
         Args:
             decision: ActivationDecision from SkillRouter.evaluate()
@@ -143,23 +143,16 @@ class SkillTrackingClient:
 
         Raises:
             TrackingError: if tracking fails for any reason.
+            CompactGuardError: if guard snapshot/rehydrate fails.
         """
-        if not decision.activated:
-            logger.debug("decision not activated — no event to send")
-            return TrackingResult(success=True, error="not_activated")
-
-        # Build the primary signal name from decision.signals
-        reason = self._extract_reason(decision)
-        phase = decision.phase if isinstance(decision.phase, str) else decision.phase.value
-
-        event = self._build_event(
-            reason=reason,
-            phase=phase,
-            input_text=input_text,
-            output_text=output_text,
+        logger.warning(
+            "[orbit] compact_guard ativado automaticamente via track_activation — session=%s",
+            self._session_id,
         )
-
-        return self._send_event(event)
+        result, _ = self.track_activation_with_guard(
+            decision, input_text=input_text, output_text=output_text
+        )
+        return result
 
     def track_activation_with_guard(
         self,
@@ -168,10 +161,11 @@ class SkillTrackingClient:
         output_text: str = "",
     ) -> tuple[TrackingResult, Optional[dict]]:
         """
-        Wrap track_activation with the compact guard lifecycle:
+        Ciclo completo com compact guard:
           1. snapshot(session_id, ...) antes de enviar o evento
-          2. track_activation (comportamento original, fail-closed)
-          3. detect(output_text) — se "Compacted" detectado, rehydrate
+          2. _send_activation_event (fail-closed, sem recursão)
+          3. detect(output_text) — se marcador detectado, rehydrate
+          4. log estruturado de guard_status (rehydrated true/false)
 
         Returns (tracking_result, rehydrated_context_or_None).
 
@@ -191,13 +185,42 @@ class SkillTrackingClient:
             last_output=output_text,
         )
 
-        result = self.track_activation(decision, input_text=input_text, output_text=output_text)
+        result = self._send_activation_event(decision, input_text=input_text, output_text=output_text)
 
         rehydrated: Optional[dict] = None
         if compact_guard.detect(output_text):
             rehydrated = compact_guard.rehydrate(session_id=self._session_id)
 
+        logger.info(
+            "guard_status session=%s rehydrated=%s",
+            self._session_id,
+            "true" if rehydrated is not None else "false",
+        )
+
         return result, rehydrated
+
+    def _send_activation_event(
+        self,
+        decision: ActivationDecision,
+        input_text: str = "",
+        output_text: str = "",
+    ) -> TrackingResult:
+        """Núcleo de envio de evento sem guard. Chamado por track_activation_with_guard."""
+        if not decision.activated:
+            logger.debug("decision not activated — no event to send")
+            return TrackingResult(success=True, error="not_activated")
+
+        reason = self._extract_reason(decision)
+        phase = decision.phase if isinstance(decision.phase, str) else decision.phase.value
+
+        event = self._build_event(
+            reason=reason,
+            phase=phase,
+            input_text=input_text,
+            output_text=output_text,
+        )
+
+        return self._send_event(event)
 
     def track_raw_usage(
         self,

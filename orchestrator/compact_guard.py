@@ -29,9 +29,10 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-_REPO_ROOT   = Path(__file__).resolve().parent.parent
-_GUARD_PATH  = _REPO_ROOT / "scripts" / "orbit_compact_guard.sh"
-_TIMEOUT_SEC = 5.0
+_REPO_ROOT      = Path(__file__).resolve().parent.parent
+_GUARD_PATH     = _REPO_ROOT / "scripts" / "orbit_compact_guard.sh"
+_TIMEOUT_SEC    = 5.0
+_COMPACT_MARKER = "[Compacted"  # marcador determinístico emitido pelo Claude Code
 
 
 class CompactGuardError(Exception):
@@ -75,8 +76,11 @@ def snapshot(
 
 
 def detect(text: str) -> bool:
-    """Return True if text contains the 'Compacted' marker."""
+    """Return True if text contains the deterministic Claude Code compact marker '[Compacted'."""
     if not text:
+        return False
+    # Python pre-check: evita spawn de shell para textos sem o marcador
+    if _COMPACT_MARKER not in text:
         return False
     proc = _run(["detect", text])
     if proc.returncode == 0:

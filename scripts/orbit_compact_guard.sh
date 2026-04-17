@@ -14,7 +14,7 @@
 #
 # Subcomandos:
 #   snapshot --current-task <s> --objective <s> [--session-id <s>] [--constraints <s>] [--last-output <s>]
-#   detect <texto>                        exit 0 se contém "Compacted"; exit 1 caso contrário
+#   detect <texto>                        exit 0 se contém "[Compacted" (marcador Claude Code); exit 1 caso contrário
 #   rehydrate [--expect-session-id <s>]   imprime snapshot salvo ou aborta (exit 2) se ausente
 #                                         se --expect-session-id passado, valida contra snapshot
 #
@@ -97,8 +97,9 @@ cmd_detect() {
     local text="${1:-}"
     [ -n "$text" ] || fail "detect exige argumento textual"
 
+    # Marcador determinístico: Claude Code emite "[Compacted" no início da mensagem de compact
     case "$text" in
-        *Compacted*)
+        *\[Compacted*)
             local has_snapshot="false"
             [ -f "$SNAPSHOT_PATH" ] && has_snapshot="true"
             local ts; ts="$(_now_utc)"
@@ -170,7 +171,7 @@ Subcomandos:
       Persiste snapshot em $ORBIT_HOME/compact_snapshot.json.
 
   detect <texto>
-      Exit 0 se texto contém "Compacted" e grava context_compacted no log.
+      Exit 0 se texto contém "[Compacted" (marcador Claude Code) e grava context_compacted no log.
       Exit 1 caso contrário (sem log).
 
   rehydrate [--expect-session-id <s>]
