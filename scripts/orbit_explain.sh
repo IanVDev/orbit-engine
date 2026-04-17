@@ -100,32 +100,67 @@ Exemplos de investigação:
 USAGE
 }
 
-# _log_intent_override — grava entrada observável em intent_overrides.jsonl.
-# Fail-open: falha de escrita não interrompe o bypass (observabilidade).
+# _log_intent_override — grava entrada com hash encadeado em intent_overrides.jsonl.
+# Cada entrada inclui prev_hash (hash da entrada anterior) e hash próprio:
+#   hash = sha256(prev_hash + json_da_entrada_sem_hash)
+# Entradas legadas (sem campo "hash") tratadas como prev_hash="" — cadeia reinicia.
+# Fail-open: falha de I/O não bloqueia o bypass (observabilidade, não controle).
 _log_intent_override() {
     local intent_path="$1"
     ORBIT_HOME="$ORBIT_HOME" INTENT_PATH="$intent_path" python3 <<'PY'
-import json, os
+import hashlib, json, os
 from datetime import datetime, timezone
-orbit_home = os.environ["ORBIT_HOME"]
+
+orbit_home  = os.environ["ORBIT_HOME"]
 intent_path = os.environ["INTENT_PATH"]
+
 try:
     with open(intent_path, encoding="utf-8") as f:
         sid = json.load(f).get("session_id", "")
 except Exception:
     sid = ""
-ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-entry = {"event": "intent_ignored", "timestamp": ts, "session_id": sid, "reason": "manual_override"}
+
+ts       = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 log_path = os.path.join(orbit_home, "intent_overrides.jsonl")
+
+# Ler último hash para encadeamento.
+# Entrada sem campo "hash" (legado) → prev_hash = "" (cadeia reinicia).
+prev_hash = ""
+try:
+    if os.path.exists(log_path):
+        last_line = ""
+        with open(log_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last_line = line.strip()
+        if last_line:
+            try:
+                prev_hash = json.loads(last_line).get("hash", "") or ""
+            except json.JSONDecodeError:
+                prev_hash = ""
+except OSError:
+    prev_hash = ""
+
+# Construir entrada sem "hash" para cálculo canônico.
+entry = {
+    "event":      "intent_ignored",
+    "timestamp":  ts,
+    "session_id": sid,
+    "reason":     "manual_override",
+    "prev_hash":  prev_hash,
+}
+entry_json   = json.dumps(entry, separators=(",", ":"), sort_keys=True)
+entry["hash"] = hashlib.sha256((prev_hash + entry_json).encode()).hexdigest()
+
 try:
     os.makedirs(orbit_home, mode=0o700, exist_ok=True)
     fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        os.write(fd, (json.dumps(entry, separators=(",", ":")) + "\n").encode())
+        os.write(fd, (json.dumps(entry, separators=(",", ":"), sort_keys=True) + "\n").encode())
     finally:
         os.close(fd)
 except OSError:
-    pass
+    pass  # fail-open: bypass já aconteceu, log é observabilidade
 PY
 }
 
