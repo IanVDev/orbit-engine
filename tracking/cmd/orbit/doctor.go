@@ -15,7 +15,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,6 +26,32 @@ import (
 	"strings"
 	"time"
 )
+
+// DoctorCheck is the public, JSON-serialisable view of a single diagnostic
+// result. It is the structured contract consumed by tests, automation, and
+// `orbit doctor --json` — the goal is that callers never parse the human-
+// readable text to know what happened.
+//
+// Status is always one of "OK", "WARNING", "CRITICAL" (fail-closed: any
+// other value is a bug). Message combines the check name and its detail so
+// a single field carries the full context.
+type DoctorCheck struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// DoctorSummary is the count of checks per status.
+type DoctorSummary struct {
+	OK       int `json:"ok"`
+	Warning  int `json:"warning"`
+	Critical int `json:"critical"`
+}
+
+// DoctorReport is the envelope emitted by `orbit doctor --json`.
+type DoctorReport struct {
+	Checks  []DoctorCheck `json:"checks"`
+	Summary DoctorSummary `json:"summary"`
+}
 
 // expectedInstallPath é o destino canônico do binário `orbit`.
 const expectedInstallPath = "/usr/local/bin/orbit"
@@ -100,22 +129,65 @@ func (r *doctorResult) counts() (ok, warn, crit int) {
 	return
 }
 
+// toReport converts the internal result to the public DoctorReport shape.
+// Messages combine name and detail ("name: detail"), or just the name when
+// detail is empty — this keeps the public struct minimal while preserving
+// all human-readable context.
+func (r *doctorResult) toReport() DoctorReport {
+	checks := make([]DoctorCheck, 0, len(r.checks))
+	for _, c := range r.checks {
+		msg := c.name
+		if strings.TrimSpace(c.detail) != "" {
+			msg = c.name + ": " + c.detail
+		}
+		checks = append(checks, DoctorCheck{
+			Status:  c.severity.tag(),
+			Message: msg,
+		})
+	}
+	ok, warn, crit := r.counts()
+	return DoctorReport{
+		Checks: checks,
+		Summary: DoctorSummary{
+			OK:       ok,
+			Warning:  warn,
+			Critical: crit,
+		},
+	}
+}
+
 // runDoctor executa o diagnóstico e imprime o relatório.
 // strict: WARNINGs causam exit 1. fix: imprime/aplica correções.
 // deep: ativa checks adicionais de consistência de ambiente (symlinks,
 // wrappers, commit mismatch, origem de narrativa conhecida).
-func runDoctor(strict, fix, deep bool) error {
+// jsonOut: emite DoctorReport em JSON (stdout) e suprime a saída humana;
+// banners, divisores, hints não são impressos.
+//
+// Fail-closed: o código de saída segue a mesma regra (CRITICAL → erro;
+// WARNING + --strict → erro) independente do modo de saída.
+func runDoctor(strict, fix, deep, jsonOut bool) error {
+	// Silencia o logger padrão: doctor não deve poluir a saída com linhas
+	// de pacotes importados (ex.: [SECURITY] do tracking.init). Qualquer
+	// sinal relevante vira um check estruturado.
+	origLogOut := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(origLogOut)
+
 	res := &doctorResult{orbitBinPos: -1, localBinPos: -1}
 
-	fmt.Println()
-	if deep {
-		fmt.Println("🩺  orbit doctor --deep — diagnóstico profundo de ambiente")
-	} else {
-		fmt.Println("🩺  orbit doctor — diagnóstico de ambiente")
+	// Banner e info de binário são puramente humanos; em modo JSON os
+	// omitimos para manter a saída como um único objeto parseável.
+	if !jsonOut {
+		fmt.Println()
+		if deep {
+			fmt.Println("🩺  orbit doctor --deep — diagnóstico profundo de ambiente")
+		} else {
+			fmt.Println("🩺  orbit doctor — diagnóstico de ambiente")
+		}
+		fmt.Println("─────────────────────────────────────────────────")
 	}
-	fmt.Println("─────────────────────────────────────────────────")
 
-	collectBinaryInfo(res)
+	collectBinaryInfo(res, jsonOut)
 	collectPathInfo(res)
 	checkPathOrder(res)
 	checkUniqueOrbit(res)
@@ -134,18 +206,32 @@ func runDoctor(strict, fix, deep bool) error {
 		checkNarrativeOrigin(res)
 	}
 
-	printStructuredReport(res)
-
-	if fix {
-		printFixSuggestions(res)
+	if jsonOut {
+		if err := emitJSONReport(os.Stdout, res); err != nil {
+			return fmt.Errorf("doctor --json: falha ao serializar: %w", err)
+		}
+	} else {
+		printStructuredReport(res)
+		if fix {
+			printFixSuggestions(res)
+		}
 	}
 
 	return finalize(res, strict)
 }
 
+// emitJSONReport writes the DoctorReport to w as indented JSON, with a
+// trailing newline. Indentation makes the output diff-friendly for the
+// determinism test without costing anything in machine-readability.
+func emitJSONReport(w io.Writer, res *doctorResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(res.toReport())
+}
+
 // ── collectors ───────────────────────────────────────────────────────────────
 
-func collectBinaryInfo(res *doctorResult) {
+func collectBinaryInfo(res *doctorResult, quiet bool) {
 	self, err := os.Executable()
 	if err != nil {
 		self = "(desconhecido)"
@@ -161,6 +247,9 @@ func collectBinaryInfo(res *doctorResult) {
 		res.currentBinary = ""
 	}
 
+	if quiet {
+		return
+	}
 	fmt.Printf("  Binário em execução     : %s\n", res.selfPath)
 	if res.currentBinary == "" {
 		fmt.Println("  orbit no PATH (which)   : (não encontrado)")

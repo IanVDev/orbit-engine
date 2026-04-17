@@ -95,9 +95,12 @@ func main() {
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
 		fix := fs.Bool("fix", false, "sugere/aplica correções para problemas detectados")
 		deep := fs.Bool("deep", false, "diagnóstico profundo: symlinks, wrappers, commit mismatch, origem de texto")
+		jsonOut := fs.Bool("json", false, "emite relatório estruturado em JSON (suprime saída humana)")
 		_ = fs.Parse(os.Args[2:])
-		if err := runDoctor(*strict, *fix, *deep); err != nil {
-			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+		if err := runDoctor(*strict, *fix, *deep, *jsonOut); err != nil {
+			if !*jsonOut {
+				fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+			}
 			os.Exit(1)
 		}
 
