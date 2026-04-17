@@ -37,6 +37,8 @@
 set -uo pipefail
 
 ARG1="${1:-}"
+ARG2="${2:-}"
+ARG3="${3:-}"
 ORBIT_HOME="${ORBIT_HOME:-$HOME/.orbit}"
 LEDGER="$ORBIT_HOME/client_ledger.jsonl"
 BACKEND="${ORBIT_BACKEND_URL:-http://localhost:9100}"
@@ -45,15 +47,60 @@ LOCAL_ONLY="${ORBIT_EXPLAIN_LOCAL_ONLY:-0}"
 
 fail() { echo "orbit_explain: FAIL — $*" >&2; exit 2; }
 
-# --list — imprime tabela de sessões presentes no ledger. Resolve a fricção
-# "qual session_id eu passo pro explain?" sem virar um subcomando separado.
+print_help() {
+    cat <<'USAGE'
+orbit explain — evidência auditável de sessões de IA no seu repositório.
+
+uso:
+  orbit_explain.sh <session_id>
+      Verifica integridade + exibe correlação git de uma sessão.
+
+  orbit_explain.sh --list
+      Lista todas as sessões presentes no ledger.
+
+  orbit_explain.sh --list --since <ISO8601>
+      Idem, filtrando por sessões cujo último evento é >= <ISO8601>.
+      Útil em incident response: "sessões das últimas 24h".
+
+  orbit_explain.sh -h | --help
+      Esta mensagem.
+
+Env:
+  ORBIT_HOME                 diretório do ledger (default: ~/.orbit)
+  ORBIT_BACKEND_URL          default: http://localhost:9100
+  ORBIT_GATEWAY_URL          default: http://localhost:9091
+  ORBIT_EXPLAIN_LOCAL_ONLY   "1" pula fases 2 e 3 (escopo de teste)
+
+Exemplos de investigação:
+  orbit_explain.sh --list --since 2026-04-17T00:00:00Z
+  orbit_explain.sh refine-1776443535
+USAGE
+}
+
+if [ "$ARG1" = "-h" ] || [ "$ARG1" = "--help" ] || [ -z "$ARG1" ]; then
+    print_help
+    [ -z "$ARG1" ] && exit 2 || exit 0
+fi
+
+# --list [--since <ISO>] — tabela de sessões. Resolve "qual session_id eu
+# passo pro explain?" e "quais sessões rodaram desde X?" sem virar
+# subcomandos separados.
 if [ "$ARG1" = "--list" ]; then
     [ -f "$LEDGER" ] || fail "ledger não encontrado: $LEDGER"
-    LEDGER="$LEDGER" python3 <<'PY'
+    SINCE=""
+    if [ "$ARG2" = "--since" ]; then
+        [ -n "$ARG3" ] || fail "--since requer valor (ISO8601): orbit_explain.sh --list --since 2026-04-17"
+        SINCE="$ARG3"
+    elif [ -n "$ARG2" ]; then
+        fail "flag desconhecida após --list: $ARG2 (use --since <ISO8601>)"
+    fi
+    LEDGER="$LEDGER" SINCE="$SINCE" python3 <<'PY'
 import json, os
 from collections import defaultdict
 
 path = os.environ["LEDGER"]
+since = os.environ.get("SINCE", "").strip()
+
 sess = defaultdict(list)
 with open(path, "r", encoding="utf-8") as f:
     for raw in f:
@@ -75,16 +122,34 @@ if not sess:
 rows = []
 for sid, evs in sess.items():
     evs.sort(key=lambda x: x.get("timestamp", ""))
+    last_ts = evs[-1].get("timestamp", "")
+    # Filtro --since: comparação lexicográfica funciona para ISO8601 normalizado.
+    if since and last_ts < since:
+        continue
     tok = sum(int(x.get("impact_estimated_tokens", 0)) for x in evs)
-    rows.append((evs[-1].get("written_at", ""), sid, len(evs), tok,
-                 evs[0].get("timestamp", ""), evs[-1].get("timestamp", "")))
+    git_head = ""
+    for x in evs:
+        if x.get("git_head"):
+            git_head = x["git_head"][:12]
+            break
+    rows.append((last_ts, sid, len(evs), tok,
+                 evs[0].get("timestamp", ""), last_ts, git_head))
 rows.sort(reverse=True)
 
-print(f"{'SESSION_ID':<40}  {'EVENTOS':>7}  {'TOKENS':>7}  PRIMEIRO_TS                ULTIMO_TS")
-for _, sid, n, tok, first, last in rows:
-    print(f"{sid:<40}  {n:>7}  {tok:>7}  {first:<25}  {last}")
+if not rows:
+    if since:
+        print(f"(nenhuma sessão com ultimo_ts >= {since})")
+    else:
+        print("(ledger vazio)")
+    raise SystemExit(0)
+
+print(f"{'SESSION_ID':<40}  {'EV':>3}  {'TOK':>5}  {'GIT_HEAD':<12}  PRIMEIRO_TS                ULTIMO_TS")
+for _, sid, n, tok, first, last, ghead in rows:
+    gh = ghead if ghead else "<sem git>"
+    print(f"{sid:<40}  {n:>3}  {tok:>5}  {gh:<12}  {first:<25}  {last}")
 print()
-print(f"total: {len(rows)} sessões. Use: orbit_explain.sh <session_id>")
+suffix = f" (filtro: --since {since})" if since else ""
+print(f"total: {len(rows)} sessões{suffix}. Use: orbit_explain.sh <session_id>")
 PY
     exit 0
 fi
@@ -276,30 +341,35 @@ printf '%s\n' "$REPORT_BODY"
 echo "      integridade: OK ($LOCAL_COUNT eventos)"
 echo ""
 
-# Bloco ARTEFATO — correlação com estado do repositório git ao tempo da
-# ativação. Não infere causalidade: apenas mostra qual HEAD estava corrente
-# quando cada evento foi gravado. A verificação do que mudou é do usuário,
-# via `git log`.
+# Bloco ARTEFATO — ponto de partida para forensics. Mostra o estado do
+# repositório git ao tempo de cada ativação. NÃO infere causalidade:
+# "HEAD avançou" é fato, "sessão causou os commits" é interpretação humana
+# via `git log`/`git diff` externos.
 if [ -n "$GIT_FIRST" ] || [ -n "$GIT_LAST" ] || [ -n "$GIT_REPO" ]; then
-    echo "ARTEFATO CORRELACIONADO (git)"
+    echo "ARTEFATO CORRELACIONADO (git)    ← ponto de partida para investigação"
     if [ -n "$GIT_REPO" ]; then
-        echo "  repo        $GIT_REPO"
+        echo "  repo              $GIT_REPO"
     fi
     if [ -n "$GIT_FIRST" ]; then
-        echo "  HEAD inicial  ${GIT_FIRST:0:12}  (no 1º evento da sessão)"
+        echo "  HEAD ao iniciar   ${GIT_FIRST:0:12}"
     else
-        echo "  HEAD inicial  <não capturado>"
+        echo "  HEAD ao iniciar   <não capturado>"
     fi
     if [ -n "$GIT_LAST" ]; then
-        echo "  HEAD final    ${GIT_LAST:0:12}  (no último evento)"
+        echo "  HEAD ao encerrar  ${GIT_LAST:0:12}"
     else
-        echo "  HEAD final    <não capturado>"
+        echo "  HEAD ao encerrar  <não capturado>"
     fi
     if [ -n "$GIT_FIRST" ] && [ -n "$GIT_LAST" ] && [ "$GIT_FIRST" != "$GIT_LAST" ]; then
-        echo "  HEAD avançou durante a sessão. Inspecione os commits com:"
-        echo "    git -C ${GIT_REPO:-.} log --oneline $GIT_FIRST..$GIT_LAST"
+        echo "  HEAD avançou durante a sessão."
+        echo ""
+        echo "  Para investigar o que mudou nesta sessão:"
+        echo "    cd ${GIT_REPO:-.}"
+        echo "    git log --oneline ${GIT_FIRST:0:12}..${GIT_LAST:0:12}"
+        echo "    git diff          ${GIT_FIRST:0:12} ${GIT_LAST:0:12}"
     elif [ -n "$GIT_FIRST" ] && [ "$GIT_FIRST" = "$GIT_LAST" ]; then
-        echo "  HEAD não avançou durante a sessão"
+        echo "  HEAD não avançou — nenhum commit publicado durante a sessão."
+        echo "  (mudanças podem existir em working tree/stash; verifique separadamente)"
     fi
     echo ""
 else

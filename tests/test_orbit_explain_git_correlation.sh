@@ -69,11 +69,13 @@ mk_entry "sess-A" "2026-04-17T10:00:00.000Z" 0   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 mk_entry "sess-A" "2026-04-17T10:00:05.000Z" 100 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "/tmp/fake-repo"   >> "$LEDGER"
 
 OUT="$("$EXPLAIN" sess-A 2>&1)"
-echo "$OUT" | grep -q "HEAD inicial  aaaaaaaaaaaa" || fail "case A: HEAD inicial ausente"
-echo "$OUT" | grep -q "HEAD final    bbbbbbbbbbbb" || fail "case A: HEAD final ausente"
+echo "$OUT" | grep -q "HEAD ao iniciar   aaaaaaaaaaaa" || fail "case A: HEAD inicial ausente"
+echo "$OUT" | grep -q "HEAD ao encerrar  bbbbbbbbbbbb" || fail "case A: HEAD final ausente"
 echo "$OUT" | grep -q "HEAD avançou durante a sessão" || fail "case A: mensagem avançou ausente"
-echo "$OUT" | grep -q "git -C /tmp/fake-repo log --oneline aaaa.*\.\.bbbb" || fail "case A: comando git log ausente"
-pass "case A: HEAD avançou → mostra comando git log"
+echo "$OUT" | grep -qE "cd /tmp/fake-repo" || fail "case A: 'cd <repo>' ausente"
+echo "$OUT" | grep -qE "git log --oneline aaaa.*\.\.bbbb" || fail "case A: comando git log ausente"
+echo "$OUT" | grep -qE "git diff +aaaa.* bbbb" || fail "case A: comando git diff ausente"
+pass "case A: HEAD avançou → mostra cd + git log + git diff"
 
 # ---------------------------------------------------------------------------
 # Case B: HEAD igual
@@ -82,8 +84,8 @@ mk_entry "sess-B" "2026-04-17T10:00:00.000Z" 0   "cccccccccccccccccccccccccccccc
 mk_entry "sess-B" "2026-04-17T10:00:05.000Z" 50  "cccccccccccccccccccccccccccccccccccccccc" "/tmp/other-repo"  >> "$LEDGER"
 
 OUT="$("$EXPLAIN" sess-B 2>&1)"
-echo "$OUT" | grep -q "HEAD não avançou durante a sessão" || fail "case B: mensagem não avançou ausente"
-echo "$OUT" | grep -qE "git -C .* log" && fail "case B: não deveria sugerir git log"
+echo "$OUT" | grep -q "HEAD não avançou" || fail "case B: mensagem não avançou ausente"
+echo "$OUT" | grep -qE "git log --oneline" && fail "case B: não deveria sugerir git log"
 pass "case B: HEAD igual → não sugere git log"
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ OUT="$("$EXPLAIN" sess-C 2>&1)"
 echo "$OUT" | grep -q "ARTEFATO CORRELACIONADO" || fail "case C: bloco ausente"
 echo "$OUT" | grep -q "<não capturado" || fail "case C: marcador <não capturado ausente"
 # Nao pode inventar comando git log
-echo "$OUT" | grep -qE "git -C .* log" && fail "case C: não deveria sugerir git log"
+echo "$OUT" | grep -qE "git log --oneline" && fail "case C: não deveria sugerir git log"
 pass "case C: git ausente → bloco explícito, nenhum dado inventado"
 
 echo ""
