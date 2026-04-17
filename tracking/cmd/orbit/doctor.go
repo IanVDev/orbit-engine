@@ -218,6 +218,7 @@ func runDoctor(strict, fix, deep, jsonOut bool) error {
 	collectPathInfo(res)
 	checkPathOrder(res)
 	checkUniqueOrbit(res)
+	checkDualInstallPaths(res)
 	checkActiveBinary(res)
 	checkExecutable(res)
 	checkExpectedInstallPath(res)
@@ -384,7 +385,7 @@ func checkUniqueOrbit(res *doctorResult) {
 	case len(res.allFound) == 0:
 		res.add("Binários orbit no PATH", sevCritical,
 			"nenhum encontrado",
-			"reinstale: scripts/build_orbit.sh")
+			"reinstale: scripts/install.sh")
 	case len(res.allFound) == 1:
 		res.add("Binários orbit únicos", sevOK, res.allFound[0], "")
 	default:
@@ -397,6 +398,54 @@ func checkUniqueOrbit(res *doctorResult) {
 			fmt.Sprintf("%d encontrados: %s", len(res.allFound), dupes),
 			strings.Join(fixes, " && "))
 	}
+}
+
+// checkDualInstallPaths detecta coexistência de ~/.orbit/bin/orbit (canônico,
+// install.sh) e /usr/local/bin/orbit (alt, build_orbit.sh). Ambos presentes
+// = risco de versões divergentes sendo resolvidas por diferentes invocadores.
+// ORBIT_STRICT_PATH=1 eleva o resultado de WARNING para CRITICAL → exit 1.
+func checkDualInstallPaths(res *doctorResult) {
+	home, _ := os.UserHomeDir()
+	userPath := filepath.Join(home, ".orbit", "bin", "orbit")
+	strict := os.Getenv("ORBIT_STRICT_PATH") == "1"
+	checkDualInstallPathsAt(res, userPath, expectedInstallPath, res.currentBinary, strict)
+}
+
+// checkDualInstallPathsAt é a forma pura/testável de checkDualInstallPaths.
+//
+//	userPath      — caminho canônico (~/.orbit/bin/orbit)
+//	sysPath       — caminho alternativo (/usr/local/bin/orbit)
+//	activeBinary  — binário que o PATH resolve atualmente (res.currentBinary)
+//	strict        — ORBIT_STRICT_PATH=1 → CRITICAL em vez de WARNING
+func checkDualInstallPathsAt(res *doctorResult, userPath, sysPath, activeBinary string, strict bool) {
+	_, userErr := os.Stat(userPath)
+	_, sysErr := os.Stat(sysPath)
+	userExists := userErr == nil
+	sysExists := sysErr == nil
+
+	if userExists && sysExists {
+		active := activeBinary
+		if active == "" {
+			active = "(desconhecido)"
+		}
+		sev := sevWarning
+		if strict {
+			sev = sevCritical
+		}
+		res.add("Dual install paths", sev,
+			fmt.Sprintf("ambos presentes: %s  +  %s  (ativo via PATH: %s)", userPath, sysPath, active),
+			"rm -f "+shellQuote(sysPath)+"  # mantenha apenas o canônico (~/.orbit/bin)")
+		return
+	}
+	if !userExists && !sysExists {
+		return // nenhum instalado — coberto por checkUniqueOrbit
+	}
+	activeOne := userPath
+	if sysExists {
+		activeOne = sysPath
+	}
+	res.add("Dual install paths", sevOK,
+		fmt.Sprintf("único caminho ativo: %s", activeOne), "")
 }
 
 func checkActiveBinary(res *doctorResult) {
@@ -467,7 +516,7 @@ func checkCommitStamp(res *doctorResult) {
 	if c == "" || c == "unknown" {
 		res.add("Commit stamp (ldflags)", sevCritical,
 			fmt.Sprintf("Commit=%q — build sem -X main.Commit", Commit),
-			"rebuild: scripts/build_orbit.sh")
+			"rebuild: scripts/install.sh")
 		return
 	}
 	res.add("Commit stamp (ldflags)", sevOK,

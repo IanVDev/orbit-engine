@@ -114,7 +114,7 @@ func evaluateStartupIntegrity(selfPath, selfCommit string, found []string, activ
 	if selfCommit == "" || selfCommit == "unknown" {
 		add(
 			"binário ativo sem commit stamp (build sem -ldflags -X main.Commit)",
-			"rebuild via scripts/build_orbit.sh",
+			"rebuild via scripts/install.sh",
 		)
 	}
 

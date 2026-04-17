@@ -112,7 +112,7 @@ func checkWrapperScript(res *doctorResult) {
 	if n >= 2 && head[0] == '#' && head[1] == '!' {
 		res.add("Wrapper script (shebang)", sevCritical,
 			fmt.Sprintf("%s é script, não binário Go", target),
-			"reinstale o binário nativo: scripts/build_orbit.sh")
+			"reinstale o binário nativo: scripts/install.sh")
 		return
 	}
 	res.add("Wrapper script (shebang)", sevOK, "binário nativo", "")

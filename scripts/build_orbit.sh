@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 #
-# build_orbit.sh — builda e instala o CLI `orbit` em repo multi-módulo Go.
+# build_orbit.sh — ALT INSTALL PATH (/usr/local/bin)
+#
+# ⚠️  Este script NÃO é o caminho canônico de instalação.
+#     Use scripts/install.sh para instalar em ~/.orbit/bin/orbit (padrão).
+#     Este script instala em /usr/local/bin/orbit (system-wide, requer sudo).
+#
+#     Motivo de existir: máquinas compartilhadas ou CI que não usa ~/.orbit.
+#     Se ambos os paths estiverem presentes, `orbit doctor` emitirá WARNING.
 #
 # O módulo Go vive em tracking/ (não na raiz), então este script:
 #   1) entra em tracking/

@@ -263,3 +263,10 @@ orbit-check:
 	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set"  && exit 1)
 	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set"   && exit 1)
 	@bash scripts/orbit_check.sh
+
+# ── Build + install local (alias para o instalador canônico) ─────────────────
+# scripts/install.sh faz: go build com -ldflags (commit/version) →
+# instala em ~/.orbit/bin/orbit → smoke-test (orbit version) → PATH.
+.PHONY: build
+build:
+	@bash scripts/install.sh

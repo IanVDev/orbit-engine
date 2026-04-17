@@ -33,7 +33,7 @@ func TestAnalyzeEmitHighRisk_FormatAndSilence(t *testing.T) {
 				name:     "Commit stamp (ldflags)",
 				severity: sevCritical,
 				detail:   `Commit="unknown" — build sem -X`,
-				fixHint:  "scripts/build_orbit.sh",
+				fixHint:  "scripts/install.sh",
 			},
 			{name: "warn-only", severity: sevWarning, detail: "noise", fixHint: "ignore"},
 		}}
@@ -51,7 +51,7 @@ func TestAnalyzeEmitHighRisk_FormatAndSilence(t *testing.T) {
 		if !strings.Contains(out, "Context:") {
 			t.Errorf("linha Context ausente: %q", out)
 		}
-		if !strings.Contains(out, "Action: scripts/build_orbit.sh") {
+		if !strings.Contains(out, "Action: scripts/install.sh") {
 			t.Errorf("action ausente/errado: %q", out)
 		}
 		if strings.Contains(out, "warn-only") || strings.Contains(out, "ok-check") {
@@ -64,7 +64,7 @@ func TestAnalyzeEmitHighRisk_FormatAndSilence(t *testing.T) {
 			name:     "Commit stamp (ldflags)",
 			severity: sevCritical,
 			detail:   "Commit=\"unknown\"",
-			fixHint:  "scripts/build_orbit.sh",
+			fixHint:  "scripts/install.sh",
 		}}}
 		var buf bytes.Buffer
 		emitHighRisk(&buf, res)
