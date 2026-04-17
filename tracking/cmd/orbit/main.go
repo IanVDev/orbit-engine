@@ -2,11 +2,12 @@
 //
 // Subcomandos:
 //
-//	quickstart   Jornada completa: init → echo hello → proof → verify
-//	run          Executa comando externo com geração de proof
-//	stats        Tokens processados, execuções e decisões automáticas
-//	doctor       Diagnóstico de instalação e conflitos de PATH
-//	version      Versão instalada
+//	quickstart    Jornada completa: init → echo hello → proof → verify
+//	run           Executa comando externo com geração de proof
+//	stats         Tokens processados, execuções e decisões automáticas
+//	context-pack  Gera context-pack para transição entre conversas (alias: ctx)
+//	doctor        Diagnóstico de instalação e conflitos de PATH
+//	version       Versão instalada
 //
 // Fail-closed: qualquer erro retorna exit 1.
 package main
@@ -64,6 +65,20 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "context-pack", "ctx":
+		fs := flag.NewFlagSet("context-pack", flag.ExitOnError)
+		auto        := fs.Bool("auto",          false, "modo silencioso para hooks (sem stdout)")
+		setObj      := fs.String("set-objective", "", "define o objetivo atual")
+		addDecision := fs.String("add-decision",  "", "registra uma decisão tomada")
+		addRisk     := fs.String("add-risk",       "", "registra um risco conhecido")
+		addNext     := fs.String("add-next",       "", "adiciona próximo passo")
+		reset       := fs.Bool("reset",           false, "limpa decisions/risks/next")
+		_ = fs.Parse(os.Args[2:])
+		if err := runContextPack(*auto, *setObj, *addDecision, *addRisk, *addNext, *reset); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "doctor":
 		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
@@ -93,6 +108,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  quickstart    Jornada completa: init → run → proof → verify")
 	fmt.Fprintln(os.Stderr, "  run           Executa comando externo com geração de proof")
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
+	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
