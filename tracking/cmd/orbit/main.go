@@ -7,6 +7,7 @@
 //	stats         Tokens processados, execuções e decisões automáticas
 //	context-pack  Gera context-pack para transição entre conversas (alias: ctx)
 //	doctor        Diagnóstico de instalação e conflitos de PATH
+//	verify        Re-valida o proof SHA256 de um log de execução
 //	update        Atualiza o binário orbit via GitHub Releases
 //	version       Versão instalada
 //
@@ -106,6 +107,21 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "verify":
+		fs := flag.NewFlagSet("verify", flag.ExitOnError)
+		_ = fs.Parse(os.Args[2:])
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Exemplo:")
+			fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/2026-04-18T01-12-12.341818001Z_c37e3217_exit0.json")
+			os.Exit(1)
+		}
+		if err := runVerify(fs.Arg(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+			os.Exit(1)
+		}
+
 	case "update":
 		if err := runUpdate(); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
@@ -139,6 +155,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  analyze       [DEPRECATED] alias de `orbit doctor --alert-only`")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
+	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
@@ -155,4 +172,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  orbit stats --host http://meu-servidor:9100")
 	fmt.Fprintln(os.Stderr, "  orbit doctor")
 	fmt.Fprintln(os.Stderr, "  orbit doctor --strict")
+	fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/<arquivo>.json")
 }
