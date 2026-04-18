@@ -32,23 +32,24 @@ import (
 // Serializado como JSON quando --json está ativo e como log por-execução
 // em $ORBIT_HOME/logs/.
 type RunResult struct {
-	Version      int      `json:"version"`
-	Command      string   `json:"command"`
-	Args         []string `json:"args,omitempty"`
-	ExitCode     int      `json:"exit_code"`
-	Output       string   `json:"output"`
-	Proof        string   `json:"proof"`
-	SessionID    string   `json:"session_id"`
-	Timestamp    string   `json:"timestamp"`
-	DurationMs   int64    `json:"duration_ms"`
-	Language     string   `json:"language"`
-	OutputBytes  int64    `json:"output_bytes"`
-	Event        string   `json:"event"`
-	Decision     string   `json:"decision"`
-	Reason       string   `json:"decision_reason,omitempty"`
-	Criticality  string   `json:"criticality,omitempty"`
-	SnapshotPath string   `json:"snapshot_path,omitempty"`
-	Guidance     string   `json:"guidance,omitempty"`
+	Version      int               `json:"version"`
+	Command      string            `json:"command"`
+	Args         []string          `json:"args,omitempty"`
+	ExitCode     int               `json:"exit_code"`
+	Output       string            `json:"output"`
+	Proof        string            `json:"proof"`
+	SessionID    string            `json:"session_id"`
+	Timestamp    string            `json:"timestamp"`
+	DurationMs   int64             `json:"duration_ms"`
+	Language     string            `json:"language"`
+	OutputBytes  int64             `json:"output_bytes"`
+	Event        string            `json:"event"`
+	Decision     string            `json:"decision"`
+	Reason       string            `json:"decision_reason,omitempty"`
+	Criticality  string            `json:"criticality,omitempty"`
+	SnapshotPath string            `json:"snapshot_path,omitempty"`
+	Guidance     string            `json:"guidance,omitempty"`
+	Diagnosis    *DiagnosisPayload `json:"diagnosis,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
@@ -135,6 +136,7 @@ func runRun(args []string, jsonMode bool) error {
 	decision := Decide(event, exitCode)
 	criticality := ComputeCriticality(event, exitCode)
 	guidance := BuildGuidance(event, exitCode, output)
+	diagPayload := BuildDiagnosisForRun(event, exitCode, output).ToPayload()
 
 	// Snapshot só é tomado quando a decisão pede — fail-soft: erro de git
 	// não derruba o run; só marca incomplete dentro do próprio snapshot.
@@ -163,6 +165,7 @@ func runRun(args []string, jsonMode bool) error {
 		Criticality:  string(criticality),
 		SnapshotPath: snapshotPath,
 		Guidance:     guidance,
+		Diagnosis:    diagPayload,
 	}
 
 	// Persistência append-only em $ORBIT_HOME/logs/. Fail-closed: erro é
