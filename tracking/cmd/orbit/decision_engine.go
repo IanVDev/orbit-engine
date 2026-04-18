@@ -5,6 +5,9 @@
 //
 //	TEST_RUN    com exit != 0  → trigger_analyze
 //	CODE_CHANGE qualquer exit  → trigger_snapshot
+//	CODE_MERGE  qualquer exit  → trigger_snapshot (crítico)
+//	PUBLISH     qualquer exit  → trigger_snapshot (estado publicado)
+//	BUILD       com exit != 0  → trigger_analyze
 //
 // Eventos desconhecidos ou casos não mapeados retornam ActionNone,
 // de modo que o comportamento original do `orbit run` seja preservado.
@@ -71,6 +74,27 @@ func Decide(event EventType, exitCode int) Decision {
 			Event:  event,
 			Action: ActionTriggerSnapshot,
 			Reason: "CODE_MERGE detectado — snapshot pós-merge (crítico)",
+		}
+
+	case EventPublish:
+		return Decision{
+			Event:  event,
+			Action: ActionTriggerSnapshot,
+			Reason: fmt.Sprintf("PUBLISH detectado (exit=%d) — snapshot do estado publicado", exitCode),
+		}
+
+	case EventBuild:
+		if exitCode != 0 {
+			return Decision{
+				Event:  event,
+				Action: ActionTriggerAnalyze,
+				Reason: fmt.Sprintf("BUILD falhou (exit=%d) — analisar erros de compilação", exitCode),
+			}
+		}
+		return Decision{
+			Event:  event,
+			Action: ActionNone,
+			Reason: "BUILD passou — nenhuma ação",
 		}
 	}
 

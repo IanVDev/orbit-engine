@@ -1,50 +1,55 @@
 # orbit-engine
 
-**Your Claude Code sessions cost more than they should. Orbit Engine shows you exactly where — and what to fix.**
+**An append-only, verifiable record of human↔AI sessions, with diagnosis based on evidence.**
 
-A Claude Code skill that detects waste patterns in your session and outputs the exact commands to eliminate them.
+Orbit Engine observes the commands you run, classifies each event, decides whether to snapshot the state, and emits actionable guidance — every record is sealed with a SHA256 proof. Five verbs only: **detect, record, diagnose, observe, prove**.
 
 [Get started in 2 min](ONBOARDING.md) · [Tutorial](TUTORIAL.md) · [Usage](#usage) · [See output](#what-it-outputs)
 
 ---
 
-## The problem
+## What it does
 
-Token cost in Claude Code isn't per-message. It's cumulative.
+A single closed loop, executed on every `orbit run`:
 
-Every message re-reads the entire conversation history. At message 30, you're paying for all 29 previous messages plus the new one. Skip a planning step on a complex task, send vague prompts that cause rework, and a session that should cost $2 costs $18.
+```
+execution → event → decision → snapshot → guidance
+```
 
-The patterns that cause this are mechanical and detectable. This skill detects them and tells you what to do.
+- **detect** — a deterministic classifier reads the command (e.g. `git commit`, `pytest`, `git push`, `docker build`) and assigns an event type.
+- **record** — every execution becomes an append-only JSON entry under `~/.orbit/logs/`, sealed with a SHA256 proof.
+- **diagnose** — `orbit doctor` (and the deprecated `orbit analyze`) inspects the local environment for risk patterns (PATH conflicts, missing commit stamp, broken tracking) and stays silent when healthy.
+- **observe** — when the decision engine triggers a snapshot, `git status / HEAD / diff --stat` is captured read-only into `~/.orbit/snapshots/`. Orbit never writes to your project files.
+- **prove** — every log entry can be re-hashed and verified against the stored proof. Nothing is taken on faith.
 
 ---
 
 ## What you actually get
 
-Orbit Engine ships as two layers. Most users only need the first.
+Orbit Engine ships in two layers. The CLI is the product; the telemetry stack is opt-in.
 
-| | **FREE — the skill** | **PRO — skill + measurement infra** |
+| | **CLI (default)** | **Optional telemetry mode** |
 | --- | --- | --- |
-| What it is | A Claude Code skill (`.md` files) that activates during your session and outputs `DIAGNOSIS → ACTIONS → DO NOT DO NOW`. | The skill plus a Go backend (tracking server, PromQL gateway, Prometheus, Grafana) that records real token spend over time. |
-| What it needs | Claude Code. Nothing else. | Docker + Prometheus/Grafana on a host you control. |
-| What it answers | *"Is my current session wasting tokens, and what should I do right now?"* | *"How much did Orbit actually save me across N sessions? Where do patterns repeat? Is the skill still working in week 6?"* |
-| Who it's for | Every Claude Code user. | Teams, power users, anyone who needs longitudinal evidence (not just in-session advice). |
+| What it is | The `orbit` Go binary plus the Claude Code skill. Closes the loop locally and writes evidence to `~/.orbit/`. | The CLI plus a Go tracking server, PromQL gateway, Prometheus and Grafana for longitudinal observation. |
+| What it needs | The binary on your `PATH`. Nothing else. | Docker + Prometheus/Grafana on a host you control. |
+| What it answers | *"What just happened, what did the engine decide, and what should I look at?"* | *"How do events trend across N sessions? Where do risk patterns repeat?"* |
+| Who it's for | Every user. | Teams that need longitudinal evidence beyond per-session records. |
 
-If you are not sure which you want, you want FREE. The skill works standalone — the Go infrastructure in `tracking/` is *only* for measurement and is not required for the skill to do its job.
+If you are not sure which you want, use the CLI. The telemetry stack under `tracking/` is purely optional and the loop works without it.
 
 ---
 
-## Before / After
+## The closed loop in practice
 
-Real scenario: data ingestion service, no planning step, context not cleared.
+Real scenario: a `git commit` followed by a failing `pytest` run.
 
-| | Without skill | With skill | Δ |
+| Step | Event | Decision | Effect |
 | --- | --- | --- | --- |
-| Lines generated | 812 | 169 | **-79%** |
-| Tokens consumed | ~6,059 | ~1,051 | **-83%** |
-| Unnecessary classes | 6 | 0 | **-6** |
-| Rework cycles | 3 | 0 | **-100%** |
+| `orbit run git commit -m wip` | `CODE_CHANGE` | `TRIGGER_SNAPSHOT` | snapshot of `git status / HEAD / diff --stat` written to `~/.orbit/snapshots/` |
+| `orbit run pytest` (exit 1) | `TEST_RUN` (criticality `medium`) | `TRIGGER_ANALYZE` | guidance points at the first `file:line` extracted from the failing output |
+| `orbit run git push` | `PUBLISH` | `TRIGGER_SNAPSHOT` | snapshot of the published state for later comparison |
 
-Same 6 features. Same requirements. ~83% fewer tokens.
+Every entry in `~/.orbit/logs/` is one JSON document containing the command, exit code, event, decision, criticality, snapshot path, guidance and the SHA256 proof. The dashboard reads the same files — no second source of truth.
 
 <details>
 <summary>See the actual skill output</summary>
@@ -118,7 +123,7 @@ Full onboarding (30 seconds): [ONBOARDING.md](ONBOARDING.md)
 
 Copy and paste [`orbit-engine.prompt.md`](orbit-engine.prompt.md) at the start of your session.
 
-Then use it normally — Orbit Engine will activate when it detects inefficiency in your conversation.
+Then use it normally — Orbit Engine will activate when it detects a risk pattern in your conversation.
 
 ---
 
@@ -128,8 +133,8 @@ Fixed format. Always recommends, never executes.
 
 ```
 DIAGNOSIS
-- [detected waste pattern]
-- [detected waste pattern]
+- [detected risk pattern]
+- [detected risk pattern]
 Risk: [low / medium / high / critical]
 
 ACTIONS
@@ -140,7 +145,7 @@ DO NOT DO NOW
 - [what to avoid and why]
 ```
 
-The skill stays silent when the session is healthy — no output means no waste detected.
+The skill stays silent when the session is healthy — no output means no risk pattern detected.
 
 ---
 

@@ -24,8 +24,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from orchestrator.budget import BudgetGate
-from orchestrator.router import (
+from orchestrator.skill.budget import BudgetGate
+from orchestrator.skill.router import (
     Model,
     ModelControl,
     ModelRouter,
@@ -359,7 +359,7 @@ class TestModelControlAutoHeuristicsIntact(unittest.TestCase):
 
     def test_rate_limit_still_applies_when_auto(self):
         """auto does not bypass the Opus rate limit."""
-        from orchestrator.router import MAX_OPUS_PER_HOUR
+        from orchestrator.skill.router import MAX_OPUS_PER_HOUR
         router = make_router(daily_limit=1000.0)
 
         for i in range(MAX_OPUS_PER_HOUR):

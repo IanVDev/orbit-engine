@@ -97,8 +97,9 @@ func main() {
 		fix := fs.Bool("fix", false, "sugere/aplica correções para problemas detectados")
 		deep := fs.Bool("deep", false, "diagnóstico profundo: symlinks, wrappers, commit mismatch, origem de texto")
 		jsonOut := fs.Bool("json", false, "emite relatório estruturado em JSON (suprime saída humana)")
+		alertOnly := fs.Bool("alert-only", false, "silencioso: imprime apenas blocos para risco >= HIGH (substitui `orbit analyze`)")
 		_ = fs.Parse(os.Args[2:])
-		if err := runDoctor(*strict, *fix, *deep, *jsonOut); err != nil {
+		if err := runDoctorWithMode(*strict, *fix, *deep, *jsonOut, *alertOnly); err != nil {
 			if !*jsonOut {
 				fmt.Fprintf(os.Stderr, "❌  %v\n", err)
 			}
@@ -135,7 +136,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  quickstart    Jornada completa: init → run → proof → verify")
 	fmt.Fprintln(os.Stderr, "  run           Executa comando externo com geração de proof")
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
-	fmt.Fprintln(os.Stderr, "  analyze       Alerta silencioso: imprime apenas se risco >= HIGH")
+	fmt.Fprintln(os.Stderr, "  analyze       [DEPRECATED] alias de `orbit doctor --alert-only`")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")

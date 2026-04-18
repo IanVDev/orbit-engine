@@ -26,8 +26,8 @@ import unittest
 # Ensure project root is on path.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from orchestrator.budget import BudgetGate, BudgetReservation, CostEstimate
-from orchestrator.router import (
+from orchestrator.skill.budget import BudgetGate, BudgetReservation, CostEstimate
+from orchestrator.skill.router import (
     ESCALATION_THRESHOLD,
     MAX_CONTEXT_TOKENS,
     MAX_OPUS_PER_HOUR,

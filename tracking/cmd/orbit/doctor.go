@@ -200,6 +200,21 @@ func newDoctorErrorReport(err error) DoctorErrorReport {
 // calling log.* inside doctor, redirect it with a local logger built via
 // log.New(io.Discard, "", 0), never by touching log.SetOutput.
 func runDoctor(strict, fix, deep, jsonOut bool) error {
+	return runDoctorWithMode(strict, fix, deep, jsonOut, false)
+}
+
+// runDoctorWithMode é a forma estendida que aceita o modo alertOnly,
+// usado tanto por `orbit doctor --alert-only` quanto pelo alias deprecated
+// `orbit analyze`. Em alertOnly, suprime banner/relatório completo e
+// emite apenas blocos canônicos para checks CRITICAL — silêncio quando
+// o ambiente está saudável.
+func runDoctorWithMode(strict, fix, deep, jsonOut, alertOnly bool) error {
+	if alertOnly {
+		// Modo alerta: reusa exatamente o pipeline do antigo `orbit analyze`,
+		// preservando o contrato de 4 linhas por CRITICAL e silêncio em OK.
+		return analyzeTo(os.Stdout)
+	}
+
 	res := &doctorResult{orbitBinPos: -1, localBinPos: -1}
 
 	// Banner e info de binário são puramente humanos; em modo JSON os
