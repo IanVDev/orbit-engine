@@ -21,16 +21,54 @@ const FILENAME_SESSION_RE = /([0-9a-f]{8})_exit\d+\.json$/;
 // Campos obrigatórios em logs versionados (version >= 1)
 const EXECUTION_ESSENTIAL = ["timestamp", "exit_code", "command", "language"] as const;
 
+// Contrato do payload `diagnosis` persistido pelo Go no momento do run
+// (ver tracking/cmd/orbit/diagnose.go → DiagnosisPayload).
+//
+// Este parser é FONTE SECUNDÁRIA: consome apenas o que está no log.
+// Nunca infere de `output` — o Go já rodou o parser.
+//
+// Fail-closed:
+//   - ausente          → ignorado (log antigo)
+//   - não-objeto       → ignorado
+//   - sem confidence   → ignorado
+//   - confidence=none  → ignorado (parser disse "não sei")
+type Confidence = "high" | "medium" | "none";
+
+interface DiagnosisPayload {
+  version?: number;
+  error_type?: string;
+  test_name?: string;
+  file?: string;
+  line?: number;
+  message?: string;
+  confidence?: Confidence;
+}
+
 interface RawLog {
   version?: number;
   timestamp?: string;
   command?: string;
   language?: string;
+  event?: string;
   exit_code?: number;
   duration_ms?: number;
   execution_id?: string;
   anchor_status?: string;
+  diagnosis?: DiagnosisPayload;
   [key: string]: unknown;
+}
+
+interface DiagnosisView {
+  timestamp: string;
+  command: string;
+  event: string;
+  exit_code: number;
+  error_type: string;
+  test_name: string;
+  file: string;
+  line: number;
+  message: string;
+  confidence: "high" | "medium";
 }
 
 interface ExecLog extends RawLog {
@@ -66,7 +104,42 @@ interface DashboardStats {
   skill_events: number;
   tokens_estimados: number;
   ultimo_evento: string | null;
+  recent_diagnoses: DiagnosisView[];
   atualizado_em: string;
+}
+
+const VALID_CONFIDENCE: ReadonlySet<string> = new Set(["high", "medium"]);
+const RECENT_DIAGNOSES_LIMIT = 10;
+
+// Fail-closed: devolve view pronta para surfacear ou null.
+function extractDiagnosisView(log: ExecLog): DiagnosisView | null {
+  const d = log.diagnosis;
+  if (!d || typeof d !== "object") return null;
+  const c = d.confidence;
+  if (c !== "high" && c !== "medium") return null;
+
+  return {
+    timestamp: log.timestamp ?? "",
+    command: log.command ?? "",
+    event: log.event ?? "",
+    exit_code: typeof log.exit_code === "number" ? log.exit_code : 0,
+    error_type: d.error_type ?? "",
+    test_name: d.test_name ?? "",
+    file: d.file ?? "",
+    line: typeof d.line === "number" ? d.line : 0,
+    message: d.message ?? "",
+    confidence: c,
+  };
+}
+
+function collectRecentDiagnoses(executions: ExecLog[]): DiagnosisView[] {
+  const views: DiagnosisView[] = [];
+  for (const e of executions) {
+    const v = extractDiagnosisView(e);
+    if (v) views.push(v);
+  }
+  views.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+  return views.slice(0, RECENT_DIAGNOSES_LIMIT);
 }
 
 function failureType(exitCode: number | undefined): string {
@@ -213,6 +286,7 @@ function aggregate(
       skill_events: ledger.length,
       tokens_estimados: 0,
       ultimo_evento: null,
+      recent_diagnoses: [],
       atualizado_em: new Date().toISOString(),
     };
   }
@@ -272,6 +346,7 @@ function aggregate(
     skill_events: ledger.length,
     tokens_estimados,
     ultimo_evento: timestamps.length ? [...timestamps].sort().at(-1)! : null,
+    recent_diagnoses: collectRecentDiagnoses(executions),
     atualizado_em: new Date().toISOString(),
   };
 }

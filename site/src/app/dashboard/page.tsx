@@ -2,6 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react";
 
+interface DiagnosisView {
+  timestamp: string;
+  command: string;
+  event: string;
+  exit_code: number;
+  error_type: string;
+  test_name: string;
+  file: string;
+  line: number;
+  message: string;
+  confidence: "high" | "medium";
+}
+
 interface DashboardStats {
   total_execucoes: number;
   sucesso: number;
@@ -18,6 +31,7 @@ interface DashboardStats {
   skill_events: number;
   tokens_estimados: number;
   ultimo_evento: string | null;
+  recent_diagnoses?: DiagnosisView[];
   atualizado_em: string;
   error?: string;
   fail_closed?: boolean;
@@ -337,6 +351,55 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Diagnoses recentes — vindos direto do campo `diagnosis` do log.
+          Parser Go é a fonte; este bloco é só renderização. */}
+      {stats.recent_diagnoses && stats.recent_diagnoses.length > 0 && (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-surface/70 p-5 mb-6">
+          <h2 className="text-xs font-mono text-text-3 uppercase tracking-wider mb-4">
+            Diagnoses recentes
+          </h2>
+          <div className="flex flex-col gap-3">
+            {stats.recent_diagnoses.map((d, i) => (
+              <div
+                key={`${d.timestamp}-${i}`}
+                className="border-l-2 border-atrisk/60 pl-3 flex flex-col gap-1"
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs text-text-3">
+                    {fmtTime(d.timestamp)}
+                  </span>
+                  <span className="font-mono text-xs text-text-2">
+                    {d.command} · {d.event} · exit {d.exit_code}
+                  </span>
+                  <span
+                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                      d.confidence === "high"
+                        ? "bg-atrisk/20 text-atrisk"
+                        : "bg-degraded/20 text-degraded"
+                    }`}
+                  >
+                    {d.confidence}
+                  </span>
+                </div>
+                <div className="font-mono text-sm text-text">
+                  {d.test_name && <span className="text-accent">{d.test_name} </span>}
+                  {d.file && (
+                    <span className="text-text-2">
+                      @ {d.file}:{d.line}
+                    </span>
+                  )}
+                </div>
+                {d.message && (
+                  <div className="font-mono text-xs text-text-2 truncate">
+                    {d.message}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Rodapé de metadados */}
       <div className="rounded-[var(--radius-lg)] border border-border-soft bg-surface/40 p-4 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">

@@ -171,6 +171,62 @@ def _link_skill_events(executions: list[dict], ledger: list[dict]) -> None:
             entry["link_window_seconds"] = 60
 
 
+# ---------------------------------------------------------------------------
+# Diagnosis payload (contract surfaced to dashboard)
+# ---------------------------------------------------------------------------
+#
+# O log pode trazer um campo opcional `diagnosis` já preenchido pelo Go no
+# momento do `orbit run` (ver run.go → DiagnosisPayload). Contrato:
+#
+#   diagnosis: {
+#     "version":     int,
+#     "error_type":  str?,
+#     "test_name":   str?,
+#     "file":        str?,
+#     "line":        int?,
+#     "message":     str?,
+#     "confidence":  "high" | "medium" | "none"
+#   }
+#
+# Parser é FONTE SECUNDÁRIA: só lê o payload persistido. Não tenta inferir
+# de `output` se `diagnosis` está ausente ou malformado. Fail-closed:
+#   - ausente          → não aparece em recent_diagnoses (retrocompat)
+#   - não-dict         → ignorado
+#   - sem confidence   → ignorado
+#   - confidence=none  → ignorado (parser já disse "não sei")
+_VALID_CONFIDENCE = frozenset({"high", "medium"})
+_RECENT_DIAGNOSES_LIMIT = 10
+
+
+def _extract_diagnosis_view(exec_log: dict) -> Optional[dict]:
+    """Fail-closed: devolve dict pronto para surfacear, ou None."""
+    d = exec_log.get("diagnosis")
+    if not isinstance(d, dict):
+        return None
+    confidence = d.get("confidence")
+    if confidence not in _VALID_CONFIDENCE:
+        return None
+    return {
+        "timestamp":   exec_log.get("timestamp"),
+        "command":     exec_log.get("command"),
+        "event":       exec_log.get("event"),
+        "exit_code":   exec_log.get("exit_code"),
+        "error_type":  d.get("error_type", ""),
+        "test_name":   d.get("test_name", ""),
+        "file":        d.get("file", ""),
+        "line":        d.get("line", 0),
+        "message":     d.get("message", ""),
+        "confidence":  confidence,
+    }
+
+
+def _collect_recent_diagnoses(executions: list[dict]) -> list[dict]:
+    """Top-N mais recentes (timestamp desc) com confidence high/medium."""
+    views = [v for v in (_extract_diagnosis_view(e) for e in executions) if v]
+    views.sort(key=lambda v: v.get("timestamp") or "", reverse=True)
+    return views[:_RECENT_DIAGNOSES_LIMIT]
+
+
 def aggregate(
     executions: list[dict], anchors: list[dict], ledger: list[dict]
 ) -> dict[str, Any]:
@@ -193,6 +249,7 @@ def aggregate(
             "skill_events": len(ledger),
             "tokens_estimados": 0,
             "ultimo_evento": None,
+            "recent_diagnoses": [],
             "atualizado_em": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -254,6 +311,7 @@ def aggregate(
         "skill_events": len(ledger),
         "tokens_estimados": tokens_estimados,
         "ultimo_evento": ultimo_evento,
+        "recent_diagnoses": _collect_recent_diagnoses(executions),
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
 
