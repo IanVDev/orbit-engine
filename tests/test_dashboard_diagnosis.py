@@ -608,5 +608,80 @@ class DecisionProtocolTest(unittest.TestCase):
         )
 
 
+class ParserPRTemplateTest(unittest.TestCase):
+    """
+    Protege o template de PR para novo parser contra degradação
+    silenciosa. O template é o trilho visual que um revisor consulta
+    em 60s — se perder marcadores, a revisão volta a ser verbal.
+
+    Invariantes travadas: localização do arquivo, checkboxes mínimas,
+    marcadores literais do protocolo, seções nomeadas, menção a teste
+    canônico e cláusula de rejeição.
+    """
+
+    TEMPLATE_PATH = (
+        Path(__file__).resolve().parent.parent
+        / ".github" / "PULL_REQUEST_TEMPLATE" / "new_parser.md"
+    )
+
+    def test_parser_pr_template_is_wellformed(self) -> None:
+        self.assertTrue(
+            self.TEMPLATE_PATH.exists(),
+            f"template ausente em {self.TEMPLATE_PATH}",
+        )
+        text = self.TEMPLATE_PATH.read_text(encoding="utf-8")
+        self.assertTrue(text.strip(), "template vazio")
+
+        # ── Checkboxes não-marcadas (>= 6) ──────────────────────────
+        unchecked = re.findall(r"(?m)^\s*-\s+\[\s\]", text)
+        self.assertGreaterEqual(
+            len(unchecked), 6,
+            f"template deve ter >= 6 checkboxes, tem {len(unchecked)}",
+        )
+
+        # ── Marcadores literais do protocolo ────────────────────────
+        for term in [
+            "T0",
+            "T1",
+            "EXPANSION_DECISION_PROTOCOL",
+            "PARSER_EXPANSION_WINDOW_DAYS",
+            "dispatchParser",
+        ]:
+            self.assertIn(
+                term, text,
+                f"marcador '{term}' ausente — template perdeu ancoragem",
+            )
+
+        # ── Seções nomeadas (cabeçalhos ## exatos) ──────────────────
+        for section in [
+            "Pré-submissão",
+            "Mudança técnica",
+            "Evidências",
+        ]:
+            self.assertRegex(
+                text, rf"(?m)^##\s+{re.escape(section)}",
+                f"seção '## {section}' ausente",
+            )
+
+        # ── Menção a teste canônico existente ───────────────────────
+        self.assertTrue(
+            "TestDiagnosisRunSlowPathParity" in text
+            or "test_expansion_candidate_contract" in text,
+            "template não cita teste canônico — perde ancoragem ao código",
+        )
+
+        # ── Cláusula de rejeição explícita ──────────────────────────
+        self.assertRegex(
+            text, r"(?i)rejei(tad|ção)",
+            "template não declara critério de rejeição",
+        )
+
+        # ── Janela temporal explícita (7 dias) ──────────────────────
+        self.assertRegex(
+            text, r"(?i)(7\s*dias|T1\s*[-−]\s*T0\s*>=\s*7)",
+            "template não documenta janela de 7 dias entre T0 e T1",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
