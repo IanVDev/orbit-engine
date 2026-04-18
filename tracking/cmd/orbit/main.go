@@ -8,6 +8,7 @@
 //	context-pack  Gera context-pack para transição entre conversas (alias: ctx)
 //	doctor        Diagnóstico de instalação e conflitos de PATH
 //	verify        Re-valida o proof SHA256 de um log de execução
+//	diagnose      Analisa o último log e extrai causa provável da falha
 //	update        Atualiza o binário orbit via GitHub Releases
 //	version       Versão instalada
 //
@@ -122,6 +123,19 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "diagnose":
+		fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
+		jsonOut := fs.Bool("json", false, "emite JSON estruturado em vez de texto")
+		_ = fs.Parse(os.Args[2:])
+		logArg := ""
+		if fs.NArg() > 0 {
+			logArg = fs.Arg(0)
+		}
+		if err := runDiagnose(logArg, *jsonOut); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+			os.Exit(1)
+		}
+
 	case "update":
 		if err := runUpdate(); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
@@ -156,6 +170,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
+	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
@@ -173,4 +188,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  orbit doctor")
 	fmt.Fprintln(os.Stderr, "  orbit doctor --strict")
 	fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/<arquivo>.json")
+	fmt.Fprintln(os.Stderr, "  orbit diagnose")
+	fmt.Fprintln(os.Stderr, "  orbit diagnose --json")
 }
