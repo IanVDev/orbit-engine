@@ -98,10 +98,15 @@ var fileLineLooseRe = regexp.MustCompile(`([A-Za-z0-9_./\\\-]+\.[A-Za-z0-9]+):(\
 // `--- FAIL: TestName` ou `--- FAIL: TestSuite/sub_name`.
 var goTestFailRe = regexp.MustCompile(`(?m)^\s*--- FAIL: (\w[\w/]*)`)
 
-// goTestLineRe casa assertions de test.T: `file.go:23: mensagem`.
-// Ancorado ao início da linha para evitar falso-positivo em strings
-// literais embutidas. Extensão fixa .go reduz ambiguidade.
-var goTestLineRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_./\\-]+\.go):(\d+):\s*(.+)$`)
+// goFileLineMsgRe casa "file.go:line(:col)?: mensagem" ancorado ao
+// início da linha. Atende dois formatos canônicos:
+//
+//	assertion de test.T:    main_test.go:23: expected X got Y
+//	erro de go build:       ./foo.go:15:2: undefined: bar
+//
+// A coluna é consumida mas NÃO capturada — nosso Diagnosis expõe
+// apenas file/line/message. Extensão fixa .go reduz ambiguidade.
+var goFileLineMsgRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_./\\-]+\.go):(\d+)(?::\d+)?:\s*(.+)$`)
 
 // firstFileLine devolve a primeira ocorrência de file:line em output,
 // com parsing numérico já aplicado. API interna usada tanto por
@@ -156,9 +161,9 @@ func diagnoseTo(w io.Writer, logPath string, jsonMode bool) error {
 	if result.Diagnosis != nil {
 		// Fast-path: parser já rodou no momento do run; só reconstitui.
 		applyPayload(&d, result.Diagnosis)
-	} else if result.Event == string(EventTestRun) && result.ExitCode != 0 {
-		// Slow-path (log antigo, pré-persistência): re-parse.
-		parseGoTestFailure(&d, result.Output)
+	} else {
+		// Slow-path (log antigo, pré-persistência): re-parse via dispatcher.
+		dispatchParser(&d, EventType(result.Event), result.ExitCode, result.Output)
 	}
 
 	return emitDiagnosis(w, d, jsonMode)
@@ -169,7 +174,7 @@ func diagnoseTo(w io.Writer, logPath string, jsonMode bool) error {
 // BuildDiagnosisForRun é a superfície chamada pelo run.go no momento da
 // execução. Roda o mesmo parser do CLI `orbit diagnose`, mas sem IO:
 // o caller usa o retorno para (a) preencher guidance e (b) persistir
-// no log via RunResult.Diagnosis.
+// no log via RunResult.Diagnosis. Eventos suportados: TEST_RUN, BUILD.
 func BuildDiagnosisForRun(event EventType, exitCode int, output string) Diagnosis {
 	d := Diagnosis{
 		Version:    DiagnoseSchemaVersion,
@@ -177,9 +182,7 @@ func BuildDiagnosisForRun(event EventType, exitCode int, output string) Diagnosi
 		ExitCode:   exitCode,
 		Confidence: ConfidenceNone,
 	}
-	if event == EventTestRun && exitCode != 0 {
-		parseGoTestFailure(&d, output)
-	}
+	dispatchParser(&d, event, exitCode, output)
 	return d
 }
 
@@ -219,18 +222,17 @@ func applyPayload(d *Diagnosis, p *DiagnosisPayload) {
 	}
 }
 
-// ── Parser do Go test ────────────────────────────────────────────────
+// ── Parsers por tipo de evento ───────────────────────────────────────
 
-// parseGoTestFailure popula campos de d a partir do output de `go test`.
-// Fail-closed: qualquer formato desconhecido deixa d inalterado
-// (Confidence="none", demais campos vazios).
+// parseGoTestFailure popula d a partir do output de `go test`.
+// Fail-closed: qualquer formato desconhecido deixa d inalterado.
 func parseGoTestFailure(d *Diagnosis, output string) {
 	if output == "" {
 		return
 	}
 
 	failMatch := goTestFailRe.FindStringSubmatch(output)
-	lineMatch := goTestLineRe.FindStringSubmatch(output)
+	lineMatch := goFileLineMsgRe.FindStringSubmatch(output)
 
 	if lineMatch == nil {
 		// Sem file:line com mensagem acionável — cala.
@@ -255,6 +257,49 @@ func parseGoTestFailure(d *Diagnosis, output string) {
 
 	d.ErrorType = "file_line_only"
 	d.Confidence = ConfidenceMedium
+}
+
+// parseGoBuildFailure popula d a partir do output de `go build`.
+// Formato canônico do compilador: "./foo.go:15:2: undefined: bar".
+// Quando casa, confidence=high (a forma é determinística — se matchou,
+// é um erro de compilação real). Sem TestName, por construção.
+//
+// Fail-closed: outputs sem o padrão (import cycle, "cannot find main
+// module", erros de link) mantêm d inalterado.
+func parseGoBuildFailure(d *Diagnosis, output string) {
+	if output == "" {
+		return
+	}
+
+	m := goFileLineMsgRe.FindStringSubmatch(output)
+	if m == nil {
+		return
+	}
+	line, err := strconv.Atoi(m[2])
+	if err != nil {
+		return
+	}
+
+	d.File = m[1]
+	d.Line = line
+	d.Message = strings.TrimSpace(m[3])
+	d.ErrorType = "go_build_error"
+	d.Confidence = ConfidenceHigh
+}
+
+// dispatchParser escolhe o parser certo baseado no evento. Única fonte
+// de verdade do mapeamento event→parser, chamada tanto pelo run.go
+// (via BuildDiagnosisForRun) quanto pelo fast-miss no diagnoseTo.
+func dispatchParser(d *Diagnosis, event EventType, exitCode int, output string) {
+	if exitCode == 0 {
+		return
+	}
+	switch event {
+	case EventTestRun:
+		parseGoTestFailure(d, output)
+	case EventBuild:
+		parseGoBuildFailure(d, output)
+	}
 }
 
 // ── IO helpers ───────────────────────────────────────────────────────
@@ -325,8 +370,8 @@ func emitDiagnosis(w io.Writer, d Diagnosis, jsonMode bool) error {
 		fmt.Fprintf(w, "  confidence: %s\n", d.Confidence)
 	case d.ExitCode == 0:
 		fmt.Fprintln(w, "  nothing to diagnose — execução saudável.")
-	case d.Event != string(EventTestRun):
-		fmt.Fprintf(w, "  no diagnosis — event %q não suportado neste MVP.\n", d.Event)
+	case d.Event != string(EventTestRun) && d.Event != string(EventBuild):
+		fmt.Fprintf(w, "  no diagnosis — event %q sem parser.\n", d.Event)
 	default:
 		fmt.Fprintln(w, "  no diagnosis — output não casou padrão conhecido (fail-closed).")
 	}

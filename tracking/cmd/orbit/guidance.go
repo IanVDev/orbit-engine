@@ -18,9 +18,13 @@ package main
 import "strconv"
 
 // BuildGuidance devolve o texto de guidance a ser exibido ao usuário e
-// gravado no log (campo RunResult.Guidance).
+// gravado no log (campo RunResult.Guidance). Aplica-se a eventos com
+// parser acoplado (TEST_RUN e BUILD); demais categorias calam.
 func BuildGuidance(event EventType, exitCode int, output string) string {
-	if event != EventTestRun || exitCode == 0 {
+	if exitCode == 0 {
+		return ""
+	}
+	if event != EventTestRun && event != EventBuild {
 		return ""
 	}
 	file, line, ok := firstFileLine(output)
