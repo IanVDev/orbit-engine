@@ -201,6 +201,156 @@ class RecentDiagnosesContractTest(unittest.TestCase):
         self.assertIn("recent_diagnoses", result)
         self.assertEqual(result["recent_diagnoses"], [])
 
+    # ── Discriminação test vs build via error_type ────────────────────
+    #
+    # Contrato de shape: a view DEVE expor `error_type` preenchido
+    # quando o payload persistido trouxer (ex.: "go_build_error").
+    # Sem isso, a UI não tem como distinguir visualmente uma falha de
+    # build de uma falha de test — ambas ficariam com apenas file:line.
+
+    def test_build_error_surfaces_error_type(self) -> None:
+        _write_log(
+            self._logs, "buildXX",
+            timestamp="2026-04-18T12:00:00Z",
+            event="BUILD",
+            command="go",
+            diagnosis={
+                "version":    1,
+                "error_type": "go_build_error",
+                "file":       "./main.go",
+                "line":       3,
+                "message":    "undefined: undefinedSymbol",
+                "confidence": "high",
+            },
+        )
+        _write_log(
+            self._logs, "testYY",
+            timestamp="2026-04-18T12:00:01Z",
+            event="TEST_RUN",
+            command="go",
+            diagnosis={
+                "version":    1,
+                "error_type": "go_test_assertion",
+                "test_name":  "TestA",
+                "file":       "a_test.go",
+                "line":       1,
+                "message":    "oops",
+                "confidence": "high",
+            },
+        )
+
+        rds = parser.run()["recent_diagnoses"]
+        by_error = {d["error_type"]: d for d in rds}
+
+        self.assertIn("go_build_error", by_error,
+                      f"build error sumiu do surface: {rds}")
+        self.assertIn("go_test_assertion", by_error)
+
+        build = by_error["go_build_error"]
+        self.assertEqual(build["event"], "BUILD")
+        self.assertEqual(build["test_name"], "")  # build não tem test
+        self.assertEqual(build["file"], "./main.go")
+
+
+class SilencedEventsContractTest(unittest.TestCase):
+    """
+    Silenced = decision=TRIGGER_ANALYZE + parser não contribuiu.
+
+    Sinal operacional: se o breakdown `silenced_by_command` mostrar
+    o mesmo comando repetido, é o gatilho para adicionar um parser
+    novo ao dispatcher. Nunca antes.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.mkdtemp()
+        self._logs = Path(self._tmp) / "logs"
+        self._logs.mkdir()
+        self._orig_logs_dir = parser.LOGS_DIR
+        parser.LOGS_DIR = str(self._logs)
+        self._orig_ledger = parser.LEDGER_PATH
+        parser.LEDGER_PATH = str(Path(self._tmp) / "no_ledger.jsonl")
+
+    def tearDown(self) -> None:
+        parser.LOGS_DIR = self._orig_logs_dir
+        parser.LEDGER_PATH = self._orig_ledger
+
+    def _write_analyze_log(
+        self,
+        name: str,
+        *,
+        ts: str,
+        decision: str = "TRIGGER_ANALYZE",
+        command: str = "cargo",
+        event: str = "TEST_RUN",
+        confidence: object = _SENTINEL,  # _SENTINEL = sem campo diagnosis
+    ) -> None:
+        payload = {
+            "version":    1,
+            "timestamp":  ts,
+            "command":    command,
+            "exit_code":  1,
+            "output":     "",
+            "session_id": name,
+            "language":   "rust",
+            "event":      event,
+            "decision":   decision,
+        }
+        if confidence is not _SENTINEL:
+            payload["diagnosis"] = {"version": 1, "confidence": confidence}
+        p = self._logs / f"{ts.replace(':','-')}_{name}_exit1.json"
+        p.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_counts_triggered_analysis_without_parser_hit(self) -> None:
+        # 2 cargo silenciados (sem diagnosis, none)
+        self._write_analyze_log("s1", ts="2026-04-18T09:00:00Z")
+        self._write_analyze_log(
+            "s2", ts="2026-04-18T09:00:01Z", confidence="none",
+        )
+        # 1 tsc silenciado
+        self._write_analyze_log("s3", ts="2026-04-18T09:00:02Z", command="tsc")
+        # 1 hit: diagnose funcionou — NÃO conta
+        self._write_analyze_log(
+            "h1", ts="2026-04-18T09:00:03Z", confidence="high",
+        )
+        # Snapshot — NÃO conta
+        self._write_analyze_log(
+            "n1", ts="2026-04-18T09:00:04Z",
+            decision="TRIGGER_SNAPSHOT", command="git", event="CODE_CHANGE",
+        )
+        # Execução saudável — NÃO conta
+        self._write_analyze_log(
+            "ok", ts="2026-04-18T09:00:05Z",
+            decision="NONE", command="echo",
+        )
+
+        result = parser.run()
+
+        self.assertEqual(result["silenced_events"], 3)
+        self.assertEqual(
+            result["silenced_by_command"],
+            {"cargo": 2, "tsc": 1},
+            f"breakdown errado: {result['silenced_by_command']}",
+        )
+
+    def test_zero_when_no_analyze_logs(self) -> None:
+        self._write_analyze_log(
+            "only_snapshot", ts="2026-04-18T09:10:00Z",
+            decision="TRIGGER_SNAPSHOT", command="git",
+        )
+        result = parser.run()
+        self.assertEqual(result["silenced_events"], 0)
+        self.assertEqual(result["silenced_by_command"], {})
+
+    def test_breakdown_capped_at_5(self) -> None:
+        # 6 comandos distintos, todos silenciados — só top 5 aparece
+        for i, cmd in enumerate(["a", "b", "c", "d", "e", "f"]):
+            self._write_analyze_log(
+                f"cmd{i}", ts=f"2026-04-18T09:20:{i:02d}Z", command=cmd,
+            )
+        result = parser.run()
+        self.assertEqual(result["silenced_events"], 6)
+        self.assertLessEqual(len(result["silenced_by_command"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

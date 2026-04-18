@@ -32,6 +32,8 @@ interface DashboardStats {
   tokens_estimados: number;
   ultimo_evento: string | null;
   recent_diagnoses?: DiagnosisView[];
+  silenced_events?: number;
+  silenced_by_command?: Record<string, number>;
   atualizado_em: string;
   error?: string;
   fail_closed?: boolean;
@@ -55,6 +57,21 @@ const FAILURE_COLORS: Record<string, string> = {
   command_not_found: "bg-atrisk",
   system_error: "bg-atrisk",
   unknown: "bg-text-3",
+};
+
+// Mapeia error_type → label curto mostrado como badge no bloco
+// "Diagnoses recentes". Fonte: campo persistido no log pelo parser Go.
+// Qualquer error_type desconhecido cai no fallback "ANALYSIS".
+const ERROR_TYPE_LABEL: Record<string, string> = {
+  go_test_assertion: "TEST",
+  go_build_error:    "BUILD",
+  file_line_only:    "TEST?",
+};
+
+const ERROR_TYPE_STYLE: Record<string, string> = {
+  go_test_assertion: "bg-accent/15 text-accent",
+  go_build_error:    "bg-degraded/20 text-degraded",
+  file_line_only:    "bg-text-3/15 text-text-2",
 };
 
 function fmtTime(iso: string | null): string {
@@ -352,6 +369,39 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Silenced events — sinal para evolução do parser.
+          Execuções em que o decision engine pediu análise mas nenhum
+          parser casou. Se um comando aparecer aqui recorrentemente, é
+          o gatilho honesto para adicionar um novo parser ao dispatcher. */}
+      {stats.silenced_events !== undefined && stats.silenced_events > 0 && (
+        <div className="rounded-[var(--radius-lg)] border border-border-soft bg-surface/50 p-4 mb-6 flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <span className="text-xs font-mono text-text-3 uppercase tracking-wider">
+              Silenced
+            </span>
+            <div className="font-mono text-sm text-text mt-1">
+              <span className="text-degraded font-semibold">
+                {stats.silenced_events}
+              </span>{" "}
+              execuções pediram análise sem parser correspondente.
+            </div>
+          </div>
+          {stats.silenced_by_command &&
+            Object.keys(stats.silenced_by_command).length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                {Object.entries(stats.silenced_by_command).map(([cmd, n]) => (
+                  <span
+                    key={cmd}
+                    className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-degraded/15 text-degraded"
+                  >
+                    {cmd} · {n}
+                  </span>
+                ))}
+              </div>
+            )}
+        </div>
+      )}
+
       {/* Diagnoses recentes — vindos direto do campo `diagnosis` do log.
           Parser Go é a fonte; este bloco é só renderização. */}
       {stats.recent_diagnoses && stats.recent_diagnoses.length > 0 && (
@@ -372,6 +422,16 @@ export default function DashboardPage() {
                   <span className="font-mono text-xs text-text-2">
                     {d.command} · {d.event} · exit {d.exit_code}
                   </span>
+                  {d.error_type && (
+                    <span
+                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                        ERROR_TYPE_STYLE[d.error_type] ?? "bg-text-3/15 text-text-2"
+                      }`}
+                      title={d.error_type}
+                    >
+                      {ERROR_TYPE_LABEL[d.error_type] ?? "ANALYSIS"}
+                    </span>
+                  )}
                   <span
                     className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
                       d.confidence === "high"

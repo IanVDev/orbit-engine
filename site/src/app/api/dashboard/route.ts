@@ -54,6 +54,7 @@ interface RawLog {
   duration_ms?: number;
   execution_id?: string;
   anchor_status?: string;
+  decision?: string;
   diagnosis?: DiagnosisPayload;
   [key: string]: unknown;
 }
@@ -105,6 +106,8 @@ interface DashboardStats {
   tokens_estimados: number;
   ultimo_evento: string | null;
   recent_diagnoses: DiagnosisView[];
+  silenced_events: number;
+  silenced_by_command: Record<string, number>;
   atualizado_em: string;
 }
 
@@ -140,6 +143,39 @@ function collectRecentDiagnoses(executions: ExecLog[]): DiagnosisView[] {
   }
   views.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
   return views.slice(0, RECENT_DIAGNOSES_LIMIT);
+}
+
+// Silenced events: execuções em que o decision engine pediu análise
+// mas o parser não contribuiu (confidence=none ou diagnosis ausente).
+// Sinal para decidir que parser adicionar ao dispatcher — nunca inferir
+// padrão antes de ver esse número crescer.
+const SILENCED_BY_COMMAND_LIMIT = 5;
+
+function isSilenced(log: ExecLog): boolean {
+  if (log.decision !== "TRIGGER_ANALYZE") return false;
+  const d = log.diagnosis;
+  if (!d || typeof d !== "object") return true;
+  return d.confidence === "none";
+}
+
+function collectSilenced(executions: ExecLog[]): {
+  count: number;
+  byCommand: Record<string, number>;
+} {
+  const by: Record<string, number> = {};
+  let count = 0;
+  for (const e of executions) {
+    if (!isSilenced(e)) continue;
+    count++;
+    const cmd = e.command ?? "unknown";
+    by[cmd] = (by[cmd] ?? 0) + 1;
+  }
+  const top = Object.fromEntries(
+    Object.entries(by)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, SILENCED_BY_COMMAND_LIMIT),
+  );
+  return { count, byCommand: top };
 }
 
 function failureType(exitCode: number | undefined): string {
@@ -287,6 +323,8 @@ function aggregate(
       tokens_estimados: 0,
       ultimo_evento: null,
       recent_diagnoses: [],
+      silenced_events: 0,
+      silenced_by_command: {},
       atualizado_em: new Date().toISOString(),
     };
   }
@@ -330,6 +368,8 @@ function aggregate(
     0,
   );
 
+  const silenced = collectSilenced(executions);
+
   return {
     total_execucoes: total,
     sucesso,
@@ -347,6 +387,8 @@ function aggregate(
     tokens_estimados,
     ultimo_evento: timestamps.length ? [...timestamps].sort().at(-1)! : null,
     recent_diagnoses: collectRecentDiagnoses(executions),
+    silenced_events: silenced.count,
+    silenced_by_command: silenced.byCommand,
     atualizado_em: new Date().toISOString(),
   };
 }

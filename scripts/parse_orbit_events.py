@@ -227,6 +227,45 @@ def _collect_recent_diagnoses(executions: list[dict]) -> list[dict]:
     return views[:_RECENT_DIAGNOSES_LIMIT]
 
 
+# ---------------------------------------------------------------------------
+# Silenced events (signal collection, NOT speculation)
+# ---------------------------------------------------------------------------
+#
+# Uma execução é "silenced" quando o DecisionEngine pediu análise
+# (decision == TRIGGER_ANALYZE) mas o parser não contribuiu — ou porque
+# confidence == "none" ou porque o payload diagnosis está ausente.
+#
+# Semântica: o sistema sinalizou "preciso de análise" e falhou em entregar.
+# Esta métrica transforma a decisão "quando adicionar um parser novo"
+# de especulação em leitura de sinal: se `silenced_by_command` mostrar
+# o mesmo comando recorrentemente (ex.: cargo, tsc), é o gatilho para
+# estender o dispatcher — nunca antes.
+_SILENCED_BY_COMMAND_LIMIT = 5
+
+
+def _is_silenced(exec_log: dict) -> bool:
+    if exec_log.get("decision") != "TRIGGER_ANALYZE":
+        return False
+    d = exec_log.get("diagnosis")
+    if not isinstance(d, dict):
+        return True
+    return d.get("confidence") == "none"
+
+
+def _collect_silenced(executions: list[dict]) -> tuple[int, dict[str, int]]:
+    by_cmd: dict[str, int] = {}
+    total = 0
+    for e in executions:
+        if not _is_silenced(e):
+            continue
+        total += 1
+        cmd = e.get("command") or "unknown"
+        by_cmd[cmd] = by_cmd.get(cmd, 0) + 1
+    # Top-N por frequência; o dashboard renderiza sem mais ordenação.
+    top = dict(sorted(by_cmd.items(), key=lambda x: -x[1])[:_SILENCED_BY_COMMAND_LIMIT])
+    return total, top
+
+
 def aggregate(
     executions: list[dict], anchors: list[dict], ledger: list[dict]
 ) -> dict[str, Any]:
@@ -250,6 +289,8 @@ def aggregate(
             "tokens_estimados": 0,
             "ultimo_evento": None,
             "recent_diagnoses": [],
+            "silenced_events": 0,
+            "silenced_by_command": {},
             "atualizado_em": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -295,6 +336,8 @@ def aggregate(
         e.get("impact_estimated_tokens", 0) or 0 for e in ledger
     )
 
+    silenced_count, silenced_by_cmd = _collect_silenced(executions)
+
     return {
         "total_execucoes": total,
         "sucesso": sucesso,
@@ -312,6 +355,8 @@ def aggregate(
         "tokens_estimados": tokens_estimados,
         "ultimo_evento": ultimo_evento,
         "recent_diagnoses": _collect_recent_diagnoses(executions),
+        "silenced_events": silenced_count,
+        "silenced_by_command": silenced_by_cmd,
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
 
