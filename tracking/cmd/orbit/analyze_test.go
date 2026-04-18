@@ -104,3 +104,14 @@ func TestAnalyzeEmitHighRisk_FormatAndSilence(t *testing.T) {
 		}
 	})
 }
+
+// TestAnalyzeDeprecationMsg garante que a string canônica do aviso
+// permanece estável — hooks/CI podem grepar por ela.
+func TestAnalyzeDeprecationMsg(t *testing.T) {
+	if !strings.Contains(analyzeDeprecationMsg, "deprecated") {
+		t.Errorf("mensagem de deprecation deve conter 'deprecated': %q", analyzeDeprecationMsg)
+	}
+	if !strings.Contains(analyzeDeprecationMsg, "doctor --alert-only") {
+		t.Errorf("mensagem deve apontar para 'doctor --alert-only': %q", analyzeDeprecationMsg)
+	}
+}

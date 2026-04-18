@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from orchestrator.budget import BudgetGate, CostEstimate
+from orchestrator.skill.budget import BudgetGate, CostEstimate
 
 
 # ── Models ───────────────────────────────────────────────────────────

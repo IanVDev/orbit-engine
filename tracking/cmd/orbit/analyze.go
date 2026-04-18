@@ -1,20 +1,16 @@
-// analyze.go — comando `orbit analyze`.
+// analyze.go — alias deprecated de `orbit doctor --alert-only`.
 //
-// Executa as heurísticas de ambiente já definidas em doctor.go e emite saída
-// APENAS se detectar pelo menos um padrão de risco >= HIGH (CRITICAL no
-// vocabulário do doctor). Caso contrário, permanece em silêncio — ideal para
-// uso em hooks, pre-commit ou shell rc.
+// Mantido apenas para compatibilidade com hooks/scripts existentes.
+// Toda a lógica vive logicamente em doctor.go (modo --alert-only).
 //
-// Formato por padrão detectado:
+// Comportamento:
+//   - Imprime aviso de deprecation em stderr.
+//   - Executa as mesmas heurísticas, emitindo somente CRITICAL no formato
+//     canônico (header / Risk / Context / Action).
+//   - Silêncio quando ambiente saudável.
 //
-//	⚠️ Pattern detected: <name>
-//	Risk: <level>
-//	Action: <1 ação>
-//
-// Restrições respeitadas:
-//   - não altera as heurísticas originais (reusa as funções check*)
-//   - não adiciona backend ou dependências
-//   - não persiste dados
+// Helpers (collectAnalysis, emitHighRisk, contextFor) seguem aqui porque
+// também são reutilizados por `orbit doctor --alert-only` em doctor.go.
 package main
 
 import (
@@ -27,8 +23,14 @@ import (
 // highRiskLevel é o rótulo externo exibido ao usuário.
 const highRiskLevel = "HIGH"
 
-// runAnalyze é o entrypoint do subcomando.
+// analyzeDeprecationMsg é impresso em stderr toda vez que `orbit analyze`
+// é invocado. Mantém compatibilidade sem esconder a migração.
+const analyzeDeprecationMsg = "⚠️  `orbit analyze` está deprecated — use `orbit doctor --alert-only`. Será removido em uma versão futura.\n"
+
+// runAnalyze é o entrypoint do subcomando deprecated. Imprime aviso e
+// delega para a mesma rotina usada por `orbit doctor --alert-only`.
 func runAnalyze() error {
+	fmt.Fprint(os.Stderr, analyzeDeprecationMsg)
 	return analyzeTo(os.Stdout)
 }
 
