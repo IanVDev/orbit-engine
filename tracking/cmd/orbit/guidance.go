@@ -1,40 +1,35 @@
-// guidance.go — mensagens acionáveis derivadas do output de execução.
+// guidance.go — texto curto apontando o local provável da falha.
 //
-// Para TEST_FAIL (event=TEST_RUN com exit != 0): extrai a primeira
+// Para TEST_FAIL (event=TEST_RUN com exit != 0): extrai a PRIMEIRA
 // ocorrência de <file>:<line> do output e devolve exatamente isso.
 // Sem mensagens genéricas. Sem sugestões inventadas.
 //
+// A regex compartilhada (fileLineLooseRe) mora em diagnose.go — este
+// arquivo é apenas a superfície pública usada pelo `run.go`. Qualquer
+// evolução de detecção (novos parsers, novos eventos) vai para diagnose.go
+// para manter um único domicílio de contrato.
+//
 // Fail-closed:
-//   - Se nenhum match é encontrado → guidance vazio.
-//   - Qualquer erro de regex/parsing → guidance vazio.
+//   - evento != TEST_RUN ou exit == 0     → ""
+//   - nenhum match                        → ""
+//   - linha não-numérica                  → ""
 package main
 
-import "regexp"
-
-// fileLineRe casa tokens do tipo "path/file.ext:123" (extensão obrigatória
-// para evitar falsos positivos em URLs ou timestamps com ':'). O path pode
-// conter '/', '\', '-', '_', '.', dígitos, letras.
-var fileLineRe = regexp.MustCompile(`([A-Za-z0-9_./\\\-]+\.[A-Za-z0-9]+):(\d+)`)
+import "strconv"
 
 // BuildGuidance devolve o texto de guidance a ser exibido ao usuário e
-// gravado no log. Ver regras no topo do arquivo.
+// gravado no log (campo RunResult.Guidance). Aplica-se a eventos com
+// parser acoplado (TEST_RUN e BUILD); demais categorias calam.
 func BuildGuidance(event EventType, exitCode int, output string) string {
-	// TEST_FAIL é a única categoria com guidance "apontar local".
-	if event == EventTestRun && exitCode != 0 {
-		return extractFirstFileLine(output)
-	}
-	return ""
-}
-
-// extractFirstFileLine retorna a primeira correspondência de file:line
-// encontrada no texto, no formato exato "<file>:<line>". Sem match → "".
-func extractFirstFileLine(text string) string {
-	if text == "" {
+	if exitCode == 0 {
 		return ""
 	}
-	m := fileLineRe.FindStringSubmatch(text)
-	if len(m) < 3 {
+	if event != EventTestRun && event != EventBuild {
 		return ""
 	}
-	return m[1] + ":" + m[2]
+	file, line, ok := firstFileLine(output)
+	if !ok {
+		return ""
+	}
+	return file + ":" + strconv.Itoa(line)
 }

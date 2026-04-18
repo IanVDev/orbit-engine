@@ -171,6 +171,244 @@ def _link_skill_events(executions: list[dict], ledger: list[dict]) -> None:
             entry["link_window_seconds"] = 60
 
 
+# ---------------------------------------------------------------------------
+# Diagnosis payload (contract surfaced to dashboard)
+# ---------------------------------------------------------------------------
+#
+# O log pode trazer um campo opcional `diagnosis` já preenchido pelo Go no
+# momento do `orbit run` (ver run.go → DiagnosisPayload). Contrato:
+#
+#   diagnosis: {
+#     "version":     int,
+#     "error_type":  str?,
+#     "test_name":   str?,
+#     "file":        str?,
+#     "line":        int?,
+#     "message":     str?,
+#     "confidence":  "high" | "medium" | "none"
+#   }
+#
+# Parser é FONTE SECUNDÁRIA: só lê o payload persistido. Não tenta inferir
+# de `output` se `diagnosis` está ausente ou malformado. Fail-closed:
+#   - ausente          → não aparece em recent_diagnoses (retrocompat)
+#   - não-dict         → ignorado
+#   - sem confidence   → ignorado
+#   - confidence=none  → ignorado (parser já disse "não sei")
+_VALID_CONFIDENCE = frozenset({"high", "medium"})
+_RECENT_DIAGNOSES_LIMIT = 10
+
+
+def _extract_diagnosis_view(exec_log: dict) -> Optional[dict]:
+    """Fail-closed: devolve dict pronto para surfacear, ou None."""
+    d = exec_log.get("diagnosis")
+    if not isinstance(d, dict):
+        return None
+    confidence = d.get("confidence")
+    if confidence not in _VALID_CONFIDENCE:
+        return None
+    return {
+        "timestamp":   exec_log.get("timestamp"),
+        "command":     exec_log.get("command"),
+        "event":       exec_log.get("event"),
+        "exit_code":   exec_log.get("exit_code"),
+        "error_type":  d.get("error_type", ""),
+        "test_name":   d.get("test_name", ""),
+        "file":        d.get("file", ""),
+        "line":        d.get("line", 0),
+        "message":     d.get("message", ""),
+        "confidence":  confidence,
+    }
+
+
+def _collect_recent_diagnoses(executions: list[dict]) -> list[dict]:
+    """Top-N mais recentes (timestamp desc) com confidence high/medium."""
+    views = [v for v in (_extract_diagnosis_view(e) for e in executions) if v]
+    views.sort(key=lambda v: v.get("timestamp") or "", reverse=True)
+    return views[:_RECENT_DIAGNOSES_LIMIT]
+
+
+# ---------------------------------------------------------------------------
+# Silenced events (signal collection, NOT speculation)
+# ---------------------------------------------------------------------------
+#
+# Uma execução é "silenced" quando o DecisionEngine pediu análise
+# (decision == TRIGGER_ANALYZE) mas o parser não contribuiu — ou porque
+# confidence == "none" ou porque o payload diagnosis está ausente.
+#
+# Semântica: o sistema sinalizou "preciso de análise" e falhou em entregar.
+# Esta métrica transforma a decisão "quando adicionar um parser novo"
+# de especulação em leitura de sinal: se `silenced_by_command` mostrar
+# o mesmo comando recorrentemente (ex.: cargo, tsc), é o gatilho para
+# estender o dispatcher — nunca antes.
+_SILENCED_BY_COMMAND_LIMIT = 5
+
+
+def _is_silenced(exec_log: dict) -> bool:
+    if exec_log.get("decision") != "TRIGGER_ANALYZE":
+        return False
+    d = exec_log.get("diagnosis")
+    if not isinstance(d, dict):
+        return True
+    return d.get("confidence") == "none"
+
+
+def _collect_silenced(executions: list[dict]) -> tuple[int, dict[str, int]]:
+    by_cmd: dict[str, int] = {}
+    total = 0
+    for e in executions:
+        if not _is_silenced(e):
+            continue
+        total += 1
+        cmd = e.get("command") or "unknown"
+        by_cmd[cmd] = by_cmd.get(cmd, 0) + 1
+    # Top-N por frequência; o dashboard renderiza sem mais ordenação.
+    top = dict(sorted(by_cmd.items(), key=lambda x: -x[1])[:_SILENCED_BY_COMMAND_LIMIT])
+    return total, top
+
+
+# ---------------------------------------------------------------------------
+# Parser expansion contract (policy-as-code)
+# ---------------------------------------------------------------------------
+#
+# Política determinística para a pergunta "quando o Orbit deveria ganhar um
+# parser novo (tsc, cargo, rustc, ...)". Não é score, não é recomendação —
+# é um gatilho binário derivado de contagens verificáveis.
+#
+# Um comando X é "expansion candidate" quando, considerando apenas execuções
+# com timestamp dentro de [now - PARSER_EXPANSION_WINDOW_DAYS, now]:
+#
+#   count(_is_silenced e command_bucket == X)          >= PARSER_EXPANSION_THRESHOLD
+#   |{ UTC date of each silenced hit }|                >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+#
+# Normalização do comando: split()[0] (bucket por binário — ignora flags).
+# Timezone: UTC sempre. Ordenação de saída: count desc, command asc.
+#
+# NOTA ANTI-ACOPLAMENTO:
+# PARSER_EXPANSION_THRESHOLD == _SILENCED_BY_COMMAND_LIMIT (ambos = 5) é
+# coincidência NUMÉRICA, não conceitual. Top-N é cap visual; threshold é
+# gatilho semântico. Mantenha independentes mesmo que virem diferentes.
+PARSER_EXPANSION_THRESHOLD = 5
+PARSER_EXPANSION_WINDOW_DAYS = 7
+PARSER_EXPANSION_MIN_DISTINCT_DAYS = 2
+
+
+def _ts_epoch(iso: str) -> float:
+    """Parse ISO 8601 → epoch (UTC). Fail-closed: retorna 0 em erro."""
+    if not iso:
+        return 0.0
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _now_epoch() -> float:
+    """Indireção para tests — monkeypatch aqui para congelar o relógio."""
+    return datetime.now(timezone.utc).timestamp()
+
+
+def _command_bucket(command: Optional[str]) -> str:
+    """`cargo build --release` → `cargo`. Tokens vazios ⇒ 'unknown'."""
+    raw = command or "unknown"
+    parts = raw.split()
+    return parts[0] if parts else "unknown"
+
+
+def _collect_expansion_candidates(
+    executions: list[dict], *, now_epoch: Optional[float] = None
+) -> list[dict]:
+    """Candidates ordenados por (count desc, command asc). Fail-closed."""
+    if now_epoch is None:
+        now_epoch = _now_epoch()
+    window_start = now_epoch - (PARSER_EXPANSION_WINDOW_DAYS * 86400)
+
+    agg: dict[str, dict] = {}
+    for e in executions:
+        if not _is_silenced(e):
+            continue
+        ts = _ts_epoch(e.get("timestamp") or "")
+        if ts <= 0 or ts < window_start or ts > now_epoch:
+            continue
+        bucket = _command_bucket(e.get("command"))
+        day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        entry = agg.setdefault(bucket, {"count": 0, "days": set()})
+        entry["count"] += 1
+        entry["days"].add(day)
+
+    out: list[dict] = []
+    for cmd, stats in agg.items():
+        if (
+            stats["count"] >= PARSER_EXPANSION_THRESHOLD
+            and len(stats["days"]) >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+        ):
+            out.append({
+                "command":        cmd,
+                "silenced_count": stats["count"],
+                "distinct_days":  len(stats["days"]),
+            })
+    out.sort(key=lambda x: (-x["silenced_count"], x["command"]))
+    return out
+
+
+def _expansion_policy_view() -> dict:
+    """Política embedada no JSON da API (self-documenting)."""
+    return {
+        "threshold":         PARSER_EXPANSION_THRESHOLD,
+        "window_days":       PARSER_EXPANSION_WINDOW_DAYS,
+        "min_distinct_days": PARSER_EXPANSION_MIN_DISTINCT_DAYS,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Decision protocol (quando um candidate vira ação)
+# ---------------------------------------------------------------------------
+#
+# Texto acompanha a política técnica acima. Governa a transição entre
+# "candidato apareceu" e "parser novo é escrito". É prosa deliberadamente
+# curta; documento separado apodrece, constante versionada não.
+#
+# Leitor-alvo: quem está prestes a abrir uma PR de novo parser. O teste
+# `test_decision_protocol_is_documented` trava os marcadores semânticos —
+# não o cumprimento, que é humano.
+EXPANSION_DECISION_PROTOCOL = """\
+PROTOCOLO DE DECISÃO — expansão de parser
+
+Este texto acompanha a política `expansion_candidates` (ver
+PARSER_EXPANSION_THRESHOLD acima) e governa a transição entre
+"candidato apareceu" e "parser novo é escrito".
+
+O aparecimento em `expansion_candidates` NUNCA autoriza implementação
+imediata. Aparição é gatilho de OBSERVAÇÃO — não de ação. Um único
+pico dentro de um sprint pode ser ruído (CI burst, workshop,
+onboarding isolado). Para que um candidato vire sinal acionável, as
+quatro condições abaixo devem ser todas cumpridas:
+
+1. OBSERVAÇÃO inicial (T0). O comando X está em
+   `expansion_candidates` num dump do `/api/dashboard`. Registrar
+   fora do sistema: timestamp T0 + snapshot ou export do JSON.
+
+2. CONFIRMAÇÃO após ciclo completo (T1). Aguardar pelo menos
+   PARSER_EXPANSION_WINDOW_DAYS (= 7 dias). Em T1 >= T0 + 7d,
+   consultar novamente. Se o mesmo comando X continua em
+   `expansion_candidates`, houve silenced events NOVOS desde T0 —
+   persistência real, não inércia da janela anterior.
+
+3. CITAÇÃO na PR. O commit que introduz o parser de X deve
+   referenciar T0 e T1 no corpo: timestamps ISO e trechos literais
+   do JSON de ambas as datas. Sem esses dois pontos documentados,
+   a PR é rejeitada em revisão por quebra de protocolo — não por
+   código.
+
+4. REINÍCIO em qualquer falha. Se em T1 o candidato desaparece, OU
+   o bucket do comando difere entre T0 e T1, OU qualquer condição
+   acima não se cumpre, o ciclo reinicia: T1 passa a ser o novo T0.
+   Não existe crédito acumulado entre ciclos anteriores.
+
+Este protocolo é cognitivo, não código. A única garantia é
+disciplina em revisão de PR.
+"""
+
+
 def aggregate(
     executions: list[dict], anchors: list[dict], ledger: list[dict]
 ) -> dict[str, Any]:
@@ -193,6 +431,11 @@ def aggregate(
             "skill_events": len(ledger),
             "tokens_estimados": 0,
             "ultimo_evento": None,
+            "recent_diagnoses": [],
+            "silenced_events": 0,
+            "silenced_by_command": {},
+            "expansion_policy": _expansion_policy_view(),
+            "expansion_candidates": [],
             "atualizado_em": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -238,6 +481,8 @@ def aggregate(
         e.get("impact_estimated_tokens", 0) or 0 for e in ledger
     )
 
+    silenced_count, silenced_by_cmd = _collect_silenced(executions)
+
     return {
         "total_execucoes": total,
         "sucesso": sucesso,
@@ -254,6 +499,11 @@ def aggregate(
         "skill_events": len(ledger),
         "tokens_estimados": tokens_estimados,
         "ultimo_evento": ultimo_evento,
+        "recent_diagnoses": _collect_recent_diagnoses(executions),
+        "silenced_events": silenced_count,
+        "silenced_by_command": silenced_by_cmd,
+        "expansion_policy": _expansion_policy_view(),
+        "expansion_candidates": _collect_expansion_candidates(executions),
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
 

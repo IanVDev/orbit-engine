@@ -1,26 +1,28 @@
-// diagnose.go — comando `orbit diagnose [log_file]`.
+// diagnose.go — análise pós-hoc de um log de execução.
 //
-// Lê o último log (ou um log específico) em $ORBIT_HOME/logs/ e tenta
-// extrair causa provável da falha a partir do campo `output`.
+// Este arquivo é o DOMICÍLIO ÚNICO de toda detecção de local/causa de
+// falha: regex de file:line, marcadores de frameworks de teste, e a
+// heurística de confiança high/medium/none. guidance.go consome daqui
+// (firstFileLine) em vez de manter parser próprio — ver guardião
+// `TestGuidanceAndDiagnoseAgreeOnLocation`.
 //
-// Escopo (mínimo deliberado):
-//   - parser para `go test`: captura `--- FAIL: TestName` + `file.go:line: msg`
-//   - integra snapshot: o caminho já está no log, só propagamos
+// Contratos:
+//
+//	CLI:    orbit diagnose [log_file] [--json]
+//	Input:  $ORBIT_HOME/logs/*.json (RunResult)
+//	Output: Diagnosis (JSON ou bloco humano)
+//
+// Fast-path: se o log já trouxer `diagnosis` persistido (escrito pelo
+// run.go no momento da execução), reaproveitamos sem re-parsear — o
+// parser roda uma única vez por execução, por definição.
 //
 // Níveis de confiança:
 //
-//	high   — casou `--- FAIL` + `file:line:` na mesma saída
-//	medium — casou apenas `file:line:` (sem marcador de teste)
-//	none   — não casou nada conhecido (fail-closed: sem inferência)
+//	high   — `--- FAIL: TestName` + `file.go:line: msg` no output
+//	medium — file:line com mensagem, sem marcador de teste
+//	none   — fail-closed: padrão desconhecido, campos vazios
 //
-// Fail-closed:
-//   - nenhum log em $ORBIT_HOME/logs/         → erro
-//   - exit_code == 0                          → confidence=none, "saudável"
-//   - event != TEST_RUN                       → confidence=none, não suportado
-//   - padrão não reconhecido                  → confidence=none, vazio
-//
-// Nunca inventa file:line, nunca fabrica mensagens. Se não reconhece,
-// cala — coerente com a regra "silêncio quando saudável/indeterminado".
+// Nunca inventa file:line a partir de texto arbitrário.
 package main
 
 import (
@@ -37,8 +39,9 @@ import (
 	"github.com/IanVDev/orbit-engine/tracking"
 )
 
-// DiagnoseSchemaVersion identifica o contrato do JSON emitido. Subir só em
-// mudanças incompatíveis consumidas por callers externos (dashboard, CI).
+// DiagnoseSchemaVersion identifica o contrato do JSON emitido e persistido
+// em RunResult.Diagnosis. Subir só em mudanças incompatíveis consumidas
+// por callers externos (dashboard, CI).
 const DiagnoseSchemaVersion = 1
 
 // Confidence é o nível de certeza da análise.
@@ -50,8 +53,8 @@ const (
 	ConfidenceHigh   Confidence = "high"
 )
 
-// Diagnosis é o resultado estruturado de `orbit diagnose`. Campos de erro
-// ficam vazios quando Confidence == "none" (fail-closed, sem inferência).
+// Diagnosis é o resultado completo emitido pelo CLI `orbit diagnose`.
+// Campos de erro ficam vazios quando Confidence == "none" (fail-closed).
 type Diagnosis struct {
 	Version      int        `json:"version"`
 	LogPath      string     `json:"log_path"`
@@ -66,22 +69,72 @@ type Diagnosis struct {
 	Confidence   Confidence `json:"confidence"`
 }
 
-// Padrões Go test. Ambos ancorados ao início de linha para reduzir
-// falso-positivo em strings literais embutidas no output.
-var (
-	// `--- FAIL: TestFoo (0.00s)` — marcador canônico do runner.
-	goTestFailRe = regexp.MustCompile(`(?m)^\s*--- FAIL: (\w[\w/]*)`)
+// DiagnosisPayload é o subset persistido em RunResult.Diagnosis.
+// Exclui LogPath/SnapshotPath (ambos deriváveis do contexto do log no
+// momento da leitura) e Event/ExitCode (já presentes no RunResult).
+// Manter o payload minimal preserva a proof (sha256 não inclui este
+// campo) e reduz o diff no log.
+type DiagnosisPayload struct {
+	Version    int        `json:"version"`
+	ErrorType  string     `json:"error_type,omitempty"`
+	TestName   string     `json:"test_name,omitempty"`
+	File       string     `json:"file,omitempty"`
+	Line       int        `json:"line,omitempty"`
+	Message    string     `json:"message,omitempty"`
+	Confidence Confidence `json:"confidence"`
+}
 
-	// `foo_test.go:23: expected X got Y` — assertion de test.T.
-	// Extensão fixa `.go` evita casar em URLs ou timestamps com ':'.
-	goTestLineRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_./\\-]+\.go):(\d+):\s*(.+)$`)
-)
+// ── Regex de detecção (todas aqui, deliberadamente) ──────────────────
+
+// fileLineLooseRe casa tokens "path/file.ext:123" em qualquer lugar
+// do texto. Extensão obrigatória (letra/número) evita casar URLs
+// simples tipo "host:8080" — mas URLs com TLD ("example.com:8080")
+// ainda casam, então o caller DEVE gatinguear por evento/exitcode
+// antes de chamar. Usada por BuildGuidance e como fallback em
+// parseGoTestFailure.
+var fileLineLooseRe = regexp.MustCompile(`([A-Za-z0-9_./\\\-]+\.[A-Za-z0-9]+):(\d+)`)
+
+// goTestFailRe casa o marcador canônico do runner Go:
+// `--- FAIL: TestName` ou `--- FAIL: TestSuite/sub_name`.
+var goTestFailRe = regexp.MustCompile(`(?m)^\s*--- FAIL: (\w[\w/]*)`)
+
+// goFileLineMsgRe casa "file.go:line(:col)?: mensagem" ancorado ao
+// início da linha. Atende dois formatos canônicos:
+//
+//	assertion de test.T:    main_test.go:23: expected X got Y
+//	erro de go build:       ./foo.go:15:2: undefined: bar
+//
+// A coluna é consumida mas NÃO capturada — nosso Diagnosis expõe
+// apenas file/line/message. Extensão fixa .go reduz ambiguidade.
+var goFileLineMsgRe = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_./\\-]+\.go):(\d+)(?::\d+)?:\s*(.+)$`)
+
+// firstFileLine devolve a primeira ocorrência de file:line em output,
+// com parsing numérico já aplicado. API interna usada tanto por
+// BuildGuidance quanto por parseGoTestFailure.
+func firstFileLine(output string) (file string, line int, ok bool) {
+	if output == "" {
+		return "", 0, false
+	}
+	m := fileLineLooseRe.FindStringSubmatch(output)
+	if len(m) < 3 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", 0, false
+	}
+	return m[1], n, true
+}
+
+// ── CLI entrypoint ───────────────────────────────────────────────────
 
 func runDiagnose(logPath string, jsonMode bool) error {
 	return diagnoseTo(os.Stdout, logPath, jsonMode)
 }
 
 // diagnoseTo é a forma testável: escreve em w em vez de os.Stdout.
+// Fast-path: se o RunResult já traz `diagnosis` persistido, reaproveita.
+// Slow-path: computa a partir do output, mesmo pipeline do run.go.
 func diagnoseTo(w io.Writer, logPath string, jsonMode bool) error {
 	if logPath == "" {
 		latest, err := latestLogPath()
@@ -105,27 +158,84 @@ func diagnoseTo(w io.Writer, logPath string, jsonMode bool) error {
 		Confidence:   ConfidenceNone,
 	}
 
-	// Fail-closed: só analisamos TEST_RUN com exit != 0.
-	if result.Event == string(EventTestRun) && result.ExitCode != 0 {
-		parseGoTestFailure(&d, result.Output)
+	if result.Diagnosis != nil {
+		// Fast-path: parser já rodou no momento do run; só reconstitui.
+		applyPayload(&d, result.Diagnosis)
+	} else {
+		// Slow-path (log antigo, pré-persistência): re-parse via dispatcher.
+		dispatchParser(&d, EventType(result.Event), result.ExitCode, result.Output)
 	}
 
 	return emitDiagnosis(w, d, jsonMode)
 }
 
-// parseGoTestFailure popula campos de d a partir do output de `go test`.
-// Fail-closed: qualquer formato desconhecido deixa d inalterado
-// (Confidence="none", demais campos vazios).
+// ── Builder reutilizado pelo run.go ──────────────────────────────────
+
+// BuildDiagnosisForRun é a superfície chamada pelo run.go no momento da
+// execução. Roda o mesmo parser do CLI `orbit diagnose`, mas sem IO:
+// o caller usa o retorno para (a) preencher guidance e (b) persistir
+// no log via RunResult.Diagnosis. Eventos suportados: TEST_RUN, BUILD.
+func BuildDiagnosisForRun(event EventType, exitCode int, output string) Diagnosis {
+	d := Diagnosis{
+		Version:    DiagnoseSchemaVersion,
+		Event:      string(event),
+		ExitCode:   exitCode,
+		Confidence: ConfidenceNone,
+	}
+	dispatchParser(&d, event, exitCode, output)
+	return d
+}
+
+// ToPayload devolve o subset que deve ir para o log. Nil se a análise
+// não produziu informação útil — evita poluir o log com "none".
+func (d Diagnosis) ToPayload() *DiagnosisPayload {
+	if d.Confidence == ConfidenceNone {
+		return nil
+	}
+	return &DiagnosisPayload{
+		Version:    d.Version,
+		ErrorType:  d.ErrorType,
+		TestName:   d.TestName,
+		File:       d.File,
+		Line:       d.Line,
+		Message:    d.Message,
+		Confidence: d.Confidence,
+	}
+}
+
+// applyPayload copia os campos persistidos para uma Diagnosis completa,
+// preservando Version/LogPath/Event/ExitCode já setados pelo caller.
+func applyPayload(d *Diagnosis, p *DiagnosisPayload) {
+	if p == nil {
+		return
+	}
+	d.ErrorType = p.ErrorType
+	d.TestName = p.TestName
+	d.File = p.File
+	d.Line = p.Line
+	d.Message = p.Message
+	d.Confidence = p.Confidence
+	// DiagnoseSchemaVersion já está em d.Version (pode divergir se log
+	// é de versão futura — mantemos a versão do payload por honestidade).
+	if p.Version != 0 {
+		d.Version = p.Version
+	}
+}
+
+// ── Parsers por tipo de evento ───────────────────────────────────────
+
+// parseGoTestFailure popula d a partir do output de `go test`.
+// Fail-closed: qualquer formato desconhecido deixa d inalterado.
 func parseGoTestFailure(d *Diagnosis, output string) {
 	if output == "" {
 		return
 	}
 
 	failMatch := goTestFailRe.FindStringSubmatch(output)
-	lineMatch := goTestLineRe.FindStringSubmatch(output)
+	lineMatch := goFileLineMsgRe.FindStringSubmatch(output)
 
 	if lineMatch == nil {
-		// Sem file:line não há ponto acionável — cala.
+		// Sem file:line com mensagem acionável — cala.
 		return
 	}
 
@@ -145,14 +255,55 @@ func parseGoTestFailure(d *Diagnosis, output string) {
 		return
 	}
 
-	// Medium: file:line sem marcador de teste — ainda útil, menos seguro.
 	d.ErrorType = "file_line_only"
 	d.Confidence = ConfidenceMedium
 }
 
-// latestLogPath devolve o caminho do log mais recente em
-// $ORBIT_HOME/logs/. Determinístico: ordena por nome decrescente
-// (o prefixo é RFC3339Nano, então a maior string lexicográfica é a mais nova).
+// parseGoBuildFailure popula d a partir do output de `go build`.
+// Formato canônico do compilador: "./foo.go:15:2: undefined: bar".
+// Quando casa, confidence=high (a forma é determinística — se matchou,
+// é um erro de compilação real). Sem TestName, por construção.
+//
+// Fail-closed: outputs sem o padrão (import cycle, "cannot find main
+// module", erros de link) mantêm d inalterado.
+func parseGoBuildFailure(d *Diagnosis, output string) {
+	if output == "" {
+		return
+	}
+
+	m := goFileLineMsgRe.FindStringSubmatch(output)
+	if m == nil {
+		return
+	}
+	line, err := strconv.Atoi(m[2])
+	if err != nil {
+		return
+	}
+
+	d.File = m[1]
+	d.Line = line
+	d.Message = strings.TrimSpace(m[3])
+	d.ErrorType = "go_build_error"
+	d.Confidence = ConfidenceHigh
+}
+
+// dispatchParser escolhe o parser certo baseado no evento. Única fonte
+// de verdade do mapeamento event→parser, chamada tanto pelo run.go
+// (via BuildDiagnosisForRun) quanto pelo fast-miss no diagnoseTo.
+func dispatchParser(d *Diagnosis, event EventType, exitCode int, output string) {
+	if exitCode == 0 {
+		return
+	}
+	switch event {
+	case EventTestRun:
+		parseGoTestFailure(d, output)
+	case EventBuild:
+		parseGoBuildFailure(d, output)
+	}
+}
+
+// ── IO helpers ───────────────────────────────────────────────────────
+
 func latestLogPath() (string, error) {
 	base, err := tracking.ResolveStoreHome()
 	if err != nil {
@@ -177,7 +328,6 @@ func latestLogPath() (string, error) {
 	return filepath.Join(dir, names[0]), nil
 }
 
-// loadRunResult lê um log .json e devolve o RunResult decodificado.
 func loadRunResult(path string) (*RunResult, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -220,8 +370,8 @@ func emitDiagnosis(w io.Writer, d Diagnosis, jsonMode bool) error {
 		fmt.Fprintf(w, "  confidence: %s\n", d.Confidence)
 	case d.ExitCode == 0:
 		fmt.Fprintln(w, "  nothing to diagnose — execução saudável.")
-	case d.Event != string(EventTestRun):
-		fmt.Fprintf(w, "  no diagnosis — event %q não suportado neste MVP.\n", d.Event)
+	case d.Event != string(EventTestRun) && d.Event != string(EventBuild):
+		fmt.Fprintf(w, "  no diagnosis — event %q sem parser.\n", d.Event)
 	default:
 		fmt.Fprintln(w, "  no diagnosis — output não casou padrão conhecido (fail-closed).")
 	}

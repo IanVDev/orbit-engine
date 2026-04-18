@@ -21,16 +21,70 @@ const FILENAME_SESSION_RE = /([0-9a-f]{8})_exit\d+\.json$/;
 // Campos obrigatórios em logs versionados (version >= 1)
 const EXECUTION_ESSENTIAL = ["timestamp", "exit_code", "command", "language"] as const;
 
+// Contrato do payload `diagnosis` persistido pelo Go no momento do run
+// (ver tracking/cmd/orbit/diagnose.go → DiagnosisPayload).
+//
+// Este parser é FONTE SECUNDÁRIA: consome apenas o que está no log.
+// Nunca infere de `output` — o Go já rodou o parser.
+//
+// Fail-closed:
+//   - ausente          → ignorado (log antigo)
+//   - não-objeto       → ignorado
+//   - sem confidence   → ignorado
+//   - confidence=none  → ignorado (parser disse "não sei")
+type Confidence = "high" | "medium" | "none";
+
+interface DiagnosisPayload {
+  version?: number;
+  error_type?: string;
+  test_name?: string;
+  file?: string;
+  line?: number;
+  message?: string;
+  confidence?: Confidence;
+}
+
 interface RawLog {
   version?: number;
   timestamp?: string;
   command?: string;
   language?: string;
+  event?: string;
   exit_code?: number;
   duration_ms?: number;
   execution_id?: string;
   anchor_status?: string;
+  decision?: string;
+  diagnosis?: DiagnosisPayload;
   [key: string]: unknown;
+}
+
+interface DiagnosisView {
+  timestamp: string;
+  command: string;
+  event: string;
+  exit_code: number;
+  error_type: string;
+  test_name: string;
+  file: string;
+  line: number;
+  message: string;
+  confidence: "high" | "medium";
+}
+
+// Parser expansion contract (mirror do Python).
+// Mantido byte-a-byte com scripts/parse_orbit_events.py — paridade
+// verificada por tests/test_dashboard_diagnosis.py (test_expansion_candidate_contract).
+interface ExpansionPolicy {
+  threshold: number;
+  window_days: number;
+  min_distinct_days: number;
+}
+
+interface ExpansionCandidate {
+  command: string;
+  silenced_count: number;
+  distinct_days: number;
 }
 
 interface ExecLog extends RawLog {
@@ -66,7 +120,151 @@ interface DashboardStats {
   skill_events: number;
   tokens_estimados: number;
   ultimo_evento: string | null;
+  recent_diagnoses: DiagnosisView[];
+  silenced_events: number;
+  silenced_by_command: Record<string, number>;
+  expansion_policy: ExpansionPolicy;
+  expansion_candidates: ExpansionCandidate[];
   atualizado_em: string;
+}
+
+const VALID_CONFIDENCE: ReadonlySet<string> = new Set(["high", "medium"]);
+const RECENT_DIAGNOSES_LIMIT = 10;
+
+// Fail-closed: devolve view pronta para surfacear ou null.
+function extractDiagnosisView(log: ExecLog): DiagnosisView | null {
+  const d = log.diagnosis;
+  if (!d || typeof d !== "object") return null;
+  const c = d.confidence;
+  if (c !== "high" && c !== "medium") return null;
+
+  return {
+    timestamp: log.timestamp ?? "",
+    command: log.command ?? "",
+    event: log.event ?? "",
+    exit_code: typeof log.exit_code === "number" ? log.exit_code : 0,
+    error_type: d.error_type ?? "",
+    test_name: d.test_name ?? "",
+    file: d.file ?? "",
+    line: typeof d.line === "number" ? d.line : 0,
+    message: d.message ?? "",
+    confidence: c,
+  };
+}
+
+function collectRecentDiagnoses(executions: ExecLog[]): DiagnosisView[] {
+  const views: DiagnosisView[] = [];
+  for (const e of executions) {
+    const v = extractDiagnosisView(e);
+    if (v) views.push(v);
+  }
+  views.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+  return views.slice(0, RECENT_DIAGNOSES_LIMIT);
+}
+
+// Silenced events: execuções em que o decision engine pediu análise
+// mas o parser não contribuiu (confidence=none ou diagnosis ausente).
+// Sinal para decidir que parser adicionar ao dispatcher — nunca inferir
+// padrão antes de ver esse número crescer.
+const SILENCED_BY_COMMAND_LIMIT = 5;
+
+function isSilenced(log: ExecLog): boolean {
+  if (log.decision !== "TRIGGER_ANALYZE") return false;
+  const d = log.diagnosis;
+  if (!d || typeof d !== "object") return true;
+  return d.confidence === "none";
+}
+
+function collectSilenced(executions: ExecLog[]): {
+  count: number;
+  byCommand: Record<string, number>;
+} {
+  const by: Record<string, number> = {};
+  let count = 0;
+  for (const e of executions) {
+    if (!isSilenced(e)) continue;
+    count++;
+    const cmd = e.command ?? "unknown";
+    by[cmd] = (by[cmd] ?? 0) + 1;
+  }
+  const top = Object.fromEntries(
+    Object.entries(by)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, SILENCED_BY_COMMAND_LIMIT),
+  );
+  return { count, byCommand: top };
+}
+
+// ── Parser expansion contract ────────────────────────────────────────
+//
+// Mirror de scripts/parse_orbit_events.py. Altere AMBOS ou nenhum — a
+// suite Python (test_expansion_candidate_contract) faz regex aqui e
+// falha em divergência.
+//
+// NOTA: PARSER_EXPANSION_THRESHOLD == SILENCED_BY_COMMAND_LIMIT é
+// coincidência numérica, não conceitual. Mantenha independentes.
+const PARSER_EXPANSION_THRESHOLD = 5;
+const PARSER_EXPANSION_WINDOW_DAYS = 7;
+const PARSER_EXPANSION_MIN_DISTINCT_DAYS = 2;
+
+function commandBucket(cmd: string | undefined): string {
+  const raw = cmd || "unknown";
+  const parts = raw.split(/\s+/).filter(Boolean);
+  return parts[0] || "unknown";
+}
+
+function expansionPolicyView(): ExpansionPolicy {
+  return {
+    threshold:         PARSER_EXPANSION_THRESHOLD,
+    window_days:       PARSER_EXPANSION_WINDOW_DAYS,
+    min_distinct_days: PARSER_EXPANSION_MIN_DISTINCT_DAYS,
+  };
+}
+
+function collectExpansionCandidates(
+  executions: ExecLog[],
+  nowEpoch: number,
+): ExpansionCandidate[] {
+  const windowStart = nowEpoch - PARSER_EXPANSION_WINDOW_DAYS * 86400;
+  const agg = new Map<string, { count: number; days: Set<string> }>();
+
+  for (const e of executions) {
+    if (!isSilenced(e)) continue;
+    const ts = tsToEpoch(e.timestamp ?? "");
+    if (ts <= 0 || ts < windowStart || ts > nowEpoch) continue;
+    const bucket = commandBucket(e.command);
+    // UTC date (YYYY-MM-DD) — força timezone consistente com Python.
+    const day = new Date(ts * 1000).toISOString().slice(0, 10);
+    let entry = agg.get(bucket);
+    if (!entry) {
+      entry = { count: 0, days: new Set() };
+      agg.set(bucket, entry);
+    }
+    entry.count++;
+    entry.days.add(day);
+  }
+
+  const out: ExpansionCandidate[] = [];
+  for (const [cmd, stats] of agg) {
+    if (
+      stats.count >= PARSER_EXPANSION_THRESHOLD &&
+      stats.days.size >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+    ) {
+      out.push({
+        command:        cmd,
+        silenced_count: stats.count,
+        distinct_days:  stats.days.size,
+      });
+    }
+  }
+  // Ordenação determinística: count desc, command asc.
+  out.sort((a, b) => {
+    if (a.silenced_count !== b.silenced_count) {
+      return b.silenced_count - a.silenced_count;
+    }
+    return a.command < b.command ? -1 : a.command > b.command ? 1 : 0;
+  });
+  return out;
 }
 
 function failureType(exitCode: number | undefined): string {
@@ -213,6 +411,11 @@ function aggregate(
       skill_events: ledger.length,
       tokens_estimados: 0,
       ultimo_evento: null,
+      recent_diagnoses: [],
+      silenced_events: 0,
+      silenced_by_command: {},
+      expansion_policy: expansionPolicyView(),
+      expansion_candidates: [],
       atualizado_em: new Date().toISOString(),
     };
   }
@@ -256,6 +459,8 @@ function aggregate(
     0,
   );
 
+  const silenced = collectSilenced(executions);
+
   return {
     total_execucoes: total,
     sucesso,
@@ -272,6 +477,14 @@ function aggregate(
     skill_events: ledger.length,
     tokens_estimados,
     ultimo_evento: timestamps.length ? [...timestamps].sort().at(-1)! : null,
+    recent_diagnoses: collectRecentDiagnoses(executions),
+    silenced_events: silenced.count,
+    silenced_by_command: silenced.byCommand,
+    expansion_policy: expansionPolicyView(),
+    expansion_candidates: collectExpansionCandidates(
+      executions,
+      Date.now() / 1000,
+    ),
     atualizado_em: new Date().toISOString(),
   };
 }
