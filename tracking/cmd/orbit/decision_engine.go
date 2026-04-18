@@ -65,6 +65,13 @@ func Decide(event EventType, exitCode int) Decision {
 			Action: ActionTriggerSnapshot,
 			Reason: "CODE_CHANGE detectado — snapshot do estado",
 		}
+
+	case EventCodeMerge:
+		return Decision{
+			Event:  event,
+			Action: ActionTriggerSnapshot,
+			Reason: "CODE_MERGE detectado — snapshot pós-merge (crítico)",
+		}
 	}
 
 	return Decision{

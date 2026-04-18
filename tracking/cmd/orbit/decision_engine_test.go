@@ -71,6 +71,46 @@ func TestDecisionEngineMVP(t *testing.T) {
 			wantEvent:  EventUnknown,
 			wantAction: ActionNone,
 		},
+		{
+			name:       "git merge dispara snapshot (CODE_MERGE)",
+			cmd:        "git",
+			args:       []string{"merge", "feature"},
+			exitCode:   0,
+			wantEvent:  EventCodeMerge,
+			wantAction: ActionTriggerSnapshot,
+		},
+		{
+			name:       "git rebase dispara snapshot (CODE_MERGE)",
+			cmd:        "git",
+			args:       []string{"rebase", "main"},
+			exitCode:   0,
+			wantEvent:  EventCodeMerge,
+			wantAction: ActionTriggerSnapshot,
+		},
+		{
+			name:       "pytest falhando dispara analyze",
+			cmd:        "pytest",
+			args:       []string{"tests/"},
+			exitCode:   1,
+			wantEvent:  EventTestRun,
+			wantAction: ActionTriggerAnalyze,
+		},
+		{
+			name:       "npm test passando nao dispara acao",
+			cmd:        "npm",
+			args:       []string{"test"},
+			exitCode:   0,
+			wantEvent:  EventTestRun,
+			wantAction: ActionNone,
+		},
+		{
+			name:       "cargo test falhando dispara analyze",
+			cmd:        "cargo",
+			args:       []string{"test"},
+			exitCode:   1,
+			wantEvent:  EventTestRun,
+			wantAction: ActionTriggerAnalyze,
+		},
 	}
 
 	for _, tc := range cases {

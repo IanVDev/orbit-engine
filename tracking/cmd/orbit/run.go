@@ -29,19 +29,26 @@ import (
 )
 
 // RunResult é o resultado estruturado de um orbit run.
-// Serializado como JSON quando --json está ativo.
+// Serializado como JSON quando --json está ativo e como log por-execução
+// em $ORBIT_HOME/logs/.
 type RunResult struct {
-	Command     string   `json:"command"`
-	Args        []string `json:"args,omitempty"`
-	ExitCode    int      `json:"exit_code"`
-	Output      string   `json:"output"`
-	Proof       string   `json:"proof"`
-	SessionID   string   `json:"session_id"`
-	Timestamp   string   `json:"timestamp"`
-	OutputBytes int64    `json:"output_bytes"`
-	Event       string   `json:"event"`
-	Decision    string   `json:"decision"`
-	Reason      string   `json:"decision_reason,omitempty"`
+	Version      int      `json:"version"`
+	Command      string   `json:"command"`
+	Args         []string `json:"args,omitempty"`
+	ExitCode     int      `json:"exit_code"`
+	Output       string   `json:"output"`
+	Proof        string   `json:"proof"`
+	SessionID    string   `json:"session_id"`
+	Timestamp    string   `json:"timestamp"`
+	DurationMs   int64    `json:"duration_ms"`
+	Language     string   `json:"language"`
+	OutputBytes  int64    `json:"output_bytes"`
+	Event        string   `json:"event"`
+	Decision     string   `json:"decision"`
+	Reason       string   `json:"decision_reason,omitempty"`
+	Criticality  string   `json:"criticality,omitempty"`
+	SnapshotPath string   `json:"snapshot_path,omitempty"`
+	Guidance     string   `json:"guidance,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
@@ -88,7 +95,9 @@ func runRun(args []string, jsonMode bool) error {
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 
+	startedAt := time.Now()
 	runErr := c.Run()
+	durationMs := time.Since(startedAt).Milliseconds()
 
 	exitCode := 0
 	if runErr != nil {
@@ -124,19 +133,42 @@ func runRun(args []string, jsonMode bool) error {
 	// e o fluxo original de orbit run segue inalterado.
 	event := ClassifyCommand(cmdName, cmdArgs)
 	decision := Decide(event, exitCode)
+	criticality := ComputeCriticality(event, exitCode)
+	guidance := BuildGuidance(event, exitCode, output)
+
+	// Snapshot só é tomado quando a decisão pede — fail-soft: erro de git
+	// não derruba o run; só marca incomplete dentro do próprio snapshot.
+	snapshotPath := ""
+	if decision.Action == ActionTriggerSnapshot || decision.Action == ActionTriggerAnalyze {
+		if p, err := TakeSnapshot(sessionID, decision.Reason); err == nil {
+			snapshotPath = p
+		}
+	}
 
 	result := RunResult{
-		Command:     cmdName,
-		Args:        cmdArgs,
-		ExitCode:    exitCode,
-		Output:      output,
-		Proof:       proof,
-		SessionID:   sessionID,
-		Timestamp:   ts.Time.Format(time.RFC3339),
-		OutputBytes: outputBytes,
-		Event:       string(event),
-		Decision:    string(decision.Action),
-		Reason:      decision.Reason,
+		Version:      LogSchemaVersion,
+		Command:      cmdName,
+		Args:         cmdArgs,
+		ExitCode:     exitCode,
+		Output:       output,
+		Proof:        proof,
+		SessionID:    sessionID,
+		Timestamp:    ts.Time.Format(time.RFC3339Nano),
+		DurationMs:   durationMs,
+		Language:     DetectLanguage(cmdName, cmdArgs),
+		OutputBytes:  outputBytes,
+		Event:        string(event),
+		Decision:     string(decision.Action),
+		Reason:       decision.Reason,
+		Criticality:  string(criticality),
+		SnapshotPath: snapshotPath,
+		Guidance:     guidance,
+	}
+
+	// Persistência append-only em $ORBIT_HOME/logs/. Fail-closed: erro é
+	// reportado via stderr, mas não altera o exit code do comando executado.
+	if _, logErr := WriteExecutionLog(result); logErr != nil {
+		fmt.Fprintf(os.Stderr, "orbit: warning — log não persistido: %v\n", logErr)
 	}
 
 	if jsonMode {
@@ -171,6 +203,15 @@ func runRun(args []string, jsonMode bool) error {
 	PrintKV("Timestamp:", ts.Time.Format(time.RFC3339))
 	PrintKV("Event:", string(event))
 	PrintKV("Decision:", string(decision.Action))
+	if criticality != CriticalityNone {
+		PrintKV("Criticality:", string(criticality))
+	}
+	if snapshotPath != "" {
+		PrintKV("Snapshot:", snapshotPath)
+	}
+	if guidance != "" {
+		PrintKV("Guidance:", guidance)
+	}
 	if decision.Action != ActionNone {
 		PrintTip("Decision: " + decision.Reason)
 	}
