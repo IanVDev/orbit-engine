@@ -547,5 +547,66 @@ class ExpansionContractTest(unittest.TestCase):
             f.unlink()
 
 
+class DecisionProtocolTest(unittest.TestCase):
+    """
+    Protege a constante EXPANSION_DECISION_PROTOCOL contra degradação
+    silenciosa. O texto é o único artefato que separa "candidato
+    apareceu" de "parser novo é escrito" — se ele virar decorativo,
+    perde-se o único freio contra expansão por impulso.
+
+    O teste trava PRESENÇA de marcadores semânticos e estrutura mínima.
+    NÃO valida cumprimento — isso é humano, feito em revisão de PR.
+    """
+
+    def test_decision_protocol_is_documented(self) -> None:
+        text = parser.EXPANSION_DECISION_PROTOCOL
+        self.assertTrue(text and text.strip(), "constante vazia")
+
+        # ── Estrutura mínima: >= 4 itens numerados ──────────────────
+        numbered = re.findall(r"(?m)^\s*\d+\.", text)
+        self.assertGreaterEqual(
+            len(numbered), 4,
+            f"protocolo deve ter >= 4 itens numerados, tem {len(numbered)}",
+        )
+
+        # ── Marcadores literais obrigatórios ────────────────────────
+        for term in ["OBSERVAÇÃO", "CONFIRMAÇÃO", "PR", "T0", "T1"]:
+            self.assertIn(
+                term, text,
+                f"termo '{term}' ausente — estrutura do protocolo quebrou",
+            )
+
+        # ── Janela temporal nomeada ─────────────────────────────────
+        self.assertTrue(
+            "7 dias" in text or "PARSER_EXPANSION_WINDOW_DAYS" in text,
+            "texto não referencia janela temporal (7 dias / constante)",
+        )
+
+        # ── Cross-ref com o contrato técnico ────────────────────────
+        self.assertTrue(
+            "expansion_candidates" in text
+            or "PARSER_EXPANSION_THRESHOLD" in text,
+            "texto não referencia o contrato técnico — perde ancoragem",
+        )
+
+        # ── Semântica 1: aparição NÃO implica ação/implementação ────
+        # Casa "aparição ... não ... ação/implementação/autoriza" em até
+        # poucas dezenas de chars, case-insensitive.
+        self.assertRegex(
+            text,
+            r"(?is)apari[cç][aã]o.{0,120}"
+            r"(n[aã]o|nunca).{0,60}"
+            r"(a[cç][aã]o|implementa[cç][aã]o|autoriza)",
+            "texto não deixa explícito que aparição ≠ ação",
+        )
+
+        # ── Semântica 2: reinício do ciclo em falha ─────────────────
+        self.assertRegex(
+            text,
+            r"(?is)(reinicia|recome[cç]a|novo\s+T0|T1\s+passa\s+a\s+ser)",
+            "texto não descreve reinício de ciclo quando condição falha",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

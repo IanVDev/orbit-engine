@@ -359,6 +359,56 @@ def _expansion_policy_view() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Decision protocol (quando um candidate vira ação)
+# ---------------------------------------------------------------------------
+#
+# Texto acompanha a política técnica acima. Governa a transição entre
+# "candidato apareceu" e "parser novo é escrito". É prosa deliberadamente
+# curta; documento separado apodrece, constante versionada não.
+#
+# Leitor-alvo: quem está prestes a abrir uma PR de novo parser. O teste
+# `test_decision_protocol_is_documented` trava os marcadores semânticos —
+# não o cumprimento, que é humano.
+EXPANSION_DECISION_PROTOCOL = """\
+PROTOCOLO DE DECISÃO — expansão de parser
+
+Este texto acompanha a política `expansion_candidates` (ver
+PARSER_EXPANSION_THRESHOLD acima) e governa a transição entre
+"candidato apareceu" e "parser novo é escrito".
+
+O aparecimento em `expansion_candidates` NUNCA autoriza implementação
+imediata. Aparição é gatilho de OBSERVAÇÃO — não de ação. Um único
+pico dentro de um sprint pode ser ruído (CI burst, workshop,
+onboarding isolado). Para que um candidato vire sinal acionável, as
+quatro condições abaixo devem ser todas cumpridas:
+
+1. OBSERVAÇÃO inicial (T0). O comando X está em
+   `expansion_candidates` num dump do `/api/dashboard`. Registrar
+   fora do sistema: timestamp T0 + snapshot ou export do JSON.
+
+2. CONFIRMAÇÃO após ciclo completo (T1). Aguardar pelo menos
+   PARSER_EXPANSION_WINDOW_DAYS (= 7 dias). Em T1 >= T0 + 7d,
+   consultar novamente. Se o mesmo comando X continua em
+   `expansion_candidates`, houve silenced events NOVOS desde T0 —
+   persistência real, não inércia da janela anterior.
+
+3. CITAÇÃO na PR. O commit que introduz o parser de X deve
+   referenciar T0 e T1 no corpo: timestamps ISO e trechos literais
+   do JSON de ambas as datas. Sem esses dois pontos documentados,
+   a PR é rejeitada em revisão por quebra de protocolo — não por
+   código.
+
+4. REINÍCIO em qualquer falha. Se em T1 o candidato desaparece, OU
+   o bucket do comando difere entre T0 e T1, OU qualquer condição
+   acima não se cumpre, o ciclo reinicia: T1 passa a ser o novo T0.
+   Não existe crédito acumulado entre ciclos anteriores.
+
+Este protocolo é cognitivo, não código. A única garantia é
+disciplina em revisão de PR.
+"""
+
+
 def aggregate(
     executions: list[dict], anchors: list[dict], ledger: list[dict]
 ) -> dict[str, Any]:
