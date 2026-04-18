@@ -266,6 +266,99 @@ def _collect_silenced(executions: list[dict]) -> tuple[int, dict[str, int]]:
     return total, top
 
 
+# ---------------------------------------------------------------------------
+# Parser expansion contract (policy-as-code)
+# ---------------------------------------------------------------------------
+#
+# Política determinística para a pergunta "quando o Orbit deveria ganhar um
+# parser novo (tsc, cargo, rustc, ...)". Não é score, não é recomendação —
+# é um gatilho binário derivado de contagens verificáveis.
+#
+# Um comando X é "expansion candidate" quando, considerando apenas execuções
+# com timestamp dentro de [now - PARSER_EXPANSION_WINDOW_DAYS, now]:
+#
+#   count(_is_silenced e command_bucket == X)          >= PARSER_EXPANSION_THRESHOLD
+#   |{ UTC date of each silenced hit }|                >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+#
+# Normalização do comando: split()[0] (bucket por binário — ignora flags).
+# Timezone: UTC sempre. Ordenação de saída: count desc, command asc.
+#
+# NOTA ANTI-ACOPLAMENTO:
+# PARSER_EXPANSION_THRESHOLD == _SILENCED_BY_COMMAND_LIMIT (ambos = 5) é
+# coincidência NUMÉRICA, não conceitual. Top-N é cap visual; threshold é
+# gatilho semântico. Mantenha independentes mesmo que virem diferentes.
+PARSER_EXPANSION_THRESHOLD = 5
+PARSER_EXPANSION_WINDOW_DAYS = 7
+PARSER_EXPANSION_MIN_DISTINCT_DAYS = 2
+
+
+def _ts_epoch(iso: str) -> float:
+    """Parse ISO 8601 → epoch (UTC). Fail-closed: retorna 0 em erro."""
+    if not iso:
+        return 0.0
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _now_epoch() -> float:
+    """Indireção para tests — monkeypatch aqui para congelar o relógio."""
+    return datetime.now(timezone.utc).timestamp()
+
+
+def _command_bucket(command: Optional[str]) -> str:
+    """`cargo build --release` → `cargo`. Tokens vazios ⇒ 'unknown'."""
+    raw = command or "unknown"
+    parts = raw.split()
+    return parts[0] if parts else "unknown"
+
+
+def _collect_expansion_candidates(
+    executions: list[dict], *, now_epoch: Optional[float] = None
+) -> list[dict]:
+    """Candidates ordenados por (count desc, command asc). Fail-closed."""
+    if now_epoch is None:
+        now_epoch = _now_epoch()
+    window_start = now_epoch - (PARSER_EXPANSION_WINDOW_DAYS * 86400)
+
+    agg: dict[str, dict] = {}
+    for e in executions:
+        if not _is_silenced(e):
+            continue
+        ts = _ts_epoch(e.get("timestamp") or "")
+        if ts <= 0 or ts < window_start or ts > now_epoch:
+            continue
+        bucket = _command_bucket(e.get("command"))
+        day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        entry = agg.setdefault(bucket, {"count": 0, "days": set()})
+        entry["count"] += 1
+        entry["days"].add(day)
+
+    out: list[dict] = []
+    for cmd, stats in agg.items():
+        if (
+            stats["count"] >= PARSER_EXPANSION_THRESHOLD
+            and len(stats["days"]) >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+        ):
+            out.append({
+                "command":        cmd,
+                "silenced_count": stats["count"],
+                "distinct_days":  len(stats["days"]),
+            })
+    out.sort(key=lambda x: (-x["silenced_count"], x["command"]))
+    return out
+
+
+def _expansion_policy_view() -> dict:
+    """Política embedada no JSON da API (self-documenting)."""
+    return {
+        "threshold":         PARSER_EXPANSION_THRESHOLD,
+        "window_days":       PARSER_EXPANSION_WINDOW_DAYS,
+        "min_distinct_days": PARSER_EXPANSION_MIN_DISTINCT_DAYS,
+    }
+
+
 def aggregate(
     executions: list[dict], anchors: list[dict], ledger: list[dict]
 ) -> dict[str, Any]:
@@ -291,6 +384,8 @@ def aggregate(
             "recent_diagnoses": [],
             "silenced_events": 0,
             "silenced_by_command": {},
+            "expansion_policy": _expansion_policy_view(),
+            "expansion_candidates": [],
             "atualizado_em": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -357,6 +452,8 @@ def aggregate(
         "recent_diagnoses": _collect_recent_diagnoses(executions),
         "silenced_events": silenced_count,
         "silenced_by_command": silenced_by_cmd,
+        "expansion_policy": _expansion_policy_view(),
+        "expansion_candidates": _collect_expansion_candidates(executions),
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
     }
 

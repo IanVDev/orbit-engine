@@ -34,6 +34,16 @@ interface DashboardStats {
   recent_diagnoses?: DiagnosisView[];
   silenced_events?: number;
   silenced_by_command?: Record<string, number>;
+  expansion_policy?: {
+    threshold: number;
+    window_days: number;
+    min_distinct_days: number;
+  };
+  expansion_candidates?: {
+    command: string;
+    silenced_count: number;
+    distinct_days: number;
+  }[];
   atualizado_em: string;
   error?: string;
   fail_closed?: boolean;
@@ -389,14 +399,31 @@ export default function DashboardPage() {
           {stats.silenced_by_command &&
             Object.keys(stats.silenced_by_command).length > 0 && (
               <div className="flex items-center gap-2 flex-wrap">
-                {Object.entries(stats.silenced_by_command).map(([cmd, n]) => (
-                  <span
-                    key={cmd}
-                    className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-degraded/15 text-degraded"
-                  >
-                    {cmd} · {n}
-                  </span>
-                ))}
+                {Object.entries(stats.silenced_by_command).map(([cmd, n]) => {
+                  // Bucket por binário: o contrato casa candidates via command.split()[0].
+                  const bucket = cmd.split(/\s+/)[0] || cmd;
+                  const isCandidate = stats.expansion_candidates?.some(
+                    (c) => c.command === bucket,
+                  );
+                  return (
+                    <span
+                      key={cmd}
+                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                        isCandidate
+                          ? "bg-atrisk/20 text-atrisk font-semibold"
+                          : "bg-degraded/15 text-degraded"
+                      }`}
+                      title={
+                        isCandidate
+                          ? `candidato a novo parser (threshold ${stats.expansion_policy?.threshold}, ${stats.expansion_policy?.window_days}d)`
+                          : undefined
+                      }
+                    >
+                      {cmd} · {n}
+                      {isCandidate ? " · candidato" : ""}
+                    </span>
+                  );
+                })}
               </div>
             )}
         </div>

@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -350,6 +352,199 @@ class SilencedEventsContractTest(unittest.TestCase):
         result = parser.run()
         self.assertEqual(result["silenced_events"], 6)
         self.assertLessEqual(len(result["silenced_by_command"]), 5)
+
+
+class ExpansionContractTest(unittest.TestCase):
+    """
+    Contrato operacional da regra de expansão de parser.
+
+    Um comando X é expansion candidate apenas se, dentro da janela de
+    PARSER_EXPANSION_WINDOW_DAYS, há:
+      - >= PARSER_EXPANSION_THRESHOLD silenced events
+      - >= PARSER_EXPANSION_MIN_DISTINCT_DAYS dias UTC distintos
+
+    Este único teste trava TODOS os invariantes da política em subTests,
+    incluindo paridade Python↔TS (regex no route.ts).
+    """
+
+    # Relógio congelado para determinismo total.
+    FIXED_NOW_ISO = "2026-04-18T12:00:00Z"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.mkdtemp()
+        self._logs = Path(self._tmp) / "logs"
+        self._logs.mkdir()
+        self._orig_logs_dir = parser.LOGS_DIR
+        parser.LOGS_DIR = str(self._logs)
+        self._orig_ledger = parser.LEDGER_PATH
+        parser.LEDGER_PATH = str(Path(self._tmp) / "no_ledger.jsonl")
+        # Congela o "now" do parser via monkeypatch do helper puro.
+        self._orig_now = parser._now_epoch
+        now = datetime.fromisoformat(self.FIXED_NOW_ISO.replace("Z", "+00:00"))
+        self._now_epoch = now.timestamp()
+        parser._now_epoch = lambda: self._now_epoch
+
+    def tearDown(self) -> None:
+        parser.LOGS_DIR = self._orig_logs_dir
+        parser.LEDGER_PATH = self._orig_ledger
+        parser._now_epoch = self._orig_now
+
+    # Helper local — variante do _write_analyze_log com controle fino de ts.
+    def _log(
+        self, name: str, *, ts: str, command: str = "cargo",
+        confidence: object = _SENTINEL,
+    ) -> None:
+        payload = {
+            "version":    1,
+            "timestamp":  ts,
+            "command":    command,
+            "exit_code":  1,
+            "output":     "",
+            "session_id": name,
+            "language":   "rust",
+            "event":      "TEST_RUN",
+            "decision":   "TRIGGER_ANALYZE",
+        }
+        if confidence is not _SENTINEL:
+            payload["diagnosis"] = {"version": 1, "confidence": confidence}
+        p = self._logs / f"{ts.replace(':','-')}_{name}_exit1.json"
+        p.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_expansion_candidate_contract(self) -> None:
+        """10 invariantes da política em subTests independentes."""
+
+        # ── 1. below_threshold: 4 silenced em 3 dias → NÃO candidato ──
+        with self.subTest("below_threshold"):
+            self._reset_logs()
+            for i in range(4):
+                self._log(f"b{i}", ts=f"2026-04-15T10:0{i}:00Z")
+            result = parser.run()
+            self.assertEqual(result["expansion_candidates"], [])
+
+        # ── 2. single_day_burst: 6 no mesmo dia → NÃO candidato ───────
+        with self.subTest("single_day_burst"):
+            self._reset_logs()
+            for i in range(6):
+                self._log(f"s{i}", ts=f"2026-04-17T10:0{i}:00Z")
+            result = parser.run()
+            self.assertEqual(
+                result["expansion_candidates"], [],
+                "burst num único dia NÃO é sustentado",
+            )
+
+        # ── 3. multi_day_at_threshold: 5 em 2 dias → candidato ─────────
+        with self.subTest("multi_day_at_threshold"):
+            self._reset_logs()
+            for i in range(3):
+                self._log(f"m{i}", ts=f"2026-04-17T10:0{i}:00Z")
+            for i in range(2):
+                self._log(f"n{i}", ts=f"2026-04-18T10:0{i}:00Z")
+            result = parser.run()
+            self.assertEqual(
+                result["expansion_candidates"],
+                [{"command": "cargo", "silenced_count": 5, "distinct_days": 2}],
+            )
+
+        # ── 4. outside_window: 10 silenced 10 dias atrás → não conta ──
+        with self.subTest("outside_window"):
+            self._reset_logs()
+            for i in range(10):
+                # 2026-04-08 = 10 dias antes de 04-18
+                self._log(f"o{i}", ts=f"2026-04-08T10:0{i // 2}:{i % 2}0Z")
+            result = parser.run()
+            self.assertEqual(result["expansion_candidates"], [])
+
+        # ── 5. command_bucket: `cargo build --release` ≡ `cargo build` ─
+        with self.subTest("command_bucket"):
+            self._reset_logs()
+            for i in range(3):
+                self._log(f"a{i}", ts=f"2026-04-17T10:0{i}:00Z",
+                          command="cargo build")
+            for i in range(3):
+                self._log(f"b{i}", ts=f"2026-04-18T10:0{i}:00Z",
+                          command="cargo build --release")
+            result = parser.run()
+            self.assertEqual(
+                result["expansion_candidates"],
+                [{"command": "cargo", "silenced_count": 6, "distinct_days": 2}],
+                "flags diferentes devem colapsar no mesmo binário",
+            )
+
+        # ── 6. utc_tz_consistency: timestamp na borda da meia-noite ──
+        with self.subTest("utc_tz_consistency"):
+            self._reset_logs()
+            # 23:59Z e 00:01Z → dois dias UTC distintos
+            for i in range(3):
+                self._log(f"u{i}", ts=f"2026-04-16T23:59:0{i}Z")
+            for i in range(2):
+                self._log(f"v{i}", ts=f"2026-04-17T00:01:0{i}Z")
+            result = parser.run()
+            cands = result["expansion_candidates"]
+            self.assertEqual(len(cands), 1)
+            self.assertEqual(cands[0]["distinct_days"], 2,
+                             "dias UTC devem cruzar meia-noite corretamente")
+
+        # ── 7. deterministic_ordering: empate de count → alfabético ───
+        with self.subTest("deterministic_ordering"):
+            self._reset_logs()
+            for i in range(3):
+                self._log(f"z{i}", ts=f"2026-04-17T10:0{i}:00Z", command="zulu")
+            for i in range(2):
+                self._log(f"zz{i}", ts=f"2026-04-18T10:0{i}:00Z", command="zulu")
+            for i in range(3):
+                self._log(f"a{i}", ts=f"2026-04-17T11:0{i}:00Z", command="alpha")
+            for i in range(2):
+                self._log(f"aa{i}", ts=f"2026-04-18T11:0{i}:00Z", command="alpha")
+            result = parser.run()
+            cmds = [c["command"] for c in result["expansion_candidates"]]
+            self.assertEqual(cmds, ["alpha", "zulu"],
+                             "empate de count ordena alfabeticamente asc")
+
+        # ── 8. intent_floor_lock: trava do sentido mínimo da política ─
+        with self.subTest("intent_floor_lock"):
+            self.assertGreaterEqual(
+                parser.PARSER_EXPANSION_THRESHOLD, 3,
+                "Threshold < 3 vira ruído — recomendação especulativa",
+            )
+            self.assertGreaterEqual(
+                parser.PARSER_EXPANSION_MIN_DISTINCT_DAYS, 2,
+                "< 2 dias distintos NÃO é 'sustentado'",
+            )
+            self.assertGreaterEqual(
+                parser.PARSER_EXPANSION_WINDOW_DAYS, 3,
+                "janela < 3 dias amplifica ruído de burst",
+            )
+
+        # ── 9. cross_language_parity: TS espelha Python exatamente ────
+        with self.subTest("cross_language_parity"):
+            ts_path = Path(__file__).resolve().parent.parent / "site/src/app/api/dashboard/route.ts"
+            ts_text = ts_path.read_text(encoding="utf-8")
+            for name, py_val in [
+                ("PARSER_EXPANSION_THRESHOLD",         parser.PARSER_EXPANSION_THRESHOLD),
+                ("PARSER_EXPANSION_WINDOW_DAYS",       parser.PARSER_EXPANSION_WINDOW_DAYS),
+                ("PARSER_EXPANSION_MIN_DISTINCT_DAYS", parser.PARSER_EXPANSION_MIN_DISTINCT_DAYS),
+            ]:
+                m = re.search(rf"const\s+{name}\s*=\s*(\d+)\s*;", ts_text)
+                self.assertIsNotNone(m, f"constante {name} não encontrada em route.ts")
+                self.assertEqual(
+                    int(m.group(1)), py_val,
+                    f"drift Python↔TS em {name}: py={py_val} ts={m.group(1)}",
+                )
+
+        # ── 10. policy_embedded_in_output: política viaja no JSON ──────
+        with self.subTest("policy_embedded_in_output"):
+            self._reset_logs()
+            result = parser.run()
+            self.assertEqual(result["expansion_policy"], {
+                "threshold":         parser.PARSER_EXPANSION_THRESHOLD,
+                "window_days":       parser.PARSER_EXPANSION_WINDOW_DAYS,
+                "min_distinct_days": parser.PARSER_EXPANSION_MIN_DISTINCT_DAYS,
+            })
+
+    # Utility — limpa a pasta de logs entre subTests.
+    def _reset_logs(self) -> None:
+        for f in self._logs.glob("*.json"):
+            f.unlink()
 
 
 if __name__ == "__main__":

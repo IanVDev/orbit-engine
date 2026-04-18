@@ -72,6 +72,21 @@ interface DiagnosisView {
   confidence: "high" | "medium";
 }
 
+// Parser expansion contract (mirror do Python).
+// Mantido byte-a-byte com scripts/parse_orbit_events.py — paridade
+// verificada por tests/test_dashboard_diagnosis.py (test_expansion_candidate_contract).
+interface ExpansionPolicy {
+  threshold: number;
+  window_days: number;
+  min_distinct_days: number;
+}
+
+interface ExpansionCandidate {
+  command: string;
+  silenced_count: number;
+  distinct_days: number;
+}
+
 interface ExecLog extends RawLog {
   session_id: string | null;
   parent_event_id: string | null;
@@ -108,6 +123,8 @@ interface DashboardStats {
   recent_diagnoses: DiagnosisView[];
   silenced_events: number;
   silenced_by_command: Record<string, number>;
+  expansion_policy: ExpansionPolicy;
+  expansion_candidates: ExpansionCandidate[];
   atualizado_em: string;
 }
 
@@ -176,6 +193,78 @@ function collectSilenced(executions: ExecLog[]): {
       .slice(0, SILENCED_BY_COMMAND_LIMIT),
   );
   return { count, byCommand: top };
+}
+
+// ── Parser expansion contract ────────────────────────────────────────
+//
+// Mirror de scripts/parse_orbit_events.py. Altere AMBOS ou nenhum — a
+// suite Python (test_expansion_candidate_contract) faz regex aqui e
+// falha em divergência.
+//
+// NOTA: PARSER_EXPANSION_THRESHOLD == SILENCED_BY_COMMAND_LIMIT é
+// coincidência numérica, não conceitual. Mantenha independentes.
+const PARSER_EXPANSION_THRESHOLD = 5;
+const PARSER_EXPANSION_WINDOW_DAYS = 7;
+const PARSER_EXPANSION_MIN_DISTINCT_DAYS = 2;
+
+function commandBucket(cmd: string | undefined): string {
+  const raw = cmd || "unknown";
+  const parts = raw.split(/\s+/).filter(Boolean);
+  return parts[0] || "unknown";
+}
+
+function expansionPolicyView(): ExpansionPolicy {
+  return {
+    threshold:         PARSER_EXPANSION_THRESHOLD,
+    window_days:       PARSER_EXPANSION_WINDOW_DAYS,
+    min_distinct_days: PARSER_EXPANSION_MIN_DISTINCT_DAYS,
+  };
+}
+
+function collectExpansionCandidates(
+  executions: ExecLog[],
+  nowEpoch: number,
+): ExpansionCandidate[] {
+  const windowStart = nowEpoch - PARSER_EXPANSION_WINDOW_DAYS * 86400;
+  const agg = new Map<string, { count: number; days: Set<string> }>();
+
+  for (const e of executions) {
+    if (!isSilenced(e)) continue;
+    const ts = tsToEpoch(e.timestamp ?? "");
+    if (ts <= 0 || ts < windowStart || ts > nowEpoch) continue;
+    const bucket = commandBucket(e.command);
+    // UTC date (YYYY-MM-DD) — força timezone consistente com Python.
+    const day = new Date(ts * 1000).toISOString().slice(0, 10);
+    let entry = agg.get(bucket);
+    if (!entry) {
+      entry = { count: 0, days: new Set() };
+      agg.set(bucket, entry);
+    }
+    entry.count++;
+    entry.days.add(day);
+  }
+
+  const out: ExpansionCandidate[] = [];
+  for (const [cmd, stats] of agg) {
+    if (
+      stats.count >= PARSER_EXPANSION_THRESHOLD &&
+      stats.days.size >= PARSER_EXPANSION_MIN_DISTINCT_DAYS
+    ) {
+      out.push({
+        command:        cmd,
+        silenced_count: stats.count,
+        distinct_days:  stats.days.size,
+      });
+    }
+  }
+  // Ordenação determinística: count desc, command asc.
+  out.sort((a, b) => {
+    if (a.silenced_count !== b.silenced_count) {
+      return b.silenced_count - a.silenced_count;
+    }
+    return a.command < b.command ? -1 : a.command > b.command ? 1 : 0;
+  });
+  return out;
 }
 
 function failureType(exitCode: number | undefined): string {
@@ -325,6 +414,8 @@ function aggregate(
       recent_diagnoses: [],
       silenced_events: 0,
       silenced_by_command: {},
+      expansion_policy: expansionPolicyView(),
+      expansion_candidates: [],
       atualizado_em: new Date().toISOString(),
     };
   }
@@ -389,6 +480,11 @@ function aggregate(
     recent_diagnoses: collectRecentDiagnoses(executions),
     silenced_events: silenced.count,
     silenced_by_command: silenced.byCommand,
+    expansion_policy: expansionPolicyView(),
+    expansion_candidates: collectExpansionCandidates(
+      executions,
+      Date.now() / 1000,
+    ),
     atualizado_em: new Date().toISOString(),
   };
 }
