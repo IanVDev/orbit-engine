@@ -1,16 +1,17 @@
-# orbit-engine v1.0 — Makefile
+# orbit-engine — Makefile
 #
 # Usage:
-#   make test-go          — run all Go tests
-#   make test-python      — run all Python tests
-#   make validate-e2e     — run CLI validators (no external deps)
-#   make validate-promql  — validate governance rules
-#   make gate-v1          — ALL checks must pass before tagging v1.0
-#   make tag-v1           — git tag v1.0.0 (only after gate-v1)
+#   make test-go              — run all Go tests
+#   make test-python          — run all Python tests
+#   make validate-e2e         — run CLI validators (no external deps)
+#   make validate-promql      — validate governance rules
+#   make gate-release         — ALL checks must pass before tagging
+#   make tag-release VERSION=vX.Y.Z   — git tag (only after gate-release)
 #
-# The gate-v1 target is the release gate. If it fails, v1.0 is blocked.
+# The gate-release target is the release gate. If it fails, release is blocked.
+# Aliases gate-v1 / tag-v1 são mantidos para retrocompatibilidade.
 
-.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-v1 tag-v1 clean
+.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-release tag-release gate-v1 tag-v1 clean
 
 # ── Go tests ──────────────────────────────────────────────────────────
 
@@ -66,13 +67,13 @@ validate-promql:
 	cd tracking && go run ./cmd/validate_promql --strict "orbit_unknown_metric" && exit 1 || true
 	@echo "✅ PromQL governance passed"
 
-# ── v1.0 RELEASE GATE ────────────────────────────────────────────────
+# ── RELEASE GATE ─────────────────────────────────────────────────────
 # ALL targets below must pass. If ANY fails, the release is blocked.
 
-gate-v1: test-go-contract test-go test-python validate-e2e validate-promql
+gate-release: test-go-contract test-go test-python validate-e2e validate-promql
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════"
-	@echo "  🟢  v1.0 RELEASE GATE PASSED"
+	@echo "  🟢  RELEASE GATE PASSED"
 	@echo ""
 	@echo "  All checks:"
 	@echo "    ✅ Go contract tests"
@@ -81,18 +82,30 @@ gate-v1: test-go-contract test-go test-python validate-e2e validate-promql
 	@echo "    ✅ E2E in-process validator"
 	@echo "    ✅ PromQL governance"
 	@echo ""
-	@echo "  Ready to tag: make tag-v1"
+	@echo "  Ready to tag: make tag-release VERSION=vX.Y.Z"
 	@echo "════════════════════════════════════════════════════════════"
 
-# ── Tag (only after gate passes) ─────────────────────────────────────
+# Alias retrocompatível.
+gate-v1: gate-release
 
-tag-v1:
+# ── Tag (only after gate passes) ─────────────────────────────────────
+# Usage: make tag-release VERSION=v0.1.0
+
+tag-release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "ERROR: VERSION required. Usage: make tag-release VERSION=v0.1.0"; \
+		exit 1; \
+	fi
 	@echo "Checking gate status..."
-	$(MAKE) gate-v1
+	$(MAKE) gate-release
 	@echo ""
-	@echo "Tagging v1.0.0..."
-	git tag -a v1.0.0 -m "orbit-engine v1.0.0 — validated release"
-	@echo "✅ Tagged v1.0.0. Push with: git push origin v1.0.0"
+	@echo "Tagging $(VERSION)..."
+	git tag -a $(VERSION) -m "orbit-engine $(VERSION) — validated release"
+	@echo "✅ Tagged $(VERSION). Push with: git push origin $(VERSION)"
+
+# Alias retrocompatível: hardcoded v1.0.0 (preservado para callers antigos).
+tag-v1:
+	$(MAKE) tag-release VERSION=v1.0.0
 
 # ── orbit-check (production readiness) ──────────────────────────────
 

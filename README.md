@@ -79,7 +79,7 @@ Pre-built binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm
 
 ```bash
 # pick your platform
-VERSION="v1.0.0"
+VERSION="v0.1.0"
 OS="darwin"   # or: linux
 ARCH="arm64"  # or: amd64
 
@@ -93,7 +93,7 @@ sha256sum -c "${BIN}.sha256"
 chmod +x "${BIN}"
 sudo install -m 0755 "${BIN}" /usr/local/bin/orbit
 
-orbit version  # expects: orbit version v1.0.0 (commit=... build=...)
+orbit version  # expects: orbit version v0.1.0 (commit=... build=...)
 ```
 
 Fail-closed: `sha256sum -c` aborts if the binary does not match the published checksum. Do not skip it.

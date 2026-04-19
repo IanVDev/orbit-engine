@@ -5,7 +5,89 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
-## [1.0.1-rc] — 2026-04-15
+## [0.1.0] — 2026-04-19
+
+### 🎯 Marco
+
+Primeira release pública. Posicionamento de **Fase 1** conforme
+`MONETIZATION.md`: ferramenta CLI local, gratuita, sem cadastro, sem
+servidor obrigatório, sem cobrança. Verifiable end-to-end.
+
+### O que esta release entrega
+
+- **Binário `orbit`** para `linux/amd64`, `linux/arm64`, `darwin/amd64`,
+  `darwin/arm64` (publicados via GitHub Releases com SHA256 ao lado).
+- **Loop fechado de execução:**
+  `run → event → decision → snapshot → log[+diagnosis inline] → verify → diagnose`.
+- **Subcomandos do CLI:**
+  - `orbit run <cmd>` — executa com proof SHA256 e log append-only em `~/.orbit/logs/`
+  - `orbit verify <log>` — re-valida proof de um log persistido
+  - `orbit diagnose [log]` — analisa o último log (parsers de `go test` e `go build`)
+  - `orbit doctor [--alert-only]` — diagnóstico de ambiente (PATH, commit stamp, conectividade)
+  - `orbit context-pack` — gera pacote de contexto para transição entre conversas
+  - `orbit stats` — estatísticas locais via tracking-server opcional
+  - `orbit update` — atualização via GitHub Releases
+  - `orbit quickstart` — jornada init → run → proof → verify
+- **Dashboard Next.js local** lendo `~/.orbit/logs/*.json` direto, sem
+  re-parse: surfacea `recent_diagnoses` com badge `error_type` (TEST/BUILD)
+  e métrica `silenced_events` por comando.
+- **Contrato de expansão de parser** materializado em código:
+  `expansion_policy` + `expansion_candidates` + `EXPANSION_DECISION_PROTOCOL`.
+- **Template de PR** para novo parser (`.github/PULL_REQUEST_TEMPLATE/new_parser.md`).
+
+### O que esta release explicitamente NÃO entrega
+
+- Sem dashboard hospedado (apenas local).
+- Sem login, conta, sessão ou billing.
+- Sem cobrança de qualquer espécie (ver `MONETIZATION.md` Fase 1).
+- Sem suporte a Windows (apenas Linux + macOS).
+- Sem parsers além de `go test` e `go build` — outros nascem só sob
+  sinal real (ver `EXPANSION_DECISION_PROTOCOL`).
+- Sem telemetria não-opt-in.
+
+### Garantias verificáveis
+
+- **Proof SHA256** por execução, re-validável via `orbit verify`.
+- **Não escreve fora de `$ORBIT_HOME`** — travado por
+  `tests/test_no_user_writes.sh`.
+- **Léxico do README hero** travado por `tests/test_readme_claims.sh`.
+- **Skill orbit-engine** silencia (não ativa) em estado saudável —
+  validado por `tests/test_discourse_coherence.py`.
+- **Suite verde:** `go test ./...`, 11 Python dashboard tests,
+  3 coherence tests, 4 shell guards.
+
+### Para quem serve
+
+Desenvolvedores Go (parsers cobrem `go test` + `go build`) que querem
+registro auditável de execuções locais com diagnóstico determinístico
+e fail-closed. Sem requerer infra — instala um binário, roda, vê log.
+
+### Onde está depende de sinal real
+
+- Parsers para `cargo`, `tsc`, `rustc`, etc.: só sob `expansion_candidates`
+  persistente conforme `EXPANSION_DECISION_PROTOCOL`.
+- Hospedagem opcional: só na Fase 2 (ver `MONETIZATION.md`).
+- Cobrança por atividade: só na Fase 3, após 30 dias de `resource_cost`
+  observado.
+
+### Verificação de instalação
+
+```bash
+orbit version          # imprime: orbit version v0.1.0 (commit=... build=...)
+orbit run echo hello   # gera log em ~/.orbit/logs/
+orbit verify ~/.orbit/logs/*.json | head -1   # confirma proof
+```
+
+---
+
+## Entradas anteriores — milestones internos não publicados
+
+> As entradas abaixo documentam fases de validação operacional internas
+> conduzidas antes da repivotagem para o posicionamento de Fase 1. Nenhuma
+> chegou a ser publicada como tag git pública. Estão preservadas como
+> histórico técnico, não como contrato com usuário.
+
+## [1.0.1-rc] — 2026-04-15 *(internal milestone, never tagged)*
 
 ### 🎯 Marco
 
@@ -61,7 +143,7 @@ funciona sob estresse real, não apenas em testes unitários.
 
 ---
 
-## [1.0.0] — 2026-04-15
+## [1.0.0] — 2026-04-15 *(internal milestone, never tagged)*
 
 ### 🎯 Marco
 
