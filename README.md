@@ -102,9 +102,9 @@ Fail-closed: `sha256sum -c` aborts if the binary does not match the published ch
 
 ### Claude Code
 
-Download `orbit-engine.skill` and install in your skills folder.
+Drag the `skill/` folder directly into the Claude Code interface.
 
-Or drag the `skill/` folder directly into the Claude Code interface.
+Or drag the individual `.md` files from inside `skill/` (SKILL.md is the minimum).
 
 **First Run** — after installing, ask:
 
@@ -168,13 +168,12 @@ The skill stays silent when the session is healthy — no output means no risk p
 
 ```
 orbit-engine/
-├── orbit-engine.skill        # Installable skill package (ZIP)
-├── orbit-engine.prompt.md    # Universal prompt (GPT, Gemini, etc.)
-├── skill/                    # The skill source files
+├── skill/                    # Installable skill (drag into Claude Code)
 │   ├── SKILL.md              # Core logic — install this
 │   ├── EXAMPLES.md           # Output examples
 │   ├── ONBOARDING.md         # First-time setup (inside skill)
 │   └── QUICK-START.md        # Quick reference (inside skill)
+├── orbit-engine.prompt.md    # Universal prompt (GPT, Gemini, etc.)
 ├── README.md
 ├── ONBOARDING.md             # First-time setup (2 min)
 ├── QUICK-START.md            # Quick reference
