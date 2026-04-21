@@ -37,6 +37,17 @@ no frontmatter.
   novos gates.
 - **Skill frontmatter** (`skill/SKILL.md`) — campos `version: 0.1.1` e
   `cli_compat: ">=0.1.1"` para sinalizar breaking changes da skill vs CLI.
+- **Release Gate Soberano** (`scripts/release_gate.sh` + `make release-gate`) —
+  valida distribuição pública pós-build, fail-closed em 5 passos: tag existe
+  no remoto, binário no GitHub Releases (HTTP 200), `.sha256` no Releases,
+  download + `sha256sum -c`, binário reporta exatamente a versão esperada.
+  Integrado em `.github/workflows/release.yml` como job `release-gate`
+  (roda após `publish release`). Par operacional: `gate-cli` é pré-build
+  offline determinístico; `release-gate` é pós-build e valida que o release
+  é consumível do jeito que o README documenta. Anti-regressão:
+  `tests/test_release_gate.sh` cobre 6 cenários (1 happy path + 5 fail-closed:
+  tag ausente, binário 404, sha256 404, sha256 adulterado, version mismatch)
+  via mock HTTP local, sem dependência de rede externa.
 - **`orbit hygiene install|check`** — subcomando que instala/valida o pre-commit
   hook em `orbit-hygiene/` (block >5MB, warn >1MB).
 - **CI regression guards** (`.github/workflows/regression-guards.yml`) — job de

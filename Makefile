@@ -11,7 +11,7 @@
 # The gate-release target is the release gate. If it fails, release is blocked.
 # Aliases gate-v1 / tag-v1 são mantidos para retrocompatibilidade.
 
-.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-cli gate-server gate-release tag-release gate-v1 tag-v1 clean
+.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-cli release-gate gate-server gate-release tag-release gate-v1 tag-v1 clean
 
 # ── Go tests ──────────────────────────────────────────────────────────
 
@@ -80,6 +80,27 @@ validate-promql:
 .PHONY: gate-cli
 gate-cli:
 	@bash scripts/gate_cli.sh
+
+# ── RELEASE GATE SOBERANO ─────────────────────────────────────────────
+# Valida distribuição pública pós-release. DIFERENTE do gate-cli:
+#   gate-cli     → pré-build, offline, determinístico (pode rodar a qualquer
+#                  momento; bloqueia merge se código regredir).
+#   release-gate → pós-build, requer rede + tag pública, valida que o
+#                  release é consumível pelo usuário (bloqueia release
+#                  "fantasma" onde tag existe mas binário não está publicado
+#                  ou está corrompido).
+#
+# Uso local:
+#   make release-gate VERSION=v0.1.1
+#   make release-gate VERSION=v0.1.1 PLATFORM=darwin-arm64
+
+.PHONY: release-gate
+release-gate:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "ERROR: VERSION required. Usage: make release-gate VERSION=v0.1.1"; \
+		exit 1; \
+	fi
+	@bash scripts/release_gate.sh --version $(VERSION) --platform $(or $(PLATFORM),linux-amd64)
 
 # ── SERVER STACK GATE (Produto B — tracking-server + gateway) ─────────
 # NÃO é o gate da CLI. Valida a superfície observacional (Produto B) e
