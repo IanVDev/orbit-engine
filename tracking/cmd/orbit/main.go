@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Build-time variables — injetadas via -ldflags.
@@ -148,6 +149,39 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "release":
+		fs := flag.NewFlagSet("release", flag.ExitOnError)
+		skipGate := fs.Bool("skip-gate", false, "pula make gate-cli antes de taguear (NÃO recomendado)")
+		waitCI := fs.Bool("wait-ci", false, "aguarda release.yml finalizar e roda release_gate automaticamente")
+		waitTimeout := fs.Duration("wait-timeout", 15*60*time.Second, "timeout do --wait-ci (ex: 15m, 30m)")
+		repo := fs.String("repo", "", "override do repo (default: IanVDev/orbit-engine)")
+		_ = fs.Parse(os.Args[2:])
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "uso: orbit release [flags] <version>")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Flags (devem vir ANTES da version, convenção Go):")
+			fmt.Fprintln(os.Stderr, "  --skip-gate              pula make gate-cli (NÃO recomendado)")
+			fmt.Fprintln(os.Stderr, "  --wait-ci                aguarda release.yml + roda release_gate")
+			fmt.Fprintln(os.Stderr, "  --wait-timeout 15m       timeout do --wait-ci (default 15m)")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Exemplos:")
+			fmt.Fprintln(os.Stderr, "  orbit release v0.1.2")
+			fmt.Fprintln(os.Stderr, "  orbit release --wait-ci v0.1.2")
+			fmt.Fprintln(os.Stderr, "  orbit release --skip-gate v0.1.2")
+			os.Exit(1)
+		}
+		opts := ReleaseOptions{
+			Version:    fs.Arg(0),
+			SkipGate:   *skipGate,
+			WaitCI:     *waitCI,
+			WaitCITime: *waitTimeout,
+			Repo:       *repo,
+		}
+		if err := runRelease(opts, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("orbit version %s (commit=%s build=%s)\n", Version, Commit, BuildTime)
 
@@ -179,6 +213,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
+	fmt.Fprintln(os.Stderr, "  release       Cria tag + push + (opcional) espera CI + valida release_gate")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")

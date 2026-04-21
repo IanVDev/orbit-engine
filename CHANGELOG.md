@@ -37,6 +37,20 @@ no frontmatter.
   novos gates.
 - **Skill frontmatter** (`skill/SKILL.md`) — campos `version: 0.1.1` e
   `cli_compat: ">=0.1.1"` para sinalizar breaking changes da skill vs CLI.
+- **`orbit release <version>`** — subcomando que automatiza a última milha
+  do release (antes manual, único passo com risco de erro humano). Fluxo
+  fail-closed em 6 passos: [1/6] valida formato `vX.Y.Z[-suffix]`; [2/6]
+  valida estado do repo (na main, clean, sync com `origin/main`); [3/6]
+  valida que tag não existe (local nem remoto); [4/6] roda `make gate-cli`
+  (pulável via `--skip-gate`, não recomendado); [5/6] cria tag anotada e
+  faz push — detecta HTTP 403/forbidden/permission denied e loga
+  `CRITICAL: environment has no write permission`, com rollback automático
+  da tag local; [6/6] (opt-in via `--wait-ci`) aguarda o release.yml
+  publicar e roda `release_gate.sh` automaticamente. Uso:
+  `orbit release v0.1.2`, `orbit release --wait-ci v0.1.2`. Anti-regressão:
+  `tests/test_orbit_release.sh` cobre 7 cenários (VERSION malformada,
+  branch != main, tree sujo, HEAD ahead, tag duplicada local/remote, happy
+  path) em repo sintético local.
 - **Release Gate Soberano** (`scripts/release_gate.sh` + `make release-gate`) —
   valida distribuição pública pós-build, fail-closed em 5 passos: tag existe
   no remoto, binário no GitHub Releases (HTTP 200), `.sha256` no Releases,
