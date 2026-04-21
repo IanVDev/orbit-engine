@@ -12,8 +12,6 @@ future/
 
 # --- Arquivos de skill compilados (binários) ---
 *.skill
-# Skill oficial do orbit-engine é versionada
-!.claude/skills/orbit-engine.skill
 
 # --- Nomes legados do projeto ---
 token-optimizer*

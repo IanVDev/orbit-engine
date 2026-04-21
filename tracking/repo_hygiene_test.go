@@ -15,10 +15,9 @@ import (
 )
 
 // maxTrackedBytes is the size ceiling for any single tracked file.
-// Chosen to be comfortably above legitimate source assets (the largest
-// intentionally-tracked file is the orbit-engine.skill bundle at <2KB)
-// while catching every known Go build artifact in this repo, which are
-// all ~12MB.
+// Chosen to be comfortably above legitimate source assets (docs,
+// fixtures, small binaries) while catching every known Go build
+// artifact in this repo, which are all ~12MB.
 const maxTrackedBytes int64 = 5 * 1024 * 1024 // 5 MB
 
 // TestNoLargeBinariesTracked asserts that no file currently tracked in

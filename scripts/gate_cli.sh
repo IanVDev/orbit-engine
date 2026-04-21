@@ -100,6 +100,12 @@ run G8_no_mk_dup bash tests/test_makefile_no_dup.sh
 # ── G9: docs públicos não apontam gate do Produto B ──────────────────
 run G9_docs_scope bash tests/test_docs_dont_claim_v1.sh
 
+# ── G10: contrato estrutural do SKILL.md (skill/SKILL.md) ────────────
+run G10_skill_contract bash tests/test_skill_contract.sh
+
+# ── G11: paridade contagem gates script ↔ doc ─────────────────────────
+run G11_gate_doc_parity bash tests/test_gate_doc_parity.sh
+
 # ── Relatório final ──────────────────────────────────────────────────
 
 {
