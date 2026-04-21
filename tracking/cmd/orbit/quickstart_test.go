@@ -9,63 +9,29 @@
 //   - O comando DEVE terminar com exit code 0 em todas as execuções.
 //
 // Nada é mockado: compila e executa o binário real, com servidor embutido.
+//
+// O binário é compilado UMA vez em TestMain (ux_audit_test.go). Reutilizamos
+// uxAuditBin para evitar duplicação — o Go só aceita um TestMain por package.
 package main
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 // buildOrbitForTest devolve o caminho do binário `orbit` compilado em
-// TestMain. Fail-closed: se TestMain não populou o caminho, aborta.
-var builtOrbitPath string
-
+// TestMain (ux_audit_test.go). Fail-closed: se o TestMain não populou o
+// caminho, aborta.
 func buildOrbitForTest(t *testing.T) string {
 	t.Helper()
-	if builtOrbitPath == "" {
-		t.Fatalf("binário orbit não foi compilado em TestMain")
+	if uxAuditBin == "" {
+		t.Fatalf("binário orbit não foi compilado em TestMain (ux_audit_test.go)")
 	}
-	return builtOrbitPath
-}
-
-// TestMain compila o binário orbit UMA vez para toda a suíte E2E e limpa
-// o diretório temporário ao final. Usamos os.MkdirTemp (em vez de
-// t.TempDir) para que o binário sobreviva entre testes diferentes.
-func TestMain(m *testing.M) {
-	code, err := runTestMain(m)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "TestMain: %v\n", err)
-		os.Exit(1)
-	}
-	os.Exit(code)
-}
-
-func runTestMain(m *testing.M) (int, error) {
-	dir, err := os.MkdirTemp("", "orbit-e2e-*")
-	if err != nil {
-		return 1, fmt.Errorf("mkdir temp: %w", err)
-	}
-	defer os.RemoveAll(dir)
-
-	bin := filepath.Join(dir, "orbit")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
-	cmd := exec.Command("go", "build", "-o", bin, ".")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return 1, fmt.Errorf("go build: %v\nstderr:\n%s", err, stderr.String())
-	}
-	builtOrbitPath = bin
-	return m.Run(), nil
+	return uxAuditBin
 }
 
 // runQuickstartE2E executa uma rodada do binário real com timeout e retorna

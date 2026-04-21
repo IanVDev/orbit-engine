@@ -1,0 +1,10 @@
+{"text": "fix the typo in README.md", "session_id": "sim-fx-01", "turn_number": 1, "turn_count": 1}
+{"text": "add a comma after line 42", "session_id": "sim-fx-02", "turn_number": 1, "turn_count": 1}
+{"text": "thanks!", "session_id": "sim-fx-03", "turn_number": 1, "turn_count": 1}
+{"text": "", "session_id": "sim-fx-04", "turn_number": 1, "turn_count": 1}
+{"text": "create a matriz with the available options", "session_id": "sim-fx-05", "turn_number": 1, "turn_count": 1}
+{"text": "analyze cost of the /api/track handler", "session_id": "sim-fx-06", "turn_number": 1, "turn_count": 1}
+{"text": "is this optimal? looks like a correction chain to me", "session_id": "sim-fx-07", "turn_number": 3, "turn_count": 3}
+{"text": "preciso de auditoria determinística linha-a-linha do módulo de tracking", "session_id": "sim-fx-08", "turn_number": 7, "turn_count": 7}
+{"text": "DIAGNOSIS\nThe query plan shows sequential scans on a 50M row table.", "session_id": "sim-fx-09", "turn_number": 4, "turn_count": 4}
+{"text": "how efficient is this SQL query under concurrent writes?", "session_id": "sim-fx-10", "turn_number": 2, "turn_count": 2}

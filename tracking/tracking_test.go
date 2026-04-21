@@ -33,6 +33,9 @@ func newTestRegistry() *prometheus.Registry {
 		lastEventTimestampGauge,
 		skillActivationByReason,
 		lastRealUsageTimestamp,
+		activationSourceTotal,
+		shadowActivationTotal,
+		shadowActivationRate,
 	)
 	return reg
 }
@@ -266,6 +269,123 @@ func TestValidateEvent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "event_type") {
 		t.Fatalf("expected error about event_type, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Shadow mode — observation path must NEVER leak into real metrics.
+// -----------------------------------------------------------------------
+
+func shadowEvent(sessionID string, activated bool) SkillEvent {
+	ev := SkillEvent{
+		EventType:            "activation",
+		Timestamp:            NowUTC(),
+		SessionID:            sessionID,
+		Mode:                 "auto",
+		Trigger:              "real_usage_client",
+		EstimatedWaste:       100.0,
+		ActionsSuggested:     1,
+		ActionsApplied:       1,
+		ImpactEstimatedToken: 500,
+		Source:               SourceRealShadow,
+		ActivationPossible:   &activated,
+		ActivationReason:     "explicit_activation_command",
+		ActivationPhase:      "exploration",
+	}
+	return ev
+}
+
+func sourceCounterValue(families []*dto.MetricFamily, source string) float64 {
+	for _, f := range families {
+		if f.GetName() != "orbit_activation_source_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "source" && lp.GetValue() == source {
+					if m.GetCounter() != nil {
+						return m.GetCounter().GetValue()
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// TestShadowDoesNotIncrementRealActivations — invariant: a shadow event
+// must NEVER increment orbit_skill_activations_total nor tokens_saved_total.
+// Production semantics stay identical whether shadow mode is on or off.
+func TestShadowDoesNotIncrementRealActivations(t *testing.T) {
+	reg := newTestRegistry()
+	ResetShadowCountersForTests()
+
+	before, _ := reg.Gather()
+	beforeActs := counterValue(before, "orbit_skill_activations_total", "auto")
+	beforeTokens := counterValue(before, "orbit_skill_tokens_saved_total", "")
+
+	ev := shadowEvent("shadow-sess-1", true)
+	if err := TrackSkillEvent(ev); err != nil {
+		t.Fatalf("TrackSkillEvent(shadow) returned error: %v", err)
+	}
+
+	after, _ := reg.Gather()
+	afterActs := counterValue(after, "orbit_skill_activations_total", "auto")
+	afterTokens := counterValue(after, "orbit_skill_tokens_saved_total", "")
+
+	if afterActs != beforeActs {
+		t.Fatalf("shadow event leaked into skill_activations_total: before=%f after=%f",
+			beforeActs, afterActs)
+	}
+	if afterTokens != beforeTokens {
+		t.Fatalf("shadow event leaked into tokens_saved_total: before=%f after=%f",
+			beforeTokens, afterTokens)
+	}
+}
+
+// TestShadowMetricsIncrement — source+shadow counters advance as expected.
+// Prom counters are package-level singletons, so we compare deltas, not
+// absolute values. The rate gauge is backed by ResetShadowCountersForTests,
+// which resets the atomic denominators.
+func TestShadowMetricsIncrement(t *testing.T) {
+	reg := newTestRegistry()
+	ResetShadowCountersForTests()
+
+	before, _ := reg.Gather()
+	beforeSource := sourceCounterValue(before, SourceRealShadow)
+	beforeShadow := counterValue(before, "orbit_shadow_activation_total", "")
+
+	events := []SkillEvent{
+		shadowEvent("shadow-sess-a", true),
+		shadowEvent("shadow-sess-b", false),
+		shadowEvent("shadow-sess-c", true),
+	}
+	for _, ev := range events {
+		if err := TrackSkillEvent(ev); err != nil {
+			t.Fatalf("TrackSkillEvent(shadow) returned error: %v", err)
+		}
+	}
+
+	after, _ := reg.Gather()
+	if got := sourceCounterValue(after, SourceRealShadow) - beforeSource; got != 3 {
+		t.Fatalf("Δorbit_activation_source_total{source=real_shadow} = %f, want 3", got)
+	}
+	if got := counterValue(after, "orbit_shadow_activation_total", "") - beforeShadow; got != 2 {
+		t.Fatalf("Δorbit_shadow_activation_total = %f, want 2", got)
+	}
+	if got := gaugeValue(after, "orbit_shadow_activation_rate"); got < 0.66 || got > 0.68 {
+		t.Fatalf("orbit_shadow_activation_rate = %f, want ~0.667", got)
+	}
+}
+
+// TestShadowRejectsUnknownSource — closed-enum Source must reject anything
+// outside the whitelist to keep label cardinality bounded.
+func TestShadowRejectsUnknownSource(t *testing.T) {
+	_ = newTestRegistry()
+	ev := shadowEvent("shadow-bad", true)
+	ev.Source = "attacker-controlled-string"
+	if err := ev.Validate(); err == nil {
+		t.Fatal("expected Validate() to reject unknown source")
 	}
 }
 
