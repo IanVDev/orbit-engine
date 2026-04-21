@@ -111,11 +111,11 @@ gate-v1: gate-server
 
 tag-release:
 	@if [ -z "$(VERSION)" ]; then \
-		echo "ERROR: VERSION required. Usage: make tag-release VERSION=v0.1.0"; \
+		echo "ERROR: VERSION required. Usage: make tag-release VERSION=v0.1.1"; \
 		exit 1; \
 	fi
-	@echo "Checking gate status..."
-	$(MAKE) gate-release
+	@echo "Re-running Prod Gate v1 before tagging..."
+	$(MAKE) gate-cli
 	@echo ""
 	@echo "Tagging $(VERSION)..."
 	git tag -a $(VERSION) -m "orbit-engine $(VERSION) — validated release"
