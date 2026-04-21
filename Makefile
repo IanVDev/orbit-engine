@@ -11,7 +11,7 @@
 # The gate-release target is the release gate. If it fails, release is blocked.
 # Aliases gate-v1 / tag-v1 são mantidos para retrocompatibilidade.
 
-.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-release tag-release gate-v1 tag-v1 clean
+.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-cli gate-server gate-release tag-release gate-v1 tag-v1 clean
 
 # ── Go tests ──────────────────────────────────────────────────────────
 
@@ -67,13 +67,29 @@ validate-promql:
 	cd tracking && go run ./cmd/validate_promql --strict "orbit_unknown_metric" && exit 1 || true
 	@echo "✅ PromQL governance passed"
 
-# ── RELEASE GATE ─────────────────────────────────────────────────────
-# ALL targets below must pass. If ANY fails, the release is blocked.
+# ── PROD GATE v1 — CLI (orbit binary) ─────────────────────────────────
+#
+# Este é o gate REAL para tag de release da CLI. Roda offline em < 120s.
+# Delegated to scripts/gate_cli.sh (contrato único, fail-closed, JSON report).
+#
+# Requer: go (>= version em tracking/go.mod), python3, bash. Não requer
+# Prometheus, Grafana, Docker, nem rede.
+#
+# Saída: gate_report.json com {gate, status, duration_ms, tail} por gate.
 
-gate-release: test-go-contract test-go test-python validate-e2e validate-promql
+.PHONY: gate-cli
+gate-cli:
+	@bash scripts/gate_cli.sh
+
+# ── SERVER STACK GATE (Produto B — tracking-server + gateway) ─────────
+# NÃO é o gate da CLI. Valida a superfície observacional (Produto B) e
+# requer Prometheus/Grafana/Alertmanager para o prelaunch_gate.sh ser útil.
+# Aliases retrocompatíveis `gate-release`/`gate-v1` preservados.
+
+gate-server: test-go-contract test-go test-python validate-e2e validate-promql
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════"
-	@echo "  🟢  RELEASE GATE PASSED"
+	@echo "  🟢  SERVER STACK GATE PASSED"
 	@echo ""
 	@echo "  All checks:"
 	@echo "    ✅ Go contract tests"
@@ -82,11 +98,13 @@ gate-release: test-go-contract test-go test-python validate-e2e validate-promql
 	@echo "    ✅ E2E in-process validator"
 	@echo "    ✅ PromQL governance"
 	@echo ""
-	@echo "  Ready to tag: make tag-release VERSION=vX.Y.Z"
+	@echo "  NOTE: este gate é para Produto B (server stack), não para a"
+	@echo "  CLI. Para tag de release da CLI, use:  make gate-cli"
 	@echo "════════════════════════════════════════════════════════════"
 
-# Alias retrocompatível.
-gate-v1: gate-release
+# Aliases retrocompatíveis — apontam para o gate do server stack.
+gate-release: gate-server
+gate-v1: gate-server
 
 # ── Tag (only after gate passes) ─────────────────────────────────────
 # Usage: make tag-release VERSION=v0.1.0
@@ -250,9 +268,9 @@ ssh-config:
 	@echo "✅ SSH config written to ~/.ssh/config.d/orbit-engine"
 	@echo "   Add 'Include ~/.ssh/config.d/*' to the top of ~/.ssh/config if needed"
 
-# ── Sovereign validation ──────────────────────────────────────────────────────
+# ── Sovereign remote validation ──────────────────────────────────────────────
 #
-# make orbit-check — runs all three validation stages in sequence:
+# make orbit-check-remote — validates a REMOTE orbit deployment over SSH.
 #   Stage 1: ssh-validate     (local key + connectivity)
 #   Stage 2: ssh-remote-validate (baseline environment)
 #   Stage 3: orbit_check_remote  (strict: port, /health 200, /metrics orbit_,
@@ -268,10 +286,10 @@ ssh-config:
 #   ORBIT_SSH_PORT, ORBIT_PROJECT_DIR
 #   ORBIT_GATEWAY_BIN, ORBIT_GATEWAY_URL, ORBIT_GATEWAY_SHA256
 
-.PHONY: orbit-check
+.PHONY: orbit-check-remote
 
-orbit-check:
-	@echo "══ orbit-check — sovereign environment validation ══"
+orbit-check-remote:
+	@echo "══ orbit-check-remote — sovereign remote validation ══"
 	@[ -n "$(ORBIT_EC2_HOST)" ]  || (echo "ERROR: ORBIT_EC2_HOST not set"  && exit 1)
 	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set"  && exit 1)
 	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set"   && exit 1)

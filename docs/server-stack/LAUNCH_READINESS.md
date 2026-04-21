@@ -1,5 +1,11 @@
 # orbit-engine v1.0 — Launch Readiness
 
+> ⚠️  **ESCOPO: Produto B (server stack — tracking-server + gateway + Prometheus/Grafana).**
+> **NÃO aplica à CLI `orbit` (v0.1.x)**, que tem seu próprio contrato de release em
+> `docs/CLI_RELEASE_GATE.md` e gate `make gate-cli`. Este documento descreve um
+> milestone interno nunca tagueado (ver `CHANGELOG.md` — entradas `[1.0.x] *internal,
+> never tagged*`). Preservado como histórico técnico do stack observacional.
+
 > **Versão**: 1.0.0  
 > **Data**: 2026-04-15  
 > **Regra**: Se não pode ser verificado na prática, é considerado inválido.

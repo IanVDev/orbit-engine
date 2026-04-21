@@ -1,4 +1,8 @@
-# orbit-engine v1.0 — Plano de Release
+# orbit-engine v1.0 — Plano de Release (server stack)
+
+> ⚠️  **ESCOPO: Produto B (tracking-server + gateway).** NÃO é o plano da CLI
+> publicada em v0.1.x. Para a CLI, ver `docs/CLI_RELEASE_GATE.md`. Este plano
+> corresponde a um milestone interno, nunca tagueado como release pública.
 
 > **Data-base**: 2026-04-15  
 > **Branch**: `main` (tag `v1.0.0` após gate pass)  

@@ -191,6 +191,12 @@ orbit-engine/
 
 ---
 
+## Release gate
+
+All CLI releases are tagged only after `make gate-cli` returns 🟢 PASS.
+Contract and 8-gate breakdown in [docs/CLI_RELEASE_GATE.md](docs/CLI_RELEASE_GATE.md).
+Runs offline in under 120s and requires only `go`, `python3`, `bash`.
+
 ## Contributing
 
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).

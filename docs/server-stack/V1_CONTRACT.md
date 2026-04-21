@@ -1,4 +1,8 @@
-# orbit-engine v1.0 — Contrato Público
+# orbit-engine v1.0 — Contrato Público (server stack)
+
+> ⚠️  **ESCOPO: Produto B (tracking-server + gateway).** NÃO é o contrato da CLI
+> `orbit` publicada em v0.1.x. Para a CLI, ver `docs/CLI_RELEASE_GATE.md`.
+> Este contrato corresponde a um milestone interno, nunca tagueado.
 
 > **Versão**: 1.0.0  
 > **Data**: 2026-04-15  

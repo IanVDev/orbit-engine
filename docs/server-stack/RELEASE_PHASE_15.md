@@ -1,5 +1,9 @@
 # Release Phase 15 — Guia de Uso do Sistema Completo
 
+> ⚠️  **ESCOPO: Produto B (server stack observacional).** Histórico da phase 15 do
+> stack de tracking/gateway/Prometheus — NÃO se aplica à CLI `orbit` v0.1.x.
+> Preservado como histórico interno.
+
 > **orbit-engine** — motor de auto-evolução para skills de IA.
 > Versão: Phase 15 · 14 de abril de 2026
 
