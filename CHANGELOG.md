@@ -37,6 +37,17 @@ no frontmatter.
   novos gates.
 - **Skill frontmatter** (`skill/SKILL.md`) — campos `version: 0.1.1` e
   `cli_compat: ">=0.1.1"` para sinalizar breaking changes da skill vs CLI.
+- **Install one-liner** (`scripts/install_remote.sh`) — `curl -fsSL ... | bash`
+  baixa binário pré-compilado do GitHub Releases, valida `.sha256`, instala em
+  `~/.orbit/bin/orbit` (sem sudo), faz smoke test. Diferente de
+  `scripts/install.sh` (que exige Go local para compilar), este é o caminho
+  para usuários finais que só querem usar a CLI. Fluxo fail-closed em 5 passos:
+  detect OS/ARCH → resolve versão (latest ou pinned) → download bin+sha256 →
+  `sha256sum -c` → install + `orbit version` smoke. Toda falha imprime
+  **CAUSA + AÇÃO** estruturados (não só stacktrace). Anti-regressão em
+  `tests/test_install_remote.sh`: 6 cenários (happy path + 5 fail-closed:
+  binário 404, sha256 404, sha256 adulterado, smoke version mismatch,
+  prefix sem permissão) via mock HTTP local.
 - **`orbit release <version>`** — subcomando que automatiza a última milha
   do release (antes manual, único passo com risco de erro humano). Fluxo
   fail-closed em 6 passos: [1/6] valida formato `vX.Y.Z[-suffix]`; [2/6]

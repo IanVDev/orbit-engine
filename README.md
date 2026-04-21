@@ -75,28 +75,58 @@ DO NOT DO NOW
 
 ## Install (CLI binary)
 
-Pre-built binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` are published on every tagged release.
+Pre-built binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` are published on every tagged release. Each release ships a `.sha256` next to the binary — the installer verifies it before writing anything.
+
+### 10-second install (recommended)
 
 ```bash
-# pick your platform
+curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh | bash
+~/.orbit/bin/orbit quickstart
+```
+
+What the installer does, fail-closed:
+1. Detects `OS × ARCH` (Linux/macOS, amd64/arm64).
+2. Resolves latest release (or `--version vX.Y.Z`).
+3. Downloads binary + `.sha256`.
+4. Verifies integrity with `sha256sum -c` — aborts on mismatch.
+5. Installs at `~/.orbit/bin/orbit` (no sudo) + smoke tests `orbit version`.
+
+Any failure prints **CAUSA** and **AÇÃO** (cause + corrective action), never just an error.
+
+Custom prefix / pinned version:
+```bash
+curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh | \
+  bash -s -- --version v0.1.1 --prefix /usr/local/bin
+```
+
+### Manual install (if you prefer)
+
+```bash
 VERSION="v0.1.1"
-OS="darwin"   # or: linux
-ARCH="arm64"  # or: amd64
+OS="darwin"; ARCH="arm64"           # or: linux / amd64
 
 BASE="https://github.com/IanVDev/orbit-engine/releases/download/${VERSION}"
 BIN="orbit-${VERSION}-${OS}-${ARCH}"
 
-# download + verify + install
 curl -fsSLo "${BIN}" "${BASE}/${BIN}"
 curl -fsSLo "${BIN}.sha256" "${BASE}/${BIN}.sha256"
-sha256sum -c "${BIN}.sha256"
+sha256sum -c "${BIN}.sha256"        # must pass
 chmod +x "${BIN}"
 sudo install -m 0755 "${BIN}" /usr/local/bin/orbit
-
-orbit version  # expects: orbit version v0.1.1 (commit=... build=...)
+orbit version                       # orbit version v0.1.1 (commit=... build=...)
 ```
 
 Fail-closed: `sha256sum -c` aborts if the binary does not match the published checksum. Do not skip it.
+
+### First run (10 seconds)
+
+```bash
+orbit quickstart
+```
+
+Expected output: 3 steps (`[1/3]` init → `[2/3]` run → `[3/3]` proof verified) with `session_id`, `proof` SHA256, `event_id`. Total time: ~0.02s of work, instant feedback.
+
+If something is off, run `orbit doctor` — it reports `OK/WARNING/CRITICAL` for each check (PATH, binary integrity, tracking-server connectivity) and tells you what to fix.
 
 ## Usage
 
