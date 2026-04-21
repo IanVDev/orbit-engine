@@ -10,10 +10,12 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 ### 🎯 Marco
 
 **Prod Gate v1** — release gate oficial da CLI, offline, fail-closed, `< 120 s`.
+Skill `orbit-engine` (`skill/`) com contrato estrutural travado e versioning
+no frontmatter.
 
 ### Adicionado
 
-- **`make gate-cli`** (`scripts/gate_cli.sh`) — 9 gates sequenciais com JSON
+- **`make gate-cli`** (`scripts/gate_cli.sh`) — 11 gates sequenciais com JSON
   report em `gate_report.json`. Cada gate emite `{gate, status, duration_ms, tail}`.
 - **Smoke E2E** (`tests/smoke_e2e.sh`) — exercita o binário real (`version`,
   `run` ok/fail, `verify` ok/tamper, `doctor --json`).
@@ -24,6 +26,17 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - **Makefile guard** (`tests/test_makefile_no_dup.sh`) — bloqueia *"overriding recipe"*.
 - **Docs scope guard** (`tests/test_docs_dont_claim_v1.sh`) — docs públicos não
   apontam gate do Produto B.
+- **Skill contract guard** (`tests/test_skill_contract.sh`, G10) — trava
+  frontmatter YAML (name, version, cli_compat) + seções invariantes
+  (Observable Patterns, Output Format, Rules, Gating Rules, Silence Rule,
+  MANDATORY PRE-RESPONSE RULE) + tokens do output (DIAGNOSIS, ACTIONS, DO NOT
+  DO NOW) em `skill/SKILL.md`.
+- **Gate doc parity guard** (`tests/test_gate_doc_parity.sh`, G11) — exige que
+  a contagem de gates em `scripts/gate_cli.sh` bata com a tabela em
+  `docs/CLI_RELEASE_GATE.md`. Previne divergência silenciosa ao adicionar
+  novos gates.
+- **Skill frontmatter** (`skill/SKILL.md`) — campos `version: 0.1.1` e
+  `cli_compat: ">=0.1.1"` para sinalizar breaking changes da skill vs CLI.
 - **`orbit hygiene install|check`** — subcomando que instala/valida o pre-commit
   hook em `orbit-hygiene/` (block >5MB, warn >1MB).
 - **CI regression guards** (`.github/workflows/regression-guards.yml`) — job de
@@ -55,6 +68,10 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - 6 binários Go >5 MB removidos do índice (`tracking/main`, `orbit-gateway`,
   `tracking-server`, `tracking-server-4f58bda-darwin-arm64`, `validate_env`,
   `validate_gov`) + adicionados ao `.gitignore`.
+- `.claude/skills/orbit-engine.skill` (75 linhas de PromQL governance do
+  Produto B) — conteúdo órfão contraditório ao `skill/SKILL.md` real. Preservação
+  explícita em `.gitignore` removida. Comentário em `tracking/repo_hygiene_test.go`
+  atualizado.
 
 ### Corrigido
 
