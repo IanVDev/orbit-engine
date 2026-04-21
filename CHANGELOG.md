@@ -5,6 +5,70 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [0.1.1] — 2026-04-21
+
+### 🎯 Marco
+
+**Prod Gate v1** — release gate oficial da CLI, offline, fail-closed, `< 120 s`.
+
+### Adicionado
+
+- **`make gate-cli`** (`scripts/gate_cli.sh`) — 9 gates sequenciais com JSON
+  report em `gate_report.json`. Cada gate emite `{gate, status, duration_ms, tail}`.
+- **Smoke E2E** (`tests/smoke_e2e.sh`) — exercita o binário real (`version`,
+  `run` ok/fail, `verify` ok/tamper, `doctor --json`).
+- **Contrato de log v1** (`tests/test_log_contract.sh`) — 11 campos obrigatórios
+  travados, paridade `run --json` × log persistido.
+- **Rollback como comando** (`scripts/orbit_rollback.sh` + `tests/test_rollback.sh`) —
+  restaura `.bak` com validação fail-closed.
+- **Makefile guard** (`tests/test_makefile_no_dup.sh`) — bloqueia *"overriding recipe"*.
+- **Docs scope guard** (`tests/test_docs_dont_claim_v1.sh`) — docs públicos não
+  apontam gate do Produto B.
+- **`orbit hygiene install|check`** — subcomando que instala/valida o pre-commit
+  hook em `orbit-hygiene/` (block >5MB, warn >1MB).
+- **CI regression guards** (`.github/workflows/regression-guards.yml`) — job de
+  tamanho + `TestNoLargeBinariesTracked` (bloqueia qualquer tracked >5MB).
+- **CI job "Prod Gate v1 (CLI)"** — `make gate-cli` rodando a cada push/PR,
+  com upload de `gate_report.json` como artefato.
+- **`docs/CLI_RELEASE_GATE.md`** — contrato oficial da CLI (9 gates detalhados).
+- **Shadow mode do SkillRouter** (Produto B, backward-compat) — `Source` +
+  `ActivationPossible` em `SkillEvent`; `observe_decision()` no
+  `orchestrator/client.py`.
+
+### Alterado
+
+- **`Makefile`**: `gate-release` → `gate-server` (Produto B); aliases
+  retrocompat preservados; alvo `orbit-check` duplicado renomeado para
+  `orbit-check-remote`.
+- **`tracking/go.mod`**: `go 1.25.4` → `1.24` (permite `make gate-cli` rodar
+  offline sem fetch de toolchain).
+- **Docs do Produto B** movidos para `docs/server-stack/` com banner de escopo:
+  `LAUNCH_READINESS.md`, `V1_CONTRACT.md`, `V1_RELEASE_PLAN.md`, `RELEASE_PHASE_15.md`.
+- **CLAUDE.md**: fundido — diretiva PT + Core Rules técnicas.
+
+### Removido (higiene do repo)
+
+- `DONE_100.md` (documento de status fora de escopo).
+- `product-management.plugin` (binário 59 KB fora de escopo).
+- `scripts/hooks/` (duplicava `orbit-hygiene/` — violação DRY; código Go aponta
+  para `orbit-hygiene/` como fonte).
+- 6 binários Go >5 MB removidos do índice (`tracking/main`, `orbit-gateway`,
+  `tracking-server`, `tracking-server-4f58bda-darwin-arm64`, `validate_env`,
+  `validate_gov`) + adicionados ao `.gitignore`.
+
+### Corrigido
+
+- `TestMain` duplicado em `tracking/cmd/orbit` (Go rejeita 2 no mesmo package):
+  `quickstart_test.go` agora reutiliza `uxAuditBin` do `ux_audit_test.go`.
+
+### Verificação
+
+```bash
+make gate-cli        # → 9/9 PASS em < 30s (offline)
+```
+
+---
+
 ## [0.1.0] — 2026-04-19
 
 ### 🎯 Marco
