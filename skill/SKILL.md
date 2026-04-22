@@ -1,7 +1,7 @@
 ---
 name: orbit-engine
-version: 0.1.1
-cli_compat: ">=0.1.1"
+version: 0.1.2
+cli_compat: ">=0.1.2"
 description: >
   Session efficiency advisor for Claude Code.
 

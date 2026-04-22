@@ -5,6 +5,124 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [0.1.2] — 2026-04-22
+
+### 🎯 Marco
+
+**System Contract soberano** — 21 invariantes ancoradas em código + teste
++ mutation provada, travadas por meta-gate (G12). 15 gates no `make gate-cli`
+(antes: 11), cobrindo desde ausência de escrita fora de `$ORBIT_HOME` até
+verificação criptográfica Ed25519 de anchors com signer pinned.
+
+### Adicionado
+
+- **6 invariantes novas** (I12–I21) promovidas ao contrato soberano:
+  - **I12 SECRET_SAFETY** — redaction automática de Bearer tokens, `sk-live/test`,
+    AKIA, `password=`, `api_key=`, SSH keys antes de persistir. `tracking/redact.go`.
+  - **I13 LOG_RETENTION** — cap de logs configurável (default 10000 via
+    `ORBIT_MAX_LOGS`); prune síncrono após write.
+  - **I14 ENV_INTEGRITY** — startup guard fail-closed quando binário sem
+    commit-stamp ou PATH sujo (build sem `-ldflags`).
+  - **I15 HISTORY_ANCHOR** — snapshot monotônico em `<ORBIT_HOME>.anchor`
+    detecta wipe de `$ORBIT_HOME`.
+  - **I16 GUARD_HARDENING** — `ORBIT_SKIP_GUARD=1` em CI exige double-ack
+    via `ORBIT_SKIP_GUARD_IN_CI=1`.
+  - **I17 body_hash** — `sha256(canonical_json(log))` cobre o JSON inteiro;
+    1 byte alterado em qualquer campo → `verify` FAIL.
+  - **I18 chain** — `orbit verify --chain` valida `prev_proof` de todos os
+    logs em `$ORBIT_HOME/logs/`; remoção/reordenação → FAIL.
+  - **I19 merkle** — `ComputeMerkleRoot` determinístico e ordem-sensível;
+    base de `orbit anchor`.
+  - **I20 anchor verification** — `verify --chain` valida receipt em 5
+    checks fail-closed: Ed25519 signature + monotonic anti-replay +
+    full-match (não prefixo) + leaf_count + merkle recompute.
+  - **I21 trusted anchor signer** — pub key pinned (`trustedAuryaPubKey`)
+    em `anchor.go`. Receipt com `AppPub` diferente → FAIL CRITICAL antes
+    do crypto verify.
+
+- **Novos subcomandos CLI**:
+  - `orbit release <version>` — tag + push + (opcional) wait-CI + release_gate
+    em 6 passos fail-closed.
+  - `orbit verify --chain` — valida toda a chain JSONL + anchor se existir.
+  - `orbit anchor --host <aurya>` — publica merkle root em servidor AURYA
+    e persiste receipt self-signed.
+  - `orbit hygiene install|check` — pre-commit hook (block >5 MB).
+
+- **Install one-liner** (`scripts/install_remote.sh`):
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh | bash
+  ```
+  Detecta OS×ARCH, valida SHA256, instala em `~/.orbit/bin/` (sem sudo).
+  Fluxo fail-closed em 5 passos com mensagens CAUSA + AÇÃO.
+
+- **Release Gate Soberano** (`scripts/release_gate.sh`): valida distribuição
+  pública pós-build — tag no remoto + binário HTTP 200 + `.sha256` HTTP 200 +
+  download + `sha256sum -c` + version stamp. Job `release-gate` no `release.yml`.
+
+- **`make gate-cli`** — 15 gates sequenciais (G1–G15), offline, <30s em
+  ambiente limpo. JSON report em `gate_report.json`. Contrato documentado
+  em `docs/CLI_RELEASE_GATE.md`.
+
+- **`docs/SYSTEM_CONTRACT.md`** — fonte única das 21 invariantes + 7 garantias
+  operacionais. Meta-gate G12 (`test_system_contract.sh`) exige que toda
+  invariante documentada aponte código+teste existentes; adicionar
+  invariante aspiracional sem teste trava o gate.
+
+### Corrigido
+
+- **fix(trust): recursão de subprocess em `orbit version`** (commit `05a196d`).
+  `currentTrustLevel("version")` descia para `queryVersionCommit` que
+  spawnava `orbit version` em subprocess que re-entrava em
+  `currentTrustLevel("version")` — recursão exponencial causando
+  `timeout após 3s` em `orbit doctor --deep`. Fast-path adicionado no
+  início de `currentTrustLevel` para `version`/`--version`/`-v`.
+  Anti-regressão: `TestCurrentTrustLevel_NoSubprocessForVersion` (mutation
+  prova `DEGRADED; want TRUSTED` sem o fix).
+
+- **fix(store): legacy-gap mid-sequence CRITICAL** (commit `9a17c64`).
+  Log sem `prev_proof` inserido no meio do JSONL era contabilizado como
+  chain break genérico, sem sinal CRITICAL. Agora distingue 3 casos
+  (genesis OK / legacy mid CRITICAL / tampering break) com flag
+  `Critical` em `StoreStats`.
+
+- **fix(merge): restauração de 3 funções órfãs** pós-merge de 24 commits
+  remotos — `ListExecutionLogs`, `findPreviousBodyHash`, `VerifyExecutionLog`
+  haviam sido acidentalmente descartadas em resolução de conflito.
+
+### Alterado
+
+- **Skill contract** (`skill/SKILL.md`): frontmatter ganha `version: 0.1.2` e
+  `cli_compat: ">=0.1.1"`; contrato estrutural travado por G10.
+- **README hero** reescrito focando em pitch concreto ("pytest fails at 3 AM")
+  antes de arquitetura. Guard `test_readme_claims.sh` endurecido com 3
+  assertivas positivas (proof + install_remote.sh + comando real).
+- **Makefile**: `gate-release` → `gate-server` (produto B); `gate-cli` é o
+  gate real de tag. Alias retrocompat preservado.
+- **Go toolchain**: `go.mod` de `1.25.4` → `1.24` (permite `make gate-cli`
+  rodar offline sem fetch de toolchain).
+
+### Removido
+
+- `.claude/skills/orbit-engine.skill` (75 linhas de PromQL governance
+  contraditórias à skill real em `skill/SKILL.md`) e preservação explícita
+  em `.gitignore`.
+- 6 binários Go >5 MiB do índice git (detectados por `TestNoLargeBinariesTracked`).
+- `DONE_100.md`, `product-management.plugin`, `scripts/hooks/` duplicado.
+
+### Verificação
+
+```bash
+make gate-cli                        # → 15/15 PASS em ~30s offline
+```
+
+Binário reporta:
+```
+$ orbit version
+orbit version v0.1.2 (commit=05a196d build=...)
+```
+
+---
+
 ## [0.1.1] — 2026-04-21
 
 ### 🎯 Marco

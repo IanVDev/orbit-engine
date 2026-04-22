@@ -65,13 +65,13 @@ Any failure prints **CAUSA** and **AÇÃO** (cause + corrective action), never j
 Custom prefix / pinned version:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh | \
-  bash -s -- --version v0.1.1 --prefix /usr/local/bin
+  bash -s -- --version v0.1.2 --prefix /usr/local/bin
 ```
 
 ### Manual install (if you prefer)
 
 ```bash
-VERSION="v0.1.1"
+VERSION="v0.1.2"
 OS="darwin"; ARCH="arm64"           # or: linux / amd64
 
 BASE="https://github.com/IanVDev/orbit-engine/releases/download/${VERSION}"
@@ -82,7 +82,7 @@ curl -fsSLo "${BIN}.sha256" "${BASE}/${BIN}.sha256"
 sha256sum -c "${BIN}.sha256"        # must pass
 chmod +x "${BIN}"
 sudo install -m 0755 "${BIN}" /usr/local/bin/orbit
-orbit version                       # orbit version v0.1.1 (commit=... build=...)
+orbit version                       # orbit version v0.1.2 (commit=... build=...)
 ```
 
 Fail-closed: `sha256sum -c` aborts if the binary does not match the published checksum. Do not skip it.
