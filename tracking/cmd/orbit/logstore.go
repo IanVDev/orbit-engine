@@ -66,6 +66,95 @@ func WriteExecutionLog(result RunResult) (string, error) {
 	return path, nil
 }
 
+// ListExecutionLogs devolve os paths de logs em $ORBIT_HOME/logs/, ordenados
+// pelo nome do arquivo. O nome começa com RFC3339Nano com ':' → '-', então
+// ordem lexicográfica == ordem cronológica (dentro de mesma zona UTC).
+func ListExecutionLogs() ([]string, error) {
+	base, err := tracking.ResolveStoreHome()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(base, logsDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// findPreviousBodyHash devolve o body_hash do último log por timestamp.
+// "" = sem predecessor (genesis) OU predecessor legado (sem body_hash).
+// Em ambos os casos o novo log vira um novo ponto de ancoragem na chain.
+func findPreviousBodyHash() (string, error) {
+	paths, err := ListExecutionLogs()
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	data, err := os.ReadFile(paths[len(paths)-1])
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		BodyHash string `json:"body_hash"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return "", err
+	}
+	return r.BodyHash, nil
+}
+
+// VerifyExecutionLog re-lê o arquivo persistido e confere os campos
+// essenciais contra o RunResult esperado. Defesa em profundidade contra
+// corrupção pós-escrita (disk full, permission flip, etc.).
+func VerifyExecutionLog(path string, expected RunResult) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", path, err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("arquivo vazio: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", path, err)
+	}
+	var got struct {
+		Version   int    `json:"version"`
+		SessionID string `json:"session_id"`
+		Timestamp string `json:"timestamp"`
+		ExitCode  int    `json:"exit_code"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		return fmt.Errorf("unmarshal %q: %w", path, err)
+	}
+	if got.Version < 1 {
+		return fmt.Errorf("version inválida: %d", got.Version)
+	}
+	if got.SessionID != expected.SessionID {
+		return fmt.Errorf("session_id divergente: got=%q want=%q",
+			got.SessionID, expected.SessionID)
+	}
+	if got.Timestamp != expected.Timestamp {
+		return fmt.Errorf("timestamp divergente: got=%q want=%q",
+			got.Timestamp, expected.Timestamp)
+	}
+	if got.ExitCode != expected.ExitCode {
+		return fmt.Errorf("exit_code divergente: got=%d want=%d",
+			got.ExitCode, expected.ExitCode)
+	}
+	return nil
+}
+
 // pruneOldLogs mantém no máximo ORBIT_MAX_LOGS arquivos em `dir`, removendo
 // os mais antigos (por mtime). Default: 10000 (generoso — cobre ~1 ano de
 // uso típico de 30 runs/dia). Defina ORBIT_MAX_LOGS=N para ajustar.
@@ -102,7 +191,6 @@ func pruneOldLogs(dir string) error {
 		items = append(items, fe{e.Name(), info.ModTime()})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].mtime.Before(items[j].mtime) })
-	// Remove o excesso.
 	excess := len(items) - max
 	for i := 0; i < excess; i++ {
 		_ = os.Remove(filepath.Join(dir, items[i].name))
@@ -115,7 +203,6 @@ func pruneOldLogs(dir string) error {
 // Formato timestamp: RFC3339Nano com ':' substituído por '-' (safe em FS).
 func logFilename(r RunResult) string {
 	ts := strings.ReplaceAll(r.Timestamp, ":", "-")
-	// session_id formato "run-<nanos>"; derivamos 8 hex chars estáveis.
 	sid8 := shortSessionHex(r.SessionID, r.Timestamp)
 	return fmt.Sprintf("%s_%s_exit%d.json", ts, sid8, r.ExitCode)
 }
