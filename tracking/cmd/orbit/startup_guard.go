@@ -25,6 +25,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/IanVDev/orbit-engine/tracking"
 )
 
 // guardBypassCommands sempre rodam, mesmo com ambiente inconsistente.
@@ -33,6 +35,27 @@ var guardBypassCommands = map[string]struct{}{
 	"version":   {}, "--version": {}, "-v": {},
 	"help":      {}, "--help": {}, "-h": {},
 	"analyze":   {},
+}
+
+// enforceHistoryAnchor (I15) detecta wipe total de ~/.orbit via anchor
+// persistido em $HOME/.orbit-anchor. Chamado em main() após o startup
+// guard. Subcomandos de diagnóstico bypassam (caso contrário, recovery
+// é impossível). ORBIT_SKIP_GUARD=1 também bypassa (escape hatch
+// documentado; protegido pelo I16 em CI).
+func enforceHistoryAnchor(subcommand string) {
+	if os.Getenv("ORBIT_SKIP_GUARD") == "1" {
+		return
+	}
+	if _, bypass := guardBypassCommands[subcommand]; bypass {
+		return
+	}
+	if err := tracking.VerifyAnchor(); err != nil {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+		fmt.Fprintln(os.Stderr, "    AÇÃO: se foi intencional, rode:  rm $HOME/.orbit-anchor")
+		fmt.Fprintln(os.Stderr, "          depois reinicie o histórico com qualquer orbit run.")
+		log.Fatal("history anchor: fail-closed")
+	}
 }
 
 // startupVerdict é o resultado puro da análise — separado da ação
@@ -46,7 +69,19 @@ type startupVerdict struct {
 // enforceStartupIntegrity é o ponto de integração chamado no main().
 // Não retorna se detectar divergência — chama log.Fatal.
 func enforceStartupIntegrity(subcommand string) {
-	if os.Getenv("ORBIT_SKIP_GUARD") == "1" {
+	// I16 GUARD_HARDENING: ORBIT_SKIP_GUARD=1 em CI exige double-ack via
+	// ORBIT_SKIP_GUARD_IN_CI=1. Sem o ack, bypass é bloqueado e o guard
+	// segue normalmente — tornando difícil suprimir silenciosamente em
+	// pipelines automatizados.
+	skip := os.Getenv("ORBIT_SKIP_GUARD") == "1"
+	inCI := os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true"
+	ciAck := os.Getenv("ORBIT_SKIP_GUARD_IN_CI") == "1"
+	if skip && inCI && !ciAck {
+		fmt.Fprintln(os.Stderr, "❌  orbit: CRITICAL — ORBIT_SKIP_GUARD=1 em CI exige também ORBIT_SKIP_GUARD_IN_CI=1")
+		fmt.Fprintln(os.Stderr, "    razão: bypass em pipeline automatizado mascara regressão.")
+		log.Fatal("startup guard: CI bypass não autorizado")
+	}
+	if skip {
 		return
 	}
 	if _, bypass := guardBypassCommands[subcommand]; bypass {

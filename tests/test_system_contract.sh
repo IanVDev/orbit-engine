@@ -39,6 +39,8 @@ INVARIANTS=(
   "I12|tracking/redact.go|tests/test_data_safety.sh"
   "I13|tracking/cmd/orbit/logstore.go|tests/test_data_safety.sh"
   "I14|tracking/cmd/orbit/startup_guard.go|tests/test_data_safety.sh"
+  "I15|tracking/anchor.go|tests/test_wipe_and_ci_guard.sh"
+  "I16|tracking/cmd/orbit/startup_guard.go|tests/test_wipe_and_ci_guard.sh"
 )
 
 echo "── Validando ${#INVARIANTS[@]} invariantes do contrato ──"
@@ -84,6 +86,24 @@ echo "── I13: logstore.go chama pruneOldLogs após write ──"
 grep -qE "pruneOldLogs\(dir\)" "${REPO_ROOT}/tracking/cmd/orbit/logstore.go" \
   || _fail "I13: logstore.go não chama pruneOldLogs — crescimento linear sem cap"
 echo "  ✓ logstore.go aplica cap após cada write"
+
+# ── I15 diretamente verificável: run.go chama SaveAnchor ────────────────
+echo ""
+echo "── I15: run.go chama tracking.SaveAnchor após write ──"
+grep -qE "tracking\.SaveAnchor\(" "${REPO_ROOT}/tracking/cmd/orbit/run.go" \
+  || _fail "I15: run.go não chama SaveAnchor — wipe não detectável"
+grep -qE "enforceHistoryAnchor\(" "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
+  || _fail "I15: main.go não chama enforceHistoryAnchor — verify não acontece"
+echo "  ✓ anchor é salvo após run e verificado antes de run"
+
+# ── I16 diretamente verificável: guard tem check de CI + ack ────────────
+echo ""
+echo "── I16: startup_guard.go bloqueia ORBIT_SKIP_GUARD em CI sem ack ──"
+grep -qE 'ORBIT_SKIP_GUARD_IN_CI' "${REPO_ROOT}/tracking/cmd/orbit/startup_guard.go" \
+  || _fail "I16: startup_guard.go não referencia ORBIT_SKIP_GUARD_IN_CI"
+grep -qE '"CI"' "${REPO_ROOT}/tracking/cmd/orbit/startup_guard.go" \
+  || _fail "I16: startup_guard.go não detecta env CI"
+echo "  ✓ guard hardening em CI presente"
 
 # ── Garantias operacionais: existência dos artefatos ────────────────────
 GUARANTEES=(

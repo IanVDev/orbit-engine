@@ -53,6 +53,8 @@ Cada item tem: arquivo que a impõe + teste que a prova + sub-ID para G12.
 | I12 | Secrets conhecidos (Bearer, sk-live/test, AKIA…, `password=`, SSH privates) NUNCA são persistidos em texto puro em `~/.orbit/logs/`. Aplicado em `output` E em `args`. Preserva `output_bytes` do original (I2 continua válido) | `tracking/redact.go` + `tracking/cmd/orbit/run.go` (chamado antes de `WriteExecutionLog`) | `tests/test_data_safety.sh` (cen. 1) |
 | I13 | Logs em `$ORBIT_HOME/logs/` têm cap enforceado automaticamente (default 10000, configurável via `ORBIT_MAX_LOGS`). Prune síncrono após cada write remove os mais antigos por mtime | `tracking/cmd/orbit/logstore.go` (`pruneOldLogs`) | `tests/test_data_safety.sh` (cen. 2) |
 | I14 | Binário sem commit-stamp (build sem `-ldflags -X main.Commit=...`) aborta `orbit run` antes de executar. Bypass explícito via `ORBIT_SKIP_GUARD=1` (documented escape hatch) | `tracking/cmd/orbit/startup_guard.go` + chamada em `main.go:44` | `tests/test_data_safety.sh` (cen. 3) |
+| I15 | Wipe total de `~/.orbit/` é detectado: anchor snapshot (monotônico) persistido FORA de `~/.orbit/` em `$HOME/.orbit-anchor` (configurável via `ORBIT_ANCHOR_PATH`). Se anchor reporta `total_runs>0` mas `~/.orbit/logs/` não existe → CRITICAL + abort. Resiliente a I13 (prune) porque o contador cresce monotonicamente no anchor, não no diretório | `tracking/anchor.go` + `tracking/cmd/orbit/startup_guard.go::enforceHistoryAnchor` + `run.go::SaveAnchor` | `tests/test_wipe_and_ci_guard.sh` (cen. 1) |
+| I16 | `ORBIT_SKIP_GUARD=1` em CI exige double-ack via `ORBIT_SKIP_GUARD_IN_CI=1`. Sem ack, bypass em pipeline automatizado é bloqueado com CRITICAL — impede supressão silenciosa de regressão. Detecta `CI=true` ou `GITHUB_ACTIONS=true` | `tracking/cmd/orbit/startup_guard.go::enforceStartupIntegrity` (bloco skip+inCI+!ciAck) | `tests/test_wipe_and_ci_guard.sh` (cen. 2) |
 
 **Leitura**: se qualquer linha da coluna "Teste que prova" for removida ou
 parar de passar, o commit não é merjeável — `make gate-cli` bloqueia.
@@ -91,9 +93,10 @@ em `## 2. Invariantes`.
 | Shadow mode do SkillRouter | Implementado em `orchestrator/client.py` mas só pertence ao Produto B | Promover só se server stack virar release público |
 | Push automático de tag | Depende de infra externa (PAT/SSH do usuário) | Não virará contrato — é responsabilidade do ambiente |
 
-> Promovidos para §2 nesta revisão: **I12 SECRET_SAFETY**, **I13 LOG_RETENTION**,
-> **I14 ENV_INTEGRITY**. Implementação + mutation tests provados antes de virar
-> contrato (conforme §5).
+> Promovidos para §2 em revisões anteriores: I12 SECRET_SAFETY, I13 LOG_RETENTION,
+> I14 ENV_INTEGRITY, **I15 HISTORY_ANCHOR** (detecção de wipe de `~/.orbit/`),
+> **I16 GUARD_HARDENING** (bloqueio de `ORBIT_SKIP_GUARD` em CI sem double-ack).
+> Implementação + mutation tests provados antes de virar contrato (conforme §5).
 
 ---
 

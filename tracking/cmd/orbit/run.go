@@ -186,6 +186,13 @@ func runRun(args []string, jsonMode bool) error {
 		fmt.Fprintf(os.Stderr, "orbit: warning — log não persistido: %v\n", logErr)
 	}
 
+	// I15 HISTORY_ANCHOR: atualiza o snapshot fora de ~/.orbit após run
+	// bem-sucedido. Erro é tolerado (não derruba o run) mas avisado — o
+	// teste TestFailsOnHistoryWipe quebra se esta linha desaparecer.
+	if err := tracking.SaveAnchor(proof, ts.Time.Format(time.RFC3339Nano)); err != nil {
+		fmt.Fprintf(os.Stderr, "orbit: warning — anchor não atualizado: %v\n", err)
+	}
+
 	if jsonMode {
 		// Emit the closing status line AFTER the JSON body so stderr
 		// shows: heartbeat → tracking → [JSON on stdout] → recorded.
