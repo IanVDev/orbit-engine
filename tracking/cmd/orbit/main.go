@@ -110,9 +110,17 @@ func main() {
 
 	case "verify":
 		fs := flag.NewFlagSet("verify", flag.ExitOnError)
+		chain := fs.Bool("chain", false, "verifica encadeamento prev_proof de todos os logs")
 		_ = fs.Parse(os.Args[2:])
+		if *chain {
+			if err := runVerifyChain(os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if fs.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>")
+			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>  |  orbit verify --chain")
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, "Exemplo:")
 			fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/2026-04-18T01-12-12.341818001Z_c37e3217_exit0.json")
@@ -139,6 +147,21 @@ func main() {
 	case "update":
 		if err := runUpdate(); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "logs":
+		if err := runLogs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "anchor":
+		fs := flag.NewFlagSet("anchor", flag.ExitOnError)
+		host := fs.String("host", "http://127.0.0.1:8080", "URL do nó AURYA (ProofStream)")
+		_ = fs.Parse(os.Args[2:])
+		if err := runAnchor(os.Stdout, *host); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
 			os.Exit(1)
 		}
 
@@ -172,6 +195,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
+	fmt.Fprintln(os.Stderr, "  logs          Gestão de logs persistidos (subcomando: prune)")
+	fmt.Fprintln(os.Stderr, "  anchor        Publica merkle_root dos logs na chain AURYA")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")

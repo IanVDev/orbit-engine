@@ -1,75 +1,206 @@
 name: orbit-engine
-description: Fail-closed governance for PromQL, metrics isolation, and token efficiency enforcement.
+description: >
+  Session governance skill com rastreamento real via backend HTTP orbit-engine
+  (porta 9100). Acoes: evaluate, track, enforce_budget, reconcile. Fail-closed:
+  qualquer falha de backend, HMAC, budget ou I/O aborta a execucao.
+version: "1.1.0"
+entrypoint: python3 ~/.claude/skills/orbit-engine/entrypoint.py
 
 activation:
   auto: true
   triggers:
     - analyze cost
+    - analyze-cost
+    - /analyze-cost
     - high token usage
     - inefficient session
-    - metrics analysis
-    - grafana query
-    - promql
-    - observability
-    - performance issue
+    - optimize this
+    - is this optimal?
+    - "Before answering, apply orbit-engine"
+  skip:
+    - simple factual questions
+    - one-line code fixes
+    - casual conversation
+    - first message of a session with no history
 
-core_rules:
-  - Always enforce fail-closed behavior
-  - Never allow raw metrics (orbit_skill_*)
-  - Only allow recording rules (orbit:*)
-  - Reject empty or ambiguous queries
-  - Use strict validation when possible
+backend:
+  url_default: http://localhost:9100
+  url_env: ORBIT_BACKEND_URL
+  timeout_seconds: 5
+  client_id_header: X-Orbit-Client-Id
+  client_id_value: orbit-engine-skill
+  endpoints:
+    health: GET /health
+    track: POST /track
+    enforce_budget: POST /track    # event_type=budget_check
+    reconcile: POST /reconcile
 
-governance:
-  promql:
-    allowed:
-      - orbit:*
-      - orbit_seed_mode
-      - orbit_tracking_up
-      - orbit_instance_id
-      - orbit_last_event_timestamp
-    forbidden:
-      - orbit_skill_*
-      - any raw metric without env isolation
-    strict_mode:
-      - reject unknown orbit_*
-      - reject typos
-      - reject non-allowlisted metrics
+actions:
+  evaluate:
+    description: Verifica saude do backend (GET /health) e retorna diagnostico.
+    fail_closed: true
+    cli: |
+      python3 ~/.claude/skills/orbit-engine/entrypoint.py --action evaluate
 
-gateway:
-  required: true
-  endpoint: http://localhost:9091
-  behavior:
-    - validate query before execution
-    - block invalid queries (400)
-    - fail-closed on upstream errors (503)
-    - log all violations
+  track:
+    description: Registra SkillEvent no backend (POST /track) com HMAC opcional.
+    fail_closed: true
+    side_effects:
+      - append em ~/.orbit/client_ledger.jsonl (schema_version 1)
+      - escreve ~/.orbit/active_task.intent se --description informado
+    cli: |
+      python3 ~/.claude/skills/orbit-engine/entrypoint.py \
+        --action track \
+        --session-id <uuid> \
+        --event-type skill_activate \
+        --mode auto \
+        --trigger "user request" \
+        --tokens-used <n> \
+        --description "<task>"
 
-diagnostic_output:
-  format:
-    - DIAGNOSTIC
-    - ACTIONS
-    - DO_NOT_DO_NOW
-  rules:
-    - be specific
-    - prioritize impact
-    - avoid generic advice
+  enforce_budget:
+    description: Posta event_type=budget_check; aborta se response.budget_blocked=true.
+    fail_closed: true
+    side_effects:
+      - append em ~/.orbit/client_ledger.jsonl
+    cli: |
+      python3 ~/.claude/skills/orbit-engine/entrypoint.py \
+        --action enforce_budget \
+        --session-id <uuid> \
+        --tokens-used <n>
+
+  reconcile:
+    description: Reconcilia tokens reais vs estimados (POST /reconcile) com HMAC.
+    fail_closed: true
+    side_effects:
+      - remove ~/.orbit/active_task.intent se session_id bater
+    cli: |
+      python3 ~/.claude/skills/orbit-engine/entrypoint.py \
+        --action reconcile \
+        --session-id <uuid> \
+        --actual-tokens <n> \
+        --estimated-tokens <n>
+
+environment:
+  ORBIT_BACKEND_URL:
+    default: http://localhost:9100
+    required: false
+  ORBIT_HOME:
+    default: ~/.orbit
+    required: false
+    notes: diretorio do client_ledger e active_task.intent (perms 0700)
+  ORBIT_HMAC_SECRET:
+    required: false
+    notes: assina body de /track com HMAC-SHA256 -> header X-Orbit-Signature
+  ORBIT_RECONCILE_SECRET:
+    required: false
+    notes: assina body de /reconcile com HMAC-SHA256
+
+cli_flags:
+  - --action {evaluate,track,enforce_budget,reconcile}
+  - --session-id <uuid>
+  - --event-type <str>          # default skill_activate
+  - --mode {auto,suggest,off}
+  - --trigger <str>
+  - --tokens-used <int>
+  - --actual-tokens <int>
+  - --estimated-tokens <int>
+  - --description <str>         # grava active_task.intent para resume pos-compact
+
+payload_track:
+  fields:
+    - event_type
+    - timestamp                  # ISO8601 UTC com ms + Z
+    - session_id
+    - mode
+    - trigger
+    - estimated_waste            # float
+    - actions_suggested          # int
+    - actions_applied            # int
+    - impact_estimated_tokens    # int
+    - event_hash                 # sha256(session_id|ts|tokens)
+    - prev_hash                  # vazio nesta versao
+
+payload_reconcile:
+  fields:
+    - session_id
+    - timestamp
+    - actual_tokens
+    - estimated_tokens
+    - delta                      # actual - estimated
+  headers:
+    - X-Orbit-Client-Id: orbit-engine-skill
+    - X-Orbit-Timestamp: <ts>
+    - X-Orbit-Signature: <hmac>  # se ORBIT_RECONCILE_SECRET setado
+
+client_ledger:
+  path: ~/.orbit/client_ledger.jsonl
+  schema_version: 1
+  permissions: "0600 (file) / 0700 (dir)"
+  sovereign: false               # mutavel pelo usuario; nao e prova
+  purpose: tornar `orbit_explain` reproduzivel via CLI
+  entry_fields:
+    - schema_version
+    - written_at
+    - action
+    - session_id
+    - event_type
+    - timestamp
+    - mode
+    - impact_estimated_tokens
+    - skill_event_hash
+    - server_event_id
+    - git_head                   # vazio se cwd nao e repo (fail-open)
+    - git_repo
+    - payload                    # echo do payload enviado
+
+active_intent:
+  path: ~/.orbit/active_task.intent
+  written_when: action=track com --description nao vazio
+  cleared_when: action=reconcile com session_id correspondente
+  purpose: permitir resume da tarefa apos /compact
+  schema_version: 1
+
+fail_closed:
+  on_backend_unreachable: abort
+  on_backend_http_error: abort
+  on_hmac_failure: abort
+  on_budget_exceeded: abort      # response.budget_blocked=true
+  on_invalid_response: abort
+  on_ledger_write_failed: abort
+  on_intent_write_failed: abort
+  exit_code: 1
+  stderr_format: |
+    {"status":"fail_closed","reason":"<code>","detail":"<msg>"}
+
+protocol:
+  pre_response_check:
+    rule: silenciosamente avaliar Observable Patterns antes de responder
+    if_match: prepend diagnostico, depois resposta normal
+    mandatory: true
+  diagnostic_output:
+    sections:
+      - DIAGNOSTIC
+      - ACTIONS
+      - DO_NOT_DO_NOW
+    rules:
+      - especifico, nao generico
+      - priorizar impacto
+      - apenas passos acionaveis e testaveis
 
 modes:
-  auto:
-    description: Applies fixes automatically when safe
-  suggest:
-    description: Suggests actions without executing
-  off:
-    description: Only observes
+  auto: Aplica fixes automaticamente quando seguro
+  suggest: Sugere acoes sem executar
+  off: Apenas observa
 
 constraints:
-  - No overengineering
-  - No speculative suggestions
-  - Only actionable steps
-  - Must be testable or executable
+  - Nunca simular respostas — sempre chamar backend real
+  - Nenhuma acao sem tracking
+  - Sem fallback silencioso
+  - Sem overengineering / sugestoes especulativas
 
-security:
-  - fail_closed_required: true
-  - log_violations: true
-  - no_silent_fallback: true
+related_files:
+  skill_md: ~/.claude/skills/orbit-engine/skill.md
+  skill_yaml: ~/.claude/skills/orbit-engine/skill.yaml
+  entrypoint: ~/.claude/skills/orbit-engine/entrypoint.py
+  tests: ~/.claude/skills/orbit-engine/test_skill.py

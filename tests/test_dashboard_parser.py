@@ -169,6 +169,53 @@ class TestDeriveSessionId:
 
 
 # ---------------------------------------------------------------------------
+# Command bucket: cobertura dos dois schemas (auryachain + logstore.go)
+# ---------------------------------------------------------------------------
+
+class TestDeriveCommandBucket:
+    def test_new_schema_returns_binary_directly(self):
+        log = {"command": "echo", "args": ["hello"]}
+        assert p._derive_command_bucket(log) == "echo"
+
+    def test_auryad_run_extracts_from_prompt(self):
+        log = {"command": "run", "prompt": "echo orbit:consistent"}
+        assert p._derive_command_bucket(log) == "echo"
+
+    def test_auryad_build_extracts_from_prompt(self):
+        log = {"command": "build", "prompt": "go build ./..."}
+        assert p._derive_command_bucket(log) == "go"
+
+    def test_auryad_verb_without_prompt_falls_back(self):
+        log = {"command": "run"}
+        assert p._derive_command_bucket(log) == "run"
+
+    def test_empty_command_returns_unknown(self):
+        assert p._derive_command_bucket({}) == "unknown"
+
+    def test_non_auryad_verb_passes_through(self):
+        log = {"command": "npm", "prompt": "irrelevant"}
+        assert p._derive_command_bucket(log) == "npm"
+
+    def test_aggregate_uses_bucket_not_raw_command(self):
+        """Logs auryad ('command':'run') não devem colapsar sob bucket 'run'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logs = [
+                make_log(command="run", prompt="echo a", timestamp="2026-04-01T00:00:00Z"),
+                make_log(command="run", prompt="echo b", timestamp="2026-04-01T00:00:01Z"),
+                make_log(command="run", prompt="go test ./...", timestamp="2026-04-01T00:00:02Z"),
+            ]
+            logs_dir = write_logs(tmpdir, logs)
+            orig = p.LOGS_DIR
+            p.LOGS_DIR = logs_dir
+            try:
+                executions, anchors = p.parse_logs()
+                stats = p.aggregate(executions, anchors, [])
+            finally:
+                p.LOGS_DIR = orig
+            assert stats["comandos"] == {"echo": 2, "go": 1}, stats["comandos"]
+
+
+# ---------------------------------------------------------------------------
 # Fail-closed: campos essenciais ausentes
 # ---------------------------------------------------------------------------
 

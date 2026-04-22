@@ -11,7 +11,7 @@ import "strings"
 // Deve ser mantida em sincronia com o switch em main.go.
 var knownCommands = []string{
 	"quickstart", "run", "stats", "analyze",
-	"context-pack", "ctx", "doctor", "update", "version", "help",
+	"context-pack", "ctx", "doctor", "update", "logs", "version", "help",
 }
 
 // suggestCommand retorna o comando conhecido mais próximo de input,

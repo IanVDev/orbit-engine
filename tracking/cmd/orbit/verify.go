@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/IanVDev/orbit-engine/tracking"
@@ -77,6 +78,13 @@ func verifyTo(w io.Writer, logPath string) error {
 		return fmt.Errorf("proof mismatch — log adulterado ou schema divergente")
 	}
 
+	// body_hash: cobre o JSON inteiro (defesa contra edição de campos que
+	// o proof legado não alcança — output, decision, diagnosis). Back-compat:
+	// log sem body_hash é aceito, sinalizado como "legado" na saída.
+	if err := verifyBodyHash(w, logPath); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(w, "✅  proof confere — %s\n", logPath)
 	fmt.Fprintf(w, "    sha256: %s\n", expected)
 	fmt.Fprintf(w, "    session: %s · ts: %s · bytes: %d\n",
@@ -114,6 +122,87 @@ func recomputeProof(rec verifyRecord) (string, error) {
 		return "", fmt.Errorf("timestamp inválido %q: %w", rec.Timestamp, err)
 	}
 	return tracking.ComputeHash(rec.SessionID, ts, rec.OutputBytes), nil
+}
+
+// verifyBodyHash lê o log completo, recomputa CanonicalHash e compara.
+// Log sem body_hash é tratado como legado — emite nota mas não falha.
+func verifyBodyHash(w io.Writer, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("body_hash: read %q: %w", path, err)
+	}
+	var r RunResult
+	if err := json.Unmarshal(data, &r); err != nil {
+		return fmt.Errorf("body_hash: unmarshal %q: %w", path, err)
+	}
+	if r.BodyHash == "" {
+		fmt.Fprintf(w, "   ⚠️  log legado sem body_hash — integridade do corpo não verificada\n")
+		return nil
+	}
+	got, err := CanonicalHash(r)
+	if err != nil {
+		return fmt.Errorf("body_hash recompute: %w", err)
+	}
+	if got != r.BodyHash {
+		fmt.Fprintf(w, "❌  body_hash mismatch em %s\n", path)
+		fmt.Fprintf(w, "    armazenado:  %s...\n", safePrefix(r.BodyHash, 32))
+		fmt.Fprintf(w, "    recomputado: %s...\n", safePrefix(got, 32))
+		return fmt.Errorf("body_hash mismatch — log adulterado")
+	}
+	return nil
+}
+
+// runVerifyChain percorre TODOS os logs em $ORBIT_HOME/logs/ ordenados por
+// timestamp e valida que cada prev_proof bate com o body_hash do anterior.
+// Fail-closed no primeiro gap. Back-compat assimétrica: logs legados (sem
+// body_hash) só são tolerados ANTES da primeira âncora com body_hash — um
+// legacy_gap no meio da sequência é reset silencioso, tratado como break.
+func runVerifyChain(w io.Writer) error {
+	paths, err := ListExecutionLogs()
+	if err != nil {
+		return fmt.Errorf("chain: list logs: %w", err)
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(w, "ℹ️  sem logs para verificar")
+		return nil
+	}
+	var prevBodyHash string
+	chainStarted := false
+	checked, resets := 0, 0
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return fmt.Errorf("chain: read %q: %w", p, err)
+		}
+		var r RunResult
+		if err := json.Unmarshal(data, &r); err != nil {
+			return fmt.Errorf("chain: unmarshal %q: %w", p, err)
+		}
+		if r.BodyHash == "" {
+			// Legado após âncora = tentativa de reset silencioso da chain.
+			if chainStarted {
+				fmt.Fprintf(w, "❌  legacy_gap em %s — log legado após início da chain\n", filepath.Base(p))
+				fmt.Fprintf(w, "    apenas logs anteriores à primeira âncora podem omitir body_hash\n")
+				return fmt.Errorf("chain break — legacy_gap detectado (reset silencioso da chain)")
+			}
+			prevBodyHash, resets = "", resets+1
+			continue
+		}
+		if prevBodyHash != "" && r.PrevProof != prevBodyHash {
+			fmt.Fprintf(w, "❌  chain break em %s\n", filepath.Base(p))
+			fmt.Fprintf(w, "    prev_proof:   %s...\n", safePrefix(r.PrevProof, 32))
+			fmt.Fprintf(w, "    esperado:     %s...\n", safePrefix(prevBodyHash, 32))
+			return fmt.Errorf("chain break — log removido, reordenado ou adulterado")
+		}
+		prevBodyHash = r.BodyHash
+		chainStarted = true
+		checked++
+	}
+	fmt.Fprintf(w, "✅  chain íntegra — %d logs verificados, %d âncoras legadas\n",
+		checked, resets)
+	// Anchor externo: se existe receipt, logs locais DEVEM bater. Sem
+	// receipt → no-op (back-compat pré-anchor).
+	return verifyAgainstLatestAnchor(w)
 }
 
 // safePrefix devolve até n chars de s, sem panic se s for menor.

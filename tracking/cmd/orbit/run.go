@@ -50,6 +50,13 @@ type RunResult struct {
 	SnapshotPath string            `json:"snapshot_path,omitempty"`
 	Guidance     string            `json:"guidance,omitempty"`
 	Diagnosis    *DiagnosisPayload `json:"diagnosis,omitempty"`
+	// BodyHash é preenchido por CanonicalHash antes da escrita. Cobre o JSON
+	// inteiro (exceto a si mesmo). Back-compat: logs antigos ficam vazios.
+	BodyHash string `json:"body_hash,omitempty"`
+	// PrevProof aponta para o body_hash do log imediatamente anterior por
+	// timestamp. "" = genesis (primeiro log) ou predecessor legado sem hash.
+	// Encadeia os logs: remover/reordenar quebra o match em verify --chain.
+	PrevProof string `json:"prev_proof,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
@@ -168,10 +175,51 @@ func runRun(args []string, jsonMode bool) error {
 		Diagnosis:    diagPayload,
 	}
 
-	// Persistência append-only em $ORBIT_HOME/logs/. Fail-closed: erro é
-	// reportado via stderr, mas não altera o exit code do comando executado.
-	if _, logErr := WriteExecutionLog(result); logErr != nil {
-		fmt.Fprintf(os.Stderr, "orbit: warning — log não persistido: %v\n", logErr)
+	// Persistência append-only em $ORBIT_HOME/logs/. FAIL-CLOSED: se o log
+	// não for gravado E verificado, a execução é marcada CRITICAL e o orbit
+	// retorna erro — o observatório depende de completude de logs. Sanitiza
+	// secrets antes de gravar; o terminal mostra o output original.
+	toLog := result
+	toLog.Output = redactOutput(result.Output)
+	if len(result.Args) > 0 {
+		redactedArgs := make([]string, len(result.Args))
+		for i, a := range result.Args {
+			redactedArgs[i] = redactOutput(a)
+		}
+		toLog.Args = redactedArgs
+	}
+	// prev_proof ancora este log ao anterior — consultado antes do body_hash
+	// porque ele entra no JSON canônico. Falha aqui é fail-soft: genesis
+	// também é "" e não queremos bloquear run por I/O de leitura.
+	if prev, pErr := findPreviousBodyHash(); pErr == nil {
+		toLog.PrevProof = prev
+	}
+	// body_hash é computado ANTES do write — ele cobre tudo exceto a si mesmo.
+	// Falha aqui é fail-closed: entra no mesmo caminho CRITICAL abaixo, sem
+	// gravar log mentiroso (sem hash ou com hash vazio).
+	bodyHash, hashErr := CanonicalHash(toLog)
+	if hashErr == nil {
+		toLog.BodyHash = bodyHash
+	}
+	logPath, logErr := WriteExecutionLog(toLog)
+	if logErr == nil && hashErr != nil {
+		logErr = fmt.Errorf("body_hash: %w", hashErr)
+	}
+	if logErr == nil {
+		logErr = VerifyExecutionLog(logPath, toLog)
+	}
+	if logErr != nil {
+		if _, mErr := IncrementMetric(MetricExecutionWithoutLog); mErr != nil {
+			fmt.Fprintf(os.Stderr, "orbit: warn — falha ao registrar métrica %s: %v\n",
+				MetricExecutionWithoutLog, mErr)
+		}
+		fmt.Fprintf(os.Stderr,
+			"❌  CRITICAL: execução sem log persistido (fail-closed)\n"+
+				"    session: %s\n"+
+				"    motivo:  %v\n"+
+				"    ação:    verifique permissões de $ORBIT_HOME/logs e espaço em disco\n",
+			result.SessionID, logErr)
+		return fmt.Errorf("execução %s sem log persistido: %w", result.SessionID, logErr)
 	}
 
 	if jsonMode {

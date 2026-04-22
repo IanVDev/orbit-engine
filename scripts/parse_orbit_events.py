@@ -17,6 +17,11 @@ LEDGER_PATH = os.path.join(ORBIT_DIR, "client_ledger.jsonl")
 # Ausência de qualquer um destes em um log versionado causa ParseError (fail-closed).
 EXECUTION_ESSENTIAL_FIELDS = ("timestamp", "exit_code", "command", "language")
 
+# Verbos do schema auryachain (antigo): o campo `command` carrega a operação
+# ("run", "build", ...) e o comando real vive em `prompt`. No schema novo do
+# logstore.go, `command` já é o binário. _derive_command_bucket() normaliza.
+_AURYAD_VERBS = frozenset({"run", "build", "test", "fix", "exec", "verify"})
+
 FAILURE_TYPES: dict[int, str] = {
     0: "none",
     1: "runtime_error",
@@ -65,6 +70,29 @@ def _is_execution_log(data: dict) -> bool:
     return "exit_code" in data or "version" in data
 
 
+def _derive_command_bucket(data: dict) -> str:
+    """
+    Normaliza o bucket de comando, cobrindo dois schemas:
+
+      • Novo (logstore.go): `command` é o binário real ("echo", "go", "npm")
+        + opcional `args`. Passa direto.
+      • Antigo (auryachain): `command` é um verbo ("run"/"build"/...) e o
+        binário real vive em `prompt` (ex.: "echo orbit:consistent").
+        Extrai o primeiro token do `prompt`.
+
+    Em ambos os casos a agregação de comandos fica útil (não colapsa 200+
+    execuções sob um único bucket "run").
+    """
+    cmd = (data.get("command") or "").strip()
+    if cmd in _AURYAD_VERBS:
+        prompt = (data.get("prompt") or "").strip()
+        if prompt:
+            parts = prompt.split()
+            if parts:
+                return parts[0]
+    return cmd or "unknown"
+
+
 def _validate_execution(data: dict, path: str) -> None:
     """Falha com ParseError se um campo essencial estiver ausente em um log versionado."""
     if data.get("version") is not None:
@@ -106,6 +134,7 @@ def parse_logs() -> tuple[list[dict], list[dict]]:
             data.setdefault("session_id", _derive_session_id(fname))
             data.setdefault("parent_event_id", None)
             data["failure_type"] = _failure_type(data.get("exit_code"))
+            data["command_bucket"] = _derive_command_bucket(data)
             executions.append(data)
         else:
             anchors.append(data)
@@ -329,7 +358,7 @@ def _collect_expansion_candidates(
         ts = _ts_epoch(e.get("timestamp") or "")
         if ts <= 0 or ts < window_start or ts > now_epoch:
             continue
-        bucket = _command_bucket(e.get("command"))
+        bucket = e.get("command_bucket") or _command_bucket(e.get("command"))
         day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
         entry = agg.setdefault(bucket, {"count": 0, "days": set()})
         entry["count"] += 1
@@ -458,7 +487,7 @@ def aggregate(
     timestamps: list[str] = []
 
     for e in executions:
-        cmd = e.get("command") or "unknown"
+        cmd = e.get("command_bucket") or e.get("command") or "unknown"
         comandos[cmd] = comandos.get(cmd, 0) + 1
 
         lang = e.get("language") or "unknown"
