@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +58,56 @@ func WriteExecutionLog(result RunResult) (string, error) {
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		return "", fmt.Errorf("logstore: write %q: %w", path, err)
 	}
+
+	// I13 LOG_RETENTION: prune síncrono após cada write (best-effort).
+	// Fail-soft: erro no prune é ignorado para não derrubar o run bem-sucedido,
+	// mas o cap é aplicado — remover esta chamada quebra TestLogRotationEnforced.
+	_ = pruneOldLogs(dir)
 	return path, nil
+}
+
+// pruneOldLogs mantém no máximo ORBIT_MAX_LOGS arquivos em `dir`, removendo
+// os mais antigos (por mtime). Default: 10000 (generoso — cobre ~1 ano de
+// uso típico de 30 runs/dia). Defina ORBIT_MAX_LOGS=N para ajustar.
+//
+// Retorna erro apenas em I/O irrecuperável; best-effort por design.
+func pruneOldLogs(dir string) error {
+	max := 10000
+	if v := os.Getenv("ORBIT_MAX_LOGS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			max = n
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(entries) <= max {
+		return nil
+	}
+	// Ordena por mtime ascendente (mais antigo primeiro).
+	type fe struct {
+		name  string
+		mtime time.Time
+	}
+	items := make([]fe, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		items = append(items, fe{e.Name(), info.ModTime()})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].mtime.Before(items[j].mtime) })
+	// Remove o excesso.
+	excess := len(items) - max
+	for i := 0; i < excess; i++ {
+		_ = os.Remove(filepath.Join(dir, items[i].name))
+	}
+	return nil
 }
 
 // logFilename gera o nome do arquivo conforme o padrão do parser.

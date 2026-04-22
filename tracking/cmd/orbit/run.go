@@ -124,7 +124,19 @@ func runRun(args []string, jsonMode bool) error {
 
 	// ── Proof ─────────────────────────────────────────────────────────────
 	// proof = sha256(sessionID + timestamp + outputBytes)
+	// IMPORTANTE: calculado sobre o len ORIGINAL, antes da redação (I12).
+	// Redaction altera o texto persistido mas não `outputBytes` → I2 e I3
+	// permanecem consistentes com o verify.
 	proof := tracking.ComputeHash(sessionID, ts.Time, outputBytes)
+
+	// I12 SECRET_SAFETY: redige secrets conhecidos antes de persistir.
+	// Aplica em output E em args (secret em argv também é vetor comum).
+	// Fail-closed: remover qualquer linha quebra TestFailsIfSecretIsPersisted.
+	output = tracking.RedactSecrets(output)
+	redactedArgs := make([]string, len(cmdArgs))
+	for i, a := range cmdArgs {
+		redactedArgs[i] = tracking.RedactSecrets(a)
+	}
 
 	// ── Montagem do resultado ─────────────────────────────────────────────
 
@@ -150,7 +162,7 @@ func runRun(args []string, jsonMode bool) error {
 	result := RunResult{
 		Version:      LogSchemaVersion,
 		Command:      cmdName,
-		Args:         cmdArgs,
+		Args:         redactedArgs,
 		ExitCode:     exitCode,
 		Output:       output,
 		Proof:        proof,

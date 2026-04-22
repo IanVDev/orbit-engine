@@ -36,6 +36,9 @@ INVARIANTS=(
   "I9|Makefile|tests/test_makefile_no_dup.sh"
   "I10|docs/server-stack|tests/test_docs_dont_claim_v1.sh"
   "I11|docs/CLI_RELEASE_GATE.md|tests/test_gate_doc_parity.sh"
+  "I12|tracking/redact.go|tests/test_data_safety.sh"
+  "I13|tracking/cmd/orbit/logstore.go|tests/test_data_safety.sh"
+  "I14|tracking/cmd/orbit/startup_guard.go|tests/test_data_safety.sh"
 )
 
 echo "── Validando ${#INVARIANTS[@]} invariantes do contrato ──"
@@ -67,6 +70,20 @@ grep -qE "MkdirAll\(dir, 0o700\)" "${REPO_ROOT}/tracking/cmd/orbit/logstore.go" 
 grep -qE "WriteFile\(path, payload, 0o600\)" "${REPO_ROOT}/tracking/cmd/orbit/logstore.go" \
   || _fail "I5: logstore.go não escreve arquivo com 0o600"
 echo "  ✓ logstore.go grava perms 0o600/0o700 conforme I5"
+
+# ── I12 diretamente verificável: run.go chama RedactSecrets ─────────────
+echo ""
+echo "── I12: run.go chama tracking.RedactSecrets ──"
+grep -qE "tracking\.RedactSecrets\(" "${REPO_ROOT}/tracking/cmd/orbit/run.go" \
+  || _fail "I12: run.go não invoca RedactSecrets — secret leak silencioso"
+echo "  ✓ run.go redige output/args antes de persistir"
+
+# ── I13 diretamente verificável: logstore.go chama pruneOldLogs ─────────
+echo ""
+echo "── I13: logstore.go chama pruneOldLogs após write ──"
+grep -qE "pruneOldLogs\(dir\)" "${REPO_ROOT}/tracking/cmd/orbit/logstore.go" \
+  || _fail "I13: logstore.go não chama pruneOldLogs — crescimento linear sem cap"
+echo "  ✓ logstore.go aplica cap após cada write"
 
 # ── Garantias operacionais: existência dos artefatos ────────────────────
 GUARANTEES=(
