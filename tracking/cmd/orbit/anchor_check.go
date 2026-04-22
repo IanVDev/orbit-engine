@@ -1,20 +1,30 @@
 // anchor_check.go — comparação fail-closed entre logs atuais e receipt.
 //
-// Semântica: o receipt congelou N folhas no momento da ancoragem. Agora
-// as N primeiras folhas atuais devem bater exatamente — elemento por
-// elemento — e o merkle_root recomputado deve ser idêntico. Logs novos
-// APÓS a ancoragem são permitidos (sufixo); qualquer alteração no PREFIXO
-// ancorado é deleção, reorder ou adulteração.
+// I20 ANCHOR_VERIFICATION: valida em ordem fail-closed:
+//   1. Assinatura Ed25519 do receipt (app_signature sobre canonical).
+//   2. Monotonic: NodeTimestamp > último visto em .anchor-last-ts (anti-replay).
+//   3. leaf_count consistente (LeafCount == len(LeafHashes) == len(leaves)).
+//   4. Full match: leaves_atuais == LeafHashes elemento-por-elemento.
+//   5. merkle_root recomputado == rec.MerkleRoot.
+//
+// Semântica "full match" (não prefixo): após `orbit anchor`, qualquer log
+// adicional exige re-anchor antes do próximo `verify --chain`. Operação
+// explícita para preservar imutabilidade do corpo ancorado.
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+
+	"github.com/IanVDev/orbit-engine/tracking"
 )
 
 // verifyAgainstLatestAnchor é chamado por runVerifyChain após a chain OK.
-// Sem receipt → no-op. Com receipt → recompute + compare, fail-closed.
+// Sem receipt → no-op. Com receipt → 5 checks fail-closed (I20).
 func verifyAgainstLatestAnchor(w io.Writer) error {
 	rec, path, err := loadLatestAnchor()
 	if err != nil {
@@ -23,22 +33,43 @@ func verifyAgainstLatestAnchor(w io.Writer) error {
 	if rec == nil {
 		return nil
 	}
+
+	// [1] Assinatura Ed25519 do receipt.
+	if err := verifyAnchorSignature(rec); err != nil {
+		return fmt.Errorf("anchor mismatch — assinatura inválida: %w", err)
+	}
+
+	// [2] Monotonic timestamp (anti-replay).
+	if err := verifyAnchorMonotonic(rec); err != nil {
+		return fmt.Errorf("anchor mismatch — replay detectado: %w", err)
+	}
+
+	// [3] leaf_count consistente (struct-interno).
+	if rec.LeafCount != len(rec.LeafHashes) {
+		return fmt.Errorf("anchor mismatch — leaf_count=%d != len(leaf_hashes)=%d",
+			rec.LeafCount, len(rec.LeafHashes))
+	}
+
 	leaves, err := collectLeafHashes()
 	if err != nil {
 		return fmt.Errorf("anchor verify: %w", err)
 	}
-	if len(leaves) < rec.LeafCount {
+
+	// [4] Full match (não prefixo): len E cada leaf.
+	if len(leaves) != rec.LeafCount {
 		return fmt.Errorf(
-			"anchor mismatch — %d folhas atuais < %d ancoradas (log apagado após anchor)",
+			"anchor mismatch — %d folhas atuais != %d ancoradas (full match exige igualdade)",
 			len(leaves), rec.LeafCount)
 	}
 	for i, h := range rec.LeafHashes {
 		if leaves[i] != h {
 			return fmt.Errorf(
-				"anchor mismatch — folha %d divergente (log adulterado ou removido)", i)
+				"anchor mismatch — folha %d divergente (log adulterado ou reordenado)", i)
 		}
 	}
-	root, err := ComputeMerkleRoot(leaves[:rec.LeafCount])
+
+	// [5] Merkle root recomputado.
+	root, err := ComputeMerkleRoot(leaves)
 	if err != nil {
 		return fmt.Errorf("anchor verify: merkle: %w", err)
 	}
@@ -47,7 +78,78 @@ func verifyAgainstLatestAnchor(w io.Writer) error {
 			"anchor mismatch — merkle_root recomputado %s... != receipt %s...",
 			safePrefix(root, 16), safePrefix(rec.MerkleRoot, 16))
 	}
+
+	// Atualiza .anchor-last-ts após aceitação (commit do monotonic).
+	if err := persistAnchorTimestamp(rec.NodeTimestamp); err != nil {
+		return fmt.Errorf("anchor verify: persist ts: %w", err)
+	}
+
 	fmt.Fprintf(w, "✅  anchor ok — merkle_root %s... confere (receipt %s, AURYA %s)\n",
 		safePrefix(root, 16), filepath.Base(path), rec.NodeTimestamp)
 	return nil
+}
+
+// verifyAnchorSignature valida app_signature contra canonical(receipt sem sig)
+// usando app_pub. Falha se: hex inválido, pub/sig com tamanho errado, ou
+// verify ed25519 retornar false.
+func verifyAnchorSignature(rec *AnchorReceipt) error {
+	if rec.AppPub == "" || rec.AppSignature == "" {
+		return fmt.Errorf("receipt sem app_pub/app_signature (legado ou adulterado)")
+	}
+	pub, err := hex.DecodeString(rec.AppPub)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("app_pub inválido")
+	}
+	sig, err := hex.DecodeString(rec.AppSignature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("app_signature inválido")
+	}
+	msg, err := canonicalAnchorMsg(*rec)
+	if err != nil {
+		return fmt.Errorf("canonical: %w", err)
+	}
+	if !ed25519.Verify(pub, msg, sig) {
+		return fmt.Errorf("assinatura não confere sobre corpo canônico")
+	}
+	return nil
+}
+
+// anchorLastTsPath devolve $ORBIT_HOME/.anchor-last-ts.
+// Arquivo de 1 linha: RFC3339Nano do NodeTimestamp do último receipt aceito.
+func anchorLastTsPath() (string, error) {
+	base, err := tracking.ResolveStoreHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, ".anchor-last-ts"), nil
+}
+
+// verifyAnchorMonotonic exige rec.NodeTimestamp > último aceito. Primeiro
+// uso (arquivo ausente) aceita. Empate ou retrocesso → replay.
+func verifyAnchorMonotonic(rec *AnchorReceipt) error {
+	p, err := anchorLastTsPath()
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return nil // primeiro uso
+	}
+	if err != nil {
+		return fmt.Errorf("read last-ts: %w", err)
+	}
+	prev := string(b)
+	if rec.NodeTimestamp <= prev {
+		return fmt.Errorf("NodeTimestamp=%s <= último aceito=%s", rec.NodeTimestamp, prev)
+	}
+	return nil
+}
+
+// persistAnchorTimestamp grava ts em .anchor-last-ts (0600).
+func persistAnchorTimestamp(ts string) error {
+	p, err := anchorLastTsPath()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(ts), 0o600)
 }

@@ -5,9 +5,17 @@
 // persiste o receipt (root + assinatura do nó + leaf_hashes) em
 // $ORBIT_HOME/anchors/. O verify posterior recomputa o root a partir dos
 // logs locais e exige match — se um log foi apagado, a recomputação diverge.
+//
+// I20 ANCHOR_VERIFICATION: receipt carrega self-signature Ed25519 (AppPub +
+// AppSignature) sobre o corpo canônico. Verify valida assinatura + full match
+// + monotonic timestamp. Keypair efêmero é descartado após assinar — nenhuma
+// chave privada persistida, tamper-evident do receipt inteiro.
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +38,35 @@ type AnchorReceipt struct {
 	NodeSignature string   `json:"node_signature"`
 	NodeHash      string   `json:"node_hash"`
 	CreatedAt     string   `json:"created_at"`
+	// I20 self-signature: Ed25519 sobre canonical(receipt sem app_signature).
+	// Keypair efêmero gerado em runAnchor; privKey descartado após assinar.
+	AppPub       string `json:"app_pub"`
+	AppSignature string `json:"app_signature"`
+}
+
+// signAnchorReceipt gera keypair Ed25519 efêmero, assina o corpo canônico
+// (receipt com AppSignature zerado) e preenche AppPub + AppSignature.
+// Privada é descartada ao retornar.
+func signAnchorReceipt(r *AnchorReceipt) error {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("anchor sign: keygen: %w", err)
+	}
+	r.AppPub = hex.EncodeToString(pub)
+	r.AppSignature = ""
+	msg, err := canonicalAnchorMsg(*r)
+	if err != nil {
+		return fmt.Errorf("anchor sign: canonical: %w", err)
+	}
+	r.AppSignature = hex.EncodeToString(ed25519.Sign(priv, msg))
+	return nil
+}
+
+// canonicalAnchorMsg produz a mensagem canônica para assinar/verificar.
+// Corpo = receipt com AppSignature vazio, serializado via JSON estável.
+func canonicalAnchorMsg(r AnchorReceipt) ([]byte, error) {
+	r.AppSignature = ""
+	return json.Marshal(r)
 }
 
 // runAnchor é o entrypoint do subcomando. Falha fail-closed se não há logs
@@ -57,6 +94,9 @@ func runAnchor(w io.Writer, host string) error {
 		NodeSignature: resp.NodeSignature,
 		NodeHash:      resp.Hash,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := signAnchorReceipt(&receipt); err != nil {
+		return fmt.Errorf("anchor: sign: %w", err)
 	}
 	path, err := writeAnchorReceipt(receipt)
 	if err != nil {

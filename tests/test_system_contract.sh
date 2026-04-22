@@ -44,6 +44,7 @@ INVARIANTS=(
   "I17|tracking/cmd/orbit/integrity.go|tests/test_integrity.sh"
   "I18|tracking/cmd/orbit/verify.go|tests/test_integrity.sh"
   "I19|tracking/cmd/orbit/merkle.go|tests/test_integrity.sh"
+  "I20|tracking/cmd/orbit/anchor_check.go|tests/test_anchor_verification.sh"
 )
 
 echo "── Validando ${#INVARIANTS[@]} invariantes do contrato ──"
@@ -134,6 +135,19 @@ grep -qE '^\s*case "anchor":' "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
 grep -qE "runAnchor\(" "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
   || _fail "I19: main.go não chama runAnchor"
 echo "  ✓ orbit anchor wired e invoca runAnchor"
+
+# ── I20 diretamente verificável: 3 checks ativos no verify path ─────────
+echo ""
+echo "── I20: verify --chain invoca signature + monotonic + full-match ──"
+grep -qE "verifyAnchorSignature\(rec\)" "${REPO_ROOT}/tracking/cmd/orbit/anchor_check.go" \
+  || _fail "I20: anchor_check.go não chama verifyAnchorSignature"
+grep -qE "verifyAnchorMonotonic\(rec\)" "${REPO_ROOT}/tracking/cmd/orbit/anchor_check.go" \
+  || _fail "I20: anchor_check.go não chama verifyAnchorMonotonic (anti-replay)"
+grep -qE "len\(leaves\) != rec\.LeafCount" "${REPO_ROOT}/tracking/cmd/orbit/anchor_check.go" \
+  || _fail "I20: anchor_check.go não exige full match (len != LeafCount)"
+grep -qE "signAnchorReceipt\(&receipt\)" "${REPO_ROOT}/tracking/cmd/orbit/anchor.go" \
+  || _fail "I20: anchor.go não assina receipt no runAnchor"
+echo "  ✓ signature + monotonic + full-match + self-sign no writer"
 
 # ── Garantias operacionais: existência dos artefatos ────────────────────
 GUARANTEES=(

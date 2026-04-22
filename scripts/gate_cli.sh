@@ -112,6 +112,9 @@ run G12_system_contract bash tests/test_system_contract.sh
 # ── G13: integrity — body_hash + chain + merkle + 1-byte tamper ──────
 run G13_integrity bash tests/test_integrity.sh
 
+# ── G14: I20 anchor verification — sig + monotonic + full-match + replay ─
+run G14_anchor_verification bash tests/test_anchor_verification.sh
+
 # ── Relatório final ──────────────────────────────────────────────────
 
 {

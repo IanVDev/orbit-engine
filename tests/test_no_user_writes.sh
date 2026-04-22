@@ -33,6 +33,7 @@ ALLOWLIST=(
   "tracking/cmd/orbit/run.go"           # escreve marker de primeira execução em $ORBIT_HOME
   "tracking/cmd/orbit/update.go"        # baixa novo binário (opt-in via `orbit update`)
   "tracking/cmd/orbit/anchor.go"        # sovereign anchoring: escreve $ORBIT_HOME/anchors/anchor_<ts>.json (merkle root + AURYA receipt)
+  "tracking/cmd/orbit/anchor_check.go"  # I20: escreve $ORBIT_HOME/.anchor-last-ts (monotonic check para anti-replay)
   "tracking/anchor.go"                  # I15: escreve <ORBIT_HOME>.anchor (path irmão, fora de ORBIT_HOME por design para detectar wipe)
   "tracking/history.go"                 # tracking-server: append em $ORBIT_HOME
   "tracking/store.go"                   # tracking-server: append em $ORBIT_HOME
