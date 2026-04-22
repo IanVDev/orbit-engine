@@ -23,7 +23,7 @@ Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 
 ---
 
-## Os 11 gates (todos devem PASS)
+## Os 12 gates (todos devem PASS)
 
 | # | Gate | O que valida | Script |
 |---|------|-------------|--------|
@@ -38,6 +38,7 @@ Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 | G9 | `G9_docs_scope` | Docs públicos não apontam gate do Produto B | `tests/test_docs_dont_claim_v1.sh` |
 | G10 | `G10_skill_contract` | Frontmatter + seções invariantes em `skill/SKILL.md` | `tests/test_skill_contract.sh` |
 | G11 | `G11_gate_doc_parity` | Contagem de gates neste doc bate com `scripts/gate_cli.sh` | `tests/test_gate_doc_parity.sh` |
+| G12 | `G12_system_contract` | Cada invariante de `docs/SYSTEM_CONTRACT.md` aponta código+teste existentes | `tests/test_system_contract.sh` |
 
 Cada Gi emite `{gate, status, duration_ms, tail}` em `gate_report.json`.
 
@@ -135,8 +136,9 @@ Esses artefatos continuam existindo no repo e são validados por `make gate-serv
 [PASS] G9_docs_scope                (<1s)
 [PASS] G10_skill_contract           (<1s)
 [PASS] G11_gate_doc_parity          (<1s)
+[PASS] G12_system_contract          (<1s)
 
-🟢 PROD GATE v1: PASS — 11 gates OK
+🟢 PROD GATE v1: PASS — 12 gates OK
 ```
 
 Se você vê qualquer gate diferente de PASS, **não tague**.

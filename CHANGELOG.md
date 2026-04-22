@@ -15,8 +15,19 @@ no frontmatter.
 
 ### Adicionado
 
-- **`make gate-cli`** (`scripts/gate_cli.sh`) — 11 gates sequenciais com JSON
+- **`make gate-cli`** (`scripts/gate_cli.sh`) — 12 gates sequenciais com JSON
   report em `gate_report.json`. Cada gate emite `{gate, status, duration_ms, tail}`.
+- **System Contract** (`docs/SYSTEM_CONTRACT.md` + `tests/test_system_contract.sh`, G12) —
+  contrato definitivo do Orbit como sistema: decisão explícita "v0.1.x =
+  ferramenta de provas individuais", 11 invariantes (nunca podem acontecer)
+  e 7 garantias operacionais (sempre validadas), cada uma ancorada em
+  arquivo de código + teste que a prova. Meta-teste G12 valida fail-closed
+  que toda invariante aponta para código+teste existentes — impede tanto
+  remover teste sem retirar invariante, quanto adicionar invariante
+  aspiracional sem teste que a sustente. Inclui §4 Roadmap explicitando
+  o que NÃO está no contrato (chain CLI, observatório, billing, shadow
+  mode) — evita que infra interna seja lida como promessa pública.
+  Mutation tests comprovam o guard (ver commit).
 - **Smoke E2E** (`tests/smoke_e2e.sh`) — exercita o binário real (`version`,
   `run` ok/fail, `verify` ok/tamper, `doctor --json`).
 - **Contrato de log v1** (`tests/test_log_contract.sh`) — 11 campos obrigatórios

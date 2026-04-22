@@ -106,6 +106,9 @@ run G10_skill_contract bash tests/test_skill_contract.sh
 # ── G11: paridade contagem gates script ↔ doc ─────────────────────────
 run G11_gate_doc_parity bash tests/test_gate_doc_parity.sh
 
+# ── G12: contrato do sistema — invariantes e garantias ancoradas ──────
+run G12_system_contract bash tests/test_system_contract.sh
+
 # ── Relatório final ──────────────────────────────────────────────────
 
 {
