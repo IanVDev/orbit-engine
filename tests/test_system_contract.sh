@@ -41,6 +41,9 @@ INVARIANTS=(
   "I14|tracking/cmd/orbit/startup_guard.go|tests/test_data_safety.sh"
   "I15|tracking/anchor.go|tests/test_wipe_and_ci_guard.sh"
   "I16|tracking/cmd/orbit/startup_guard.go|tests/test_wipe_and_ci_guard.sh"
+  "I17|tracking/cmd/orbit/integrity.go|tests/test_integrity.sh"
+  "I18|tracking/cmd/orbit/verify.go|tests/test_integrity.sh"
+  "I19|tracking/cmd/orbit/merkle.go|tests/test_integrity.sh"
 )
 
 echo "── Validando ${#INVARIANTS[@]} invariantes do contrato ──"
@@ -104,6 +107,33 @@ grep -qE 'ORBIT_SKIP_GUARD_IN_CI' "${REPO_ROOT}/tracking/cmd/orbit/startup_guard
 grep -qE '"CI"' "${REPO_ROOT}/tracking/cmd/orbit/startup_guard.go" \
   || _fail "I16: startup_guard.go não detecta env CI"
 echo "  ✓ guard hardening em CI presente"
+
+# ── I17 diretamente verificável: run.go preenche BodyHash + verify checa ─
+echo ""
+echo "── I17: body_hash gravado e verificado ──"
+grep -qE "CanonicalHash\(" "${REPO_ROOT}/tracking/cmd/orbit/run.go" \
+  || _fail "I17: run.go não chama CanonicalHash — body_hash órfão"
+grep -qE "verifyBodyHash\(" "${REPO_ROOT}/tracking/cmd/orbit/verify.go" \
+  || _fail "I17: verify.go não chama verifyBodyHash — 1 byte alterado passaria"
+echo "  ✓ body_hash gravado por run.go e checado por verify.go"
+
+# ── I18 diretamente verificável: verify --chain wired em main.go ────────
+echo ""
+echo "── I18: verify --chain acessível via CLI ──"
+grep -qE 'chain\s*:=\s*fs\.Bool\("chain"' "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
+  || _fail "I18: main.go não wired --chain flag"
+grep -qE "runVerifyChain\(" "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
+  || _fail "I18: main.go não chama runVerifyChain"
+echo "  ✓ --chain flag wired e dispatcha runVerifyChain"
+
+# ── I19 diretamente verificável: anchor command wired em main.go ────────
+echo ""
+echo "── I19: orbit anchor acessível via CLI ──"
+grep -qE '^\s*case "anchor":' "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
+  || _fail "I19: main.go não tem case anchor — merkle/anchor código órfão"
+grep -qE "runAnchor\(" "${REPO_ROOT}/tracking/cmd/orbit/main.go" \
+  || _fail "I19: main.go não chama runAnchor"
+echo "  ✓ orbit anchor wired e invoca runAnchor"
 
 # ── Garantias operacionais: existência dos artefatos ────────────────────
 GUARANTEES=(

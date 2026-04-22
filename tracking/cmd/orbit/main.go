@@ -118,15 +118,33 @@ func main() {
 
 	case "verify":
 		fs := flag.NewFlagSet("verify", flag.ExitOnError)
+		chain := fs.Bool("chain", false, "valida a chain inteira em $ORBIT_HOME/logs/ (I18)")
 		_ = fs.Parse(os.Args[2:])
+		if *chain {
+			if err := runVerifyChain(os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if fs.NArg() < 1 {
 			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>")
+			fmt.Fprintln(os.Stderr, "     orbit verify --chain   (valida todos os logs)")
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, "Exemplo:")
 			fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/2026-04-18T01-12-12.341818001Z_c37e3217_exit0.json")
 			os.Exit(1)
 		}
 		if err := runVerify(fs.Arg(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
+			os.Exit(1)
+		}
+
+	case "anchor":
+		fs := flag.NewFlagSet("anchor", flag.ExitOnError)
+		host := fs.String("host", "https://aurya.dev/api/v1/anchor", "URL do serviço AURYA de ancoragem externa")
+		_ = fs.Parse(os.Args[2:])
+		if err := runAnchor(os.Stdout, *host); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
 			os.Exit(1)
 		}
@@ -211,7 +229,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
 	fmt.Fprintln(os.Stderr, "  hygiene       Gerencia o pre-commit hook (install|check)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
-	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
+	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução (--chain: valida todos)")
+	fmt.Fprintln(os.Stderr, "  anchor        Publica merkle root dos logs no AURYA (ancoragem externa)")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  release       Cria tag + push + (opcional) espera CI + valida release_gate")
