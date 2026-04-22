@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // TestTrustLevel_ThreeStates é o anti-regressão do contrato de três
 // rótulos. Exerce a função pura com a matriz mínima que cobre cada
@@ -38,5 +41,36 @@ func TestTrustLevel_ThreeStates(t *testing.T) {
 		TrustDegraded.String() != "DEGRADED" ||
 		TrustBlocked.String() != "BLOCKED" {
 		t.Error("rótulos externos de TrustLevel mudaram — quebra contrato")
+	}
+}
+
+// TestCurrentTrustLevel_NoSubprocessForVersion: anti-regressão do bug onde
+// `orbit doctor --deep` reportava CRITICAL "timeout após 3s" porque
+// currentTrustLevel("version") chamava queryVersionCommit, que spawnava
+// `orbit version` em subprocess, que re-entrava em currentTrustLevel("version"),
+// que spawnava outro subprocess... recursão exponencial.
+//
+// Fix: fast-return TrustTrusted para "version"/"--version"/"-v" no início
+// de currentTrustLevel, antes de qualquer I/O.
+//
+// O teste prova a propriedade comportamental por proxy: tempo. Se o
+// fast-path for removido, `currentTrustLevel("version")` invocará
+// findAllOrbitsInPath + firstInPath + queryVersionCommit (exec.Command com
+// timeout 3s). Mesmo no melhor caso (sem orbit no PATH), a varredura de
+// PATH custa muito mais que os 50ms abaixo. Com fast-path: <1ms.
+func TestCurrentTrustLevel_NoSubprocessForVersion(t *testing.T) {
+	for _, sub := range []string{"version", "--version", "-v"} {
+		t.Run(sub, func(t *testing.T) {
+			start := time.Now()
+			got := currentTrustLevel(sub)
+			elapsed := time.Since(start)
+
+			if got != TrustTrusted {
+				t.Errorf("currentTrustLevel(%q) = %s; want TRUSTED (fast-path)", sub, got)
+			}
+			if elapsed > 50*time.Millisecond {
+				t.Errorf("currentTrustLevel(%q) levou %v (fast-path quebrado — provavelmente está chamando queryVersionCommit)", sub, elapsed)
+			}
+		})
 	}
 }

@@ -67,6 +67,19 @@ func currentTrustLevel(subcommand string) TrustLevel {
 	_, bypassed := guardBypassCommands[subcommand]
 	skipEnv := os.Getenv("ORBIT_SKIP_GUARD") == "1"
 
+	// Fast-path para `version`: queryVersionCommit (chamado mais abaixo
+	// para avaliar PATH-commit) spawna `orbit version` em subprocess. Se
+	// `version` não tiver fast-return aqui, esse subprocess re-entra em
+	// currentTrustLevel("version") e spawna mais `orbit version` →
+	// recursão exponencial até timeout do caller (3s no doctor, infinito
+	// em outros casos). O subcomando `version` é dump puro do `Commit`
+	// const baked no binário — não precisa validar trust do PATH.
+	// "doctor" e "analyze" continuam descendo: precisam reportar DEGRADED
+	// real ao usuário (sem subprocess próprio que cause recursão).
+	if subcommand == "version" || subcommand == "--version" || subcommand == "-v" {
+		return TrustTrusted
+	}
+
 	// Em build efêmero (go run) não há como validar PATH-commit; trate
 	// como DEGRADED-por-design para deixar explícito ao usuário.
 	if isEphemeralBuild() {
