@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"time"
 
@@ -56,6 +57,9 @@ func runQuickstart(host string) error {
 	printStep(1, 3, "Inicializando sessão...")
 	sessionID := fmt.Sprintf("qs-%d", time.Now().UnixNano())
 	fmt.Printf("      ✓  session_id=%s\n", sessionID)
+
+	// Auto-install do pre-commit hygiene — não-bloqueante.
+	autoInstallHygiene(os.Stdout)
 
 	// ── Etapa 2/3 — Executar echo hello + registrar evento ──────────────
 	printStep(2, 3, "Executando: echo hello")

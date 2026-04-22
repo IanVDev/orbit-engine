@@ -131,7 +131,19 @@ func runRun(args []string, jsonMode bool) error {
 
 	// ── Proof ─────────────────────────────────────────────────────────────
 	// proof = sha256(sessionID + timestamp + outputBytes)
+	// IMPORTANTE: calculado sobre o len ORIGINAL, antes da redação (I12).
+	// Redaction altera o texto persistido mas não `outputBytes` → I2 e I3
+	// permanecem consistentes com o verify.
 	proof := tracking.ComputeHash(sessionID, ts.Time, outputBytes)
+
+	// I12 SECRET_SAFETY: redige secrets conhecidos antes de persistir.
+	// Aplica em output E em args (secret em argv também é vetor comum).
+	// Fail-closed: remover qualquer linha quebra TestFailsIfSecretIsPersisted.
+	output = tracking.RedactSecrets(output)
+	redactedArgs := make([]string, len(cmdArgs))
+	for i, a := range cmdArgs {
+		redactedArgs[i] = tracking.RedactSecrets(a)
+	}
 
 	// ── Montagem do resultado ─────────────────────────────────────────────
 
@@ -157,7 +169,7 @@ func runRun(args []string, jsonMode bool) error {
 	result := RunResult{
 		Version:      LogSchemaVersion,
 		Command:      cmdName,
-		Args:         cmdArgs,
+		Args:         redactedArgs,
 		ExitCode:     exitCode,
 		Output:       output,
 		Proof:        proof,
@@ -220,6 +232,13 @@ func runRun(args []string, jsonMode bool) error {
 				"    ação:    verifique permissões de $ORBIT_HOME/logs e espaço em disco\n",
 			result.SessionID, logErr)
 		return fmt.Errorf("execução %s sem log persistido: %w", result.SessionID, logErr)
+	}
+
+	// I15 HISTORY_ANCHOR: atualiza o snapshot fora de ~/.orbit após run
+	// bem-sucedido. Erro é tolerado (não derruba o run) mas avisado — o
+	// teste TestFailsOnHistoryWipe quebra se esta linha desaparecer.
+	if err := tracking.SaveAnchor(proof, ts.Time.Format(time.RFC3339Nano)); err != nil {
+		fmt.Fprintf(os.Stderr, "orbit: warning — anchor não atualizado: %v\n", err)
 	}
 
 	if jsonMode {

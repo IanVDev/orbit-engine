@@ -72,4 +72,28 @@ if [[ $VIOLATIONS -gt 0 ]]; then
   exit 1
 fi
 
-echo "PASS: seção HERO do README está alinhada ao léxico (detect/record/diagnose/observe/prove)."
+# ── Assertivas POSITIVAS do pitch novo ────────────────────────────────────
+# Além de banir termos antigos, travamos que o HERO cumpre os 3 princípios
+# do pitch reescrito (commit ...): (a) pitch concreto com "proof" do que é;
+# (b) mostra o install one-liner; (c) mostra o output real que o usuário
+# vê. Se alguém apagar uma dessas seções, hero volta a ficar abstrato.
+REQUIRED_POSITIVE=(
+  'proof'                                       # a: pitch concreto
+  'install_remote\.sh'                          # b: link do one-liner
+  'orbit run|orbit quickstart|orbit verify'     # c: ao menos 1 comando real (ERE)
+)
+MISSING=0
+for pat in "${REQUIRED_POSITIVE[@]}"; do
+  if ! echo "$HERO" | grep -qiE "$pat"; then
+    echo "FAIL: HERO do README não contém marcador obrigatório /$pat/" >&2
+    MISSING=$((MISSING + 1))
+  fi
+done
+if [[ $MISSING -gt 0 ]]; then
+  echo "" >&2
+  echo "HERO precisa manter: menção a 'proof', link do install_remote.sh," >&2
+  echo "e pelo menos 1 comando real (orbit run|quickstart|verify)." >&2
+  exit 1
+fi
+
+echo "PASS: HERO sem termos proibidos + contém proof + install one-liner + comando real"

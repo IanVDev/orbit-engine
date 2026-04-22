@@ -177,6 +177,55 @@ func TestStoreLoopInvariant(t *testing.T) {
 			statsTamper.ChainBreaks)
 	}
 
+	// --- 4b. LEGACY GAP MID: log legado inserido após chain estabelecida ---
+	//
+	// Cenário: logs antigos podiam ter prev_proof vazio (compat retroativa).
+	// Aceitar prev_proof vazio NO GENESIS é OK. Aceitar no MEIO da chain
+	// permitiria reset silencioso da âncora — vetor de adulteração. Este teste
+	// prova que o reader distingue os dois casos e marca Critical=true.
+	t.Run("TestChainFailsOnLegacyInsertedMidSequence", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ORBIT_HOME", dir)
+		p := filepath.Join(dir, "sessions.jsonl")
+		mk := func(id, prev, proof string) SessionRecord {
+			return SessionRecord{
+				SchemaVersion: SchemaVersionStore,
+				SessionID:     id, Timestamp: NowUTC(),
+				Command: "echo", ExitCode: 0, OutputBytes: 4,
+				Proof: proof, PrevProof: prev,
+			}
+		}
+		// 3 registros válidos + 1 legado (prev_proof vazio) no MEIO.
+		recs := []SessionRecord{
+			mk("s1", "", "p1"),           // genesis ok
+			mk("s2", "p1", "p2"),         // ok
+			mk("legacy", "", "pLegacy"),  // ← legacy gap mid (CRITICAL)
+			mk("s3", "pLegacy", "p3"),    // recuperação legítima
+		}
+		var buf bytes.Buffer
+		for _, r := range recs {
+			b, _ := json.Marshal(r)
+			buf.Write(b)
+			buf.WriteByte('\n')
+		}
+		if err := os.WriteFile(p, buf.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s, err := ReadStats(10)
+		if err != nil {
+			t.Fatalf("ReadStats: %v", err)
+		}
+		if s.LegacyGapsMid < 1 {
+			t.Fatalf("LegacyGapsMid=%d, want >=1 (legado no meio deve falhar)", s.LegacyGapsMid)
+		}
+		if !s.Critical {
+			t.Fatalf("Critical deve ser true quando LegacyGapsMid>0")
+		}
+		if s.ChainBreaks != 0 {
+			t.Fatalf("legacy_gap NÃO deve contar como chain_break; got ChainBreaks=%d", s.ChainBreaks)
+		}
+	})
+
 	// --- 5. FAIL-CLOSED on write: invalid record must NOT be persisted ---
 
 	sizeBefore, _ := os.Stat(path)

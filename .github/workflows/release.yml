@@ -122,3 +122,28 @@ jobs:
             dist/orbit-*-darwin-arm64.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  release-gate:
+    # Release Gate Soberano: valida que o release é consumível do jeito que
+    # o README documenta (tag no remoto + binário no Releases + .sha256
+    # confere + binário reporta a versão certa). Fail-closed: qualquer
+    # passo falha → job falha → release é marcado como broken.
+    #
+    # Roda APÓS publish (needs: release) para validar a distribuição real,
+    # não o estado pré-upload.
+    name: release gate (sovereign distribution check)
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: wait for GitHub Release API propagation
+        run: sleep 15
+
+      - name: run release_gate.sh
+        run: bash scripts/release_gate.sh --version "${GITHUB_REF_NAME}" --platform linux-amd64
+
+      - name: run release_gate.sh (darwin-arm64 sanity)
+        run: |
+          bash scripts/release_gate.sh --version "${GITHUB_REF_NAME}" --platform darwin-arm64 || \
+            echo "::warning::darwin-arm64 não validável em runner linux (esperado)"

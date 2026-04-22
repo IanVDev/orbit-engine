@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Build-time variables — injetadas via -ldflags.
@@ -41,6 +42,7 @@ func main() {
 
 	printSessionBanner(os.Args[1])
 	enforceStartupIntegrity(os.Args[1])
+	enforceHistoryAnchor(os.Args[1])
 	printTrustBanner(currentTrustLevel(os.Args[1]))
 
 	switch os.Args[1] {
@@ -93,6 +95,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "hygiene":
+		if err := runHygiene(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+			os.Exit(1)
+		}
+
 	case "doctor":
 		fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 		strict := fs.Bool("strict", false, "falha com exit 1 se houver WARNINGs")
@@ -110,17 +118,9 @@ func main() {
 
 	case "verify":
 		fs := flag.NewFlagSet("verify", flag.ExitOnError)
-		chain := fs.Bool("chain", false, "verifica encadeamento prev_proof de todos os logs")
 		_ = fs.Parse(os.Args[2:])
-		if *chain {
-			if err := runVerifyChain(os.Stdout); err != nil {
-				fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
 		if fs.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>  |  orbit verify --chain")
+			fmt.Fprintln(os.Stderr, "uso: orbit verify <log_file>")
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, "Exemplo:")
 			fmt.Fprintln(os.Stderr, "  orbit verify ~/.orbit/logs/2026-04-18T01-12-12.341818001Z_c37e3217_exit0.json")
@@ -150,17 +150,35 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "logs":
-		if err := runLogs(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+	case "release":
+		fs := flag.NewFlagSet("release", flag.ExitOnError)
+		skipGate := fs.Bool("skip-gate", false, "pula make gate-cli antes de taguear (NÃO recomendado)")
+		waitCI := fs.Bool("wait-ci", false, "aguarda release.yml finalizar e roda release_gate automaticamente")
+		waitTimeout := fs.Duration("wait-timeout", 15*60*time.Second, "timeout do --wait-ci (ex: 15m, 30m)")
+		repo := fs.String("repo", "", "override do repo (default: IanVDev/orbit-engine)")
+		_ = fs.Parse(os.Args[2:])
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "uso: orbit release [flags] <version>")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Flags (devem vir ANTES da version, convenção Go):")
+			fmt.Fprintln(os.Stderr, "  --skip-gate              pula make gate-cli (NÃO recomendado)")
+			fmt.Fprintln(os.Stderr, "  --wait-ci                aguarda release.yml + roda release_gate")
+			fmt.Fprintln(os.Stderr, "  --wait-timeout 15m       timeout do --wait-ci (default 15m)")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Exemplos:")
+			fmt.Fprintln(os.Stderr, "  orbit release v0.1.2")
+			fmt.Fprintln(os.Stderr, "  orbit release --wait-ci v0.1.2")
+			fmt.Fprintln(os.Stderr, "  orbit release --skip-gate v0.1.2")
 			os.Exit(1)
 		}
-
-	case "anchor":
-		fs := flag.NewFlagSet("anchor", flag.ExitOnError)
-		host := fs.String("host", "http://127.0.0.1:8080", "URL do nó AURYA (ProofStream)")
-		_ = fs.Parse(os.Args[2:])
-		if err := runAnchor(os.Stdout, *host); err != nil {
+		opts := ReleaseOptions{
+			Version:    fs.Arg(0),
+			SkipGate:   *skipGate,
+			WaitCI:     *waitCI,
+			WaitCITime: *waitTimeout,
+			Repo:       *repo,
+		}
+		if err := runRelease(opts, os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
 			os.Exit(1)
 		}
@@ -191,12 +209,12 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
 	fmt.Fprintln(os.Stderr, "  analyze       [DEPRECATED] alias de `orbit doctor --alert-only`")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
+	fmt.Fprintln(os.Stderr, "  hygiene       Gerencia o pre-commit hook (install|check)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
-	fmt.Fprintln(os.Stderr, "  logs          Gestão de logs persistidos (subcomando: prune)")
-	fmt.Fprintln(os.Stderr, "  anchor        Publica merkle_root dos logs na chain AURYA")
+	fmt.Fprintln(os.Stderr, "  release       Cria tag + push + (opcional) espera CI + valida release_gate")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")

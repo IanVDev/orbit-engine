@@ -34,3 +34,24 @@ jobs:
           cache-dependency-path: tracking/go.sum
       - name: make validate-promql
         run: make validate-promql
+
+  gate-cli:
+    name: Prod Gate v1 (CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tracking/go.mod
+          cache-dependency-path: tracking/go.sum
+      - name: python3
+        run: python3 --version
+      - name: make gate-cli
+        run: make gate-cli
+      - name: upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate_report
+          path: gate_report.json
+          if-no-files-found: warn

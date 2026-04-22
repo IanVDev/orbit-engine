@@ -99,6 +99,7 @@ class SkillTrackingClient:
         mode: str = "auto",
         timeout_seconds: float = 5.0,
         hmac_secret: Optional[str] = None,
+        shadow_mode: bool = False,
     ) -> None:
         if not tracking_url:
             raise ValueError("tracking_url is required (fail-closed)")
@@ -112,6 +113,9 @@ class SkillTrackingClient:
         self._mode = mode
         self._timeout = timeout_seconds
         self._events_sent: int = 0
+        self._shadow_mode = shadow_mode
+        self._shadow_observations_sent: int = 0
+        self._shadow_observations_dropped: int = 0
         # HMAC secret: from parameter, env var, or disabled (backward compat)
         self._hmac_secret: Optional[bytes] = None
         if hmac_secret:
@@ -144,7 +148,17 @@ class SkillTrackingClient:
         Raises:
             TrackingError: if tracking fails for any reason.
             CompactGuardError: if guard snapshot/rehydrate fails.
+            RuntimeError: if called on a shadow-mode client. Shadow mode
+                must never record real activations — use observe_decision().
         """
+        # Shadow mode gate vem ANTES do compact_guard: clients em sombra
+        # nunca devem sequer gravar snapshot para evitar contaminação
+        # cruzada de estado entre modo real e observação.
+        if getattr(self, "_shadow_mode", False):
+            raise RuntimeError(
+                "track_activation() is disallowed in shadow mode; "
+                "use observe_decision() to record router observations."
+            )
         logger.warning(
             "[orbit] compact_guard ativado automaticamente via track_activation — session=%s",
             self._session_id,
@@ -222,6 +236,72 @@ class SkillTrackingClient:
 
         return self._send_event(event)
 
+    def observe_decision(
+        self,
+        decision: ActivationDecision,
+        input_text: str = "",
+        output_text: str = "",
+    ) -> TrackingResult:
+        """
+        Shadow-mode observation: record what the router WOULD have decided
+        without affecting user execution.
+
+        Requires the client to be constructed with shadow_mode=True so that
+        shadow traffic never accidentally mixes with real activation tracking.
+
+        Semantics:
+          - Sends an event tagged ``source=real_shadow`` with
+            ``activation_possible=<decision.activated>``.
+          - Both activated and non-activated decisions produce an event.
+          - Tracking failures are SWALLOWED (logged, counted, returned in
+            TrackingResult) — they never raise. Shadow mode must never break
+            the caller's execution path.
+          - If the decision itself is missing (``None``), no event is sent.
+            The router is responsible for its own fail-closed behavior.
+
+        Returns:
+            TrackingResult reflecting the outcome. On failure, .success is
+            False and .error contains the reason — no exception is raised.
+        """
+        if not self._shadow_mode:
+            raise RuntimeError(
+                "observe_decision() requires shadow_mode=True on the client."
+            )
+        if decision is None:
+            logger.warning("observe_decision: no decision given — skipping event")
+            self._shadow_observations_dropped += 1
+            return TrackingResult(success=False, error="no_decision")
+
+        reason = self._extract_reason(decision)
+        phase = (
+            decision.phase
+            if isinstance(decision.phase, str)
+            else decision.phase.value
+        )
+
+        event = self._build_event(
+            reason=reason,
+            phase=phase,
+            input_text=input_text,
+            output_text=output_text,
+            source="real_shadow",
+            activation_possible=bool(decision.activated),
+        )
+
+        try:
+            result = self._send_event(event)
+            self._shadow_observations_sent += 1
+            return result
+        except TrackingError as exc:
+            # Shadow mode must never surface tracking failures to the caller.
+            logger.warning("shadow observation dropped: %s", exc)
+            self._shadow_observations_dropped += 1
+            return TrackingResult(
+                success=False,
+                error=str(exc),
+                event_payload=event,
+            )
+
     def track_raw_usage(
         self,
         input_text: str,
@@ -246,6 +326,18 @@ class SkillTrackingClient:
         """Number of events successfully sent."""
         return self._events_sent
 
+    @property
+    def shadow_mode(self) -> bool:
+        return self._shadow_mode
+
+    @property
+    def shadow_observations_sent(self) -> int:
+        return self._shadow_observations_sent
+
+    @property
+    def shadow_observations_dropped(self) -> int:
+        return self._shadow_observations_dropped
+
     # ── Internal ─────────────────────────────────────────────────
 
     def _build_event(
@@ -254,6 +346,8 @@ class SkillTrackingClient:
         phase: str,
         input_text: str,
         output_text: str,
+        source: str = "",
+        activation_possible: Optional[bool] = None,
     ) -> dict:
         """Build a SkillEvent payload matching the Go struct."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -273,6 +367,10 @@ class SkillTrackingClient:
             event["activation_reason"] = reason
         if phase:
             event["activation_phase"] = phase
+        if source:
+            event["source"] = source
+        if activation_possible is not None:
+            event["activation_possible"] = activation_possible
 
         return event
 

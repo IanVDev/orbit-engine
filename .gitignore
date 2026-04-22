@@ -12,8 +12,6 @@ future/
 
 # --- Arquivos de skill compilados (binários) ---
 *.skill
-# Skill oficial do orbit-engine é versionada
-!.claude/skills/orbit-engine.skill
 
 # --- Nomes legados do projeto ---
 token-optimizer*
@@ -38,6 +36,11 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# --- Python bytecode ---
+__pycache__/
+*.pyc
+*.pyo
 
 # --- Editor ---
 .vscode/
@@ -81,3 +84,14 @@ tracking/orbit
 # --- Claude Code local state (per-machine, not shareable) ---
 .claude/settings.local.json
 .claude/worktrees/
+gate_report.json
+
+# Go binaries compiled locally (never commit — caught by repo_hygiene_test.go)
+tracking/main
+tracking/orbit-gateway
+tracking/tracking-server
+tracking/tracking-server-*
+tracking/validate_env
+tracking/validate_gov
+tracking/validate
+tracking/validate_promql

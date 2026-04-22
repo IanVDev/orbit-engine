@@ -240,8 +240,10 @@ type StoreStats struct {
 	TotalRecords     int
 	Successful       int
 	OutputBytesTotal int64
-	ChainBreaks      int
+	ChainBreaks      int  // prev_proof presente mas divergente (tampering)
+	LegacyGapsMid    int  // prev_proof vazio inserido no meio (reset suspeito)
 	Corrupted        int
+	Critical         bool // true se ChainBreaks>0 OU LegacyGapsMid>0 — fail-closed
 	Last             []SessionRecord // ordem cronológica; cap = cfg.LastN
 }
 
@@ -299,10 +301,21 @@ func aggregateFromReader(r io.Reader, stats StoreStats, lastN int) (StoreStats, 
 			continue
 		}
 
-		// Chain integrity: prev_proof da linha N deve bater com proof da N-1.
-		if prevProof != "" && rec.PrevProof != prevProof {
+		// Chain integrity — 3 casos distintos:
+		//   [A] prev_proof vazio E prevProof vazio   → genesis legítimo (OK).
+		//   [B] prev_proof vazio E prevProof != ""   → legacy gap MID (CRITICAL):
+		//       log legado (sem prev_proof) inserido após chain estabelecida =
+		//       reset suspeito da âncora. Compat retroativa só vale no início.
+		//   [C] prev_proof != "" E prev_proof != anterior → chain break (tampering).
+		switch {
+		case rec.PrevProof == "" && prevProof != "":
+			stats.LegacyGapsMid++
+			storeLegacyGapMidTotal.Inc()
+			stats.Critical = true
+		case rec.PrevProof != "" && rec.PrevProof != prevProof:
 			stats.ChainBreaks++
 			storeChainBreaksTotal.Inc()
+			stats.Critical = true
 		}
 		prevProof = rec.Proof
 
@@ -364,6 +377,12 @@ var (
 			Help: "Total prev_proof chain breaks detected while reading the local JSONL store.",
 		},
 	)
+	storeLegacyGapMidTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "orbit_store_legacy_gap_mid_total",
+			Help: "Legacy records (prev_proof empty) inserted after chain is established — suspicious anchor reset.",
+		},
+	)
 )
 
 // RegisterStoreMetrics registra os contadores do store no registerer dado.
@@ -376,5 +395,6 @@ func RegisterStoreMetrics(reg prometheus.Registerer) {
 		storeRecordsReadTotal,
 		storeCorruptedLinesTotal,
 		storeChainBreaksTotal,
+		storeLegacyGapMidTotal,
 	)
 }

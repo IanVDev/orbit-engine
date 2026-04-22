@@ -128,6 +128,12 @@ type SkillEvent struct {
 	ModelFrom     string `json:"model_from,omitempty"`
 	ModelTo       string `json:"model_to,omitempty"`
 	ModelOverride string `json:"model_override,omitempty"` // reason for the override (informational)
+	// Shadow mode metadata (optional). Source is a closed enum to prevent
+	// label cardinality explosion: "fixture" | "real_shadow". ActivationPossible
+	// carries what the router WOULD have decided; in real_shadow source events
+	// the decision never touches the real activation counters.
+	Source             string `json:"source,omitempty"`
+	ActivationPossible *bool  `json:"activation_possible,omitempty"`
 }
 
 // Validate returns an error if required fields are missing.
@@ -150,8 +156,23 @@ func (e SkillEvent) Validate() error {
 	if e.Timestamp.IsZero() {
 		return fmt.Errorf("tracking: timestamp is required")
 	}
+	// Closed enum guard for source label — cardinality must stay bounded.
+	if e.Source != "" {
+		switch e.Source {
+		case SourceFixture, SourceRealShadow:
+			// ok
+		default:
+			return fmt.Errorf("tracking: invalid source %q (want fixture|real_shadow)", e.Source)
+		}
+	}
 	return nil
 }
+
+// Source values. Closed enum — never accept unbounded strings as label.
+const (
+	SourceFixture    = "fixture"
+	SourceRealShadow = "real_shadow"
+)
 
 // ComputeHash returns sha256(session_id + timestamp + impact_estimated_tokens).
 func ComputeHash(sessionID string, ts time.Time, tokens int64) string {
@@ -429,8 +450,54 @@ var (
 		},
 	)
 
+	// ── Shadow mode metrics ─────────────────────────────────────────────
+	// orbit_activation_source_total: events tagged by Source label.
+	// Closed label set: "fixture" | "real_shadow". Events without a source
+	// are NOT counted here — only explicit sources appear.
+	activationSourceTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "orbit_activation_source_total",
+			Help: "Total tracked events by source. Labels: source=fixture|real_shadow.",
+		},
+		[]string{"source"},
+	)
+
+	// orbit_shadow_activation_total: shadow events whose router decision
+	// said the skill WOULD have activated. Shadow events never increment
+	// orbit_skill_activations_total — production stays unchanged.
+	shadowActivationTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "orbit_shadow_activation_total",
+			Help: "Shadow-mode observations where the router would have activated the skill.",
+		},
+	)
+
+	// orbit_shadow_activation_rate: positive / seen for shadow events
+	// since process start. Gauge in [0, 1].
+	shadowActivationRate = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "orbit_shadow_activation_rate",
+			Help: "Cumulative shadow activation rate since process start: positive/seen.",
+		},
+	)
+
 	// (Rate limiting is now handled by token buckets in security.go)
 )
+
+// Shadow counters used to compute orbit_shadow_activation_rate. Atomic
+// so TrackSkillEvent stays lock-free on the shadow path.
+var (
+	shadowSeenCount     int64
+	shadowPositiveCount int64
+)
+
+// ResetShadowCountersForTests clears the in-memory atomics and rate gauge
+// that back orbit_shadow_activation_rate. Test-only; never invoke in production.
+func ResetShadowCountersForTests() {
+	atomic.StoreInt64(&shadowSeenCount, 0)
+	atomic.StoreInt64(&shadowPositiveCount, 0)
+	shadowActivationRate.Set(0)
+}
 
 // registerOnce ensures metrics are registered exactly once.
 var registerOnce sync.Once
@@ -470,6 +537,9 @@ func RegisterMetrics(reg prometheus.Registerer) {
 			realUsageTotal,
 			skillActivationByReason,
 			lastRealUsageTimestamp,
+			activationSourceTotal,
+			shadowActivationTotal,
+			shadowActivationRate,
 		)
 		// Process is alive → tracking_up = 1.
 		// seed_mode stays 0 (production default) until SetSeedMode(true).
@@ -563,6 +633,30 @@ func TrackSkillEvent(event SkillEvent) error {
 				panic(r)
 			}
 		}()
+
+		// Source label — only emitted for known (whitelisted) sources.
+		if event.Source != "" {
+			activationSourceTotal.WithLabelValues(event.Source).Inc()
+		}
+
+		// Shadow events are OBSERVATIONS ONLY. They must never leak into
+		// the real activation counters — production semantics stay identical
+		// whether shadow mode is on or off.
+		if event.Source == SourceRealShadow {
+			seen := atomic.AddInt64(&shadowSeenCount, 1)
+			var positive int64
+			if event.ActivationPossible != nil && *event.ActivationPossible {
+				positive = atomic.AddInt64(&shadowPositiveCount, 1)
+				shadowActivationTotal.Inc()
+			} else {
+				positive = atomic.LoadInt64(&shadowPositiveCount)
+			}
+			if seen > 0 {
+				shadowActivationRate.Set(float64(positive) / float64(seen))
+			}
+			return
+		}
+
 		skillActivationsTotal.WithLabelValues(event.Mode).Inc()
 		if event.ImpactEstimatedToken > 0 {
 			skillTokensSavedTotal.Add(float64(event.ImpactEstimatedToken))
