@@ -84,17 +84,32 @@ func verifyAgainstLatestAnchor(w io.Writer) error {
 		return fmt.Errorf("anchor verify: persist ts: %w", err)
 	}
 
+	// I21 observabilidade: signer fingerprint + trusted flag no output.
+	// trusted==true é garantido aqui (verifyAnchorSignature já validou); o
+	// log torna a decisão audit-friendly.
+	trusted := rec.AppPub == trustedAuryaPubKey
 	fmt.Fprintf(w, "✅  anchor ok — merkle_root %s... confere (receipt %s, AURYA %s)\n",
 		safePrefix(root, 16), filepath.Base(path), rec.NodeTimestamp)
+	fmt.Fprintf(w, "    signer=%s... trusted=%v\n", safePrefix(rec.AppPub, 16), trusted)
 	return nil
 }
 
 // verifyAnchorSignature valida app_signature contra canonical(receipt sem sig)
 // usando app_pub. Falha se: hex inválido, pub/sig com tamanho errado, ou
 // verify ed25519 retornar false.
+//
+// I21 TRUSTED_ANCHOR_SIGNER: antes do crypto verify, exige que rec.AppPub
+// bata EXATAMENTE com trustedAuryaPubKey (hardcoded). Receipt assinado com
+// qualquer outra key → FAIL CLOSED com erro CRITICAL.
 func verifyAnchorSignature(rec *AnchorReceipt) error {
 	if rec.AppPub == "" || rec.AppSignature == "" {
 		return fmt.Errorf("receipt sem app_pub/app_signature (legado ou adulterado)")
+	}
+	// I21 — trusted signer check ANTES de qualquer crypto.
+	if rec.AppPub != trustedAuryaPubKey {
+		return fmt.Errorf(
+			"CRITICAL: receipt não assinado por trusted signer (signer=%s... trusted=%s...)",
+			safePrefix(rec.AppPub, 16), safePrefix(trustedAuryaPubKey, 16))
 	}
 	pub, err := hex.DecodeString(rec.AppPub)
 	if err != nil || len(pub) != ed25519.PublicKeySize {

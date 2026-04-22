@@ -115,6 +115,9 @@ run G13_integrity bash tests/test_integrity.sh
 # ── G14: I20 anchor verification — sig + monotonic + full-match + replay ─
 run G14_anchor_verification bash tests/test_anchor_verification.sh
 
+# ── G15: I21 trusted anchor signer — pub key pinned ──────────────────
+run G15_trusted_signer bash tests/test_trusted_signer.sh
+
 # ── Relatório final ──────────────────────────────────────────────────
 
 {

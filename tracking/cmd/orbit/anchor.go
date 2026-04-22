@@ -8,13 +8,17 @@
 //
 // I20 ANCHOR_VERIFICATION: receipt carrega self-signature Ed25519 (AppPub +
 // AppSignature) sobre o corpo canônico. Verify valida assinatura + full match
-// + monotonic timestamp. Keypair efêmero é descartado após assinar — nenhuma
-// chave privada persistida, tamper-evident do receipt inteiro.
+// + monotonic timestamp.
+//
+// I21 TRUSTED_ANCHOR_SIGNER: receipt SÓ é aceito se AppPub == trustedAuryaPubKey.
+// Signer key é resolvida em resolveSignerKey() a partir de ORBIT_SIGNER_PRIVKEY
+// (hex, 128 chars) com fallback para devSignerPrivKeyHex (dev default, bootstrap).
+// Produção: exportar ORBIT_SIGNER_PRIVKEY com chave controlada; rotação via
+// regeneração + atualização de trustedAuryaPubKey (I22 futuro).
 package main
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,6 +29,20 @@ import (
 
 	"github.com/IanVDev/orbit-engine/tracking"
 )
+
+// trustedAuryaPubKey é a única public key aceita como signer autorizado do
+// receipt (I21). Qualquer receipt com AppPub diferente → verify FAIL CLOSED.
+// Hardcoded no bootstrap; pareada com devSignerPrivKeyHex. Em prod séria, o
+// valor é rotacionado via novo release do binário (cadeia de trust do release
+// já coberta por I2 + sha256 do binário no install_remote).
+const trustedAuryaPubKey = "c2860595b5d5b89e376b6af4023af82042b6bc018b5c997346bdd3c01c1cdfca"
+
+// devSignerPrivKeyHex é o keypair dev-default pareado com trustedAuryaPubKey.
+// Usado quando ORBIT_SIGNER_PRIVKEY não está definida — permite bootstrap
+// sem configuração. Em prod, exportar ORBIT_SIGNER_PRIVKEY=<hex> com chave
+// controlada. Aviso: dev-default é público (visível no código), não oferece
+// autenticação em ambiente hostil — é tamper-resistance inicial.
+const devSignerPrivKeyHex = "52301ccea79f2f3ea798210589eeb7d8697daa0c89f598e66f286a0549ae322ac2860595b5d5b89e376b6af4023af82042b6bc018b5c997346bdd3c01c1cdfca"
 
 // AnchorReceipt é o registro persistido de uma ancoragem bem-sucedida.
 // LeafHashes é incluído para que verify possa recomputar exatamente o mesmo
@@ -44,13 +62,36 @@ type AnchorReceipt struct {
 	AppSignature string `json:"app_signature"`
 }
 
-// signAnchorReceipt gera keypair Ed25519 efêmero, assina o corpo canônico
-// (receipt com AppSignature zerado) e preenche AppPub + AppSignature.
-// Privada é descartada ao retornar.
-func signAnchorReceipt(r *AnchorReceipt) error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+// resolveSignerKey devolve priv + pub do signer. Ordem:
+//  1. ORBIT_SIGNER_PRIVKEY (hex, 128 chars) — prod/customizado.
+//  2. devSignerPrivKeyHex — dev default (bootstrap).
+// Fail-closed: env inválido → erro (NÃO faz fallback silencioso pro default).
+func resolveSignerKey() (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	src := os.Getenv("ORBIT_SIGNER_PRIVKEY")
+	explicit := src != ""
+	if !explicit {
+		src = devSignerPrivKeyHex
+	}
+	raw, err := hex.DecodeString(src)
 	if err != nil {
-		return fmt.Errorf("anchor sign: keygen: %w", err)
+		return nil, nil, fmt.Errorf("anchor sign: ORBIT_SIGNER_PRIVKEY hex inválido: %w", err)
+	}
+	if len(raw) != ed25519.PrivateKeySize {
+		return nil, nil, fmt.Errorf("anchor sign: signer privkey tamanho %d, esperado %d",
+			len(raw), ed25519.PrivateKeySize)
+	}
+	priv := ed25519.PrivateKey(raw)
+	pub := priv.Public().(ed25519.PublicKey)
+	return priv, pub, nil
+}
+
+// signAnchorReceipt assina o corpo canônico (receipt com AppSignature zerado)
+// com a chave do signer trusted (I21) e preenche AppPub + AppSignature.
+// Fail-closed em keygen/priv inválida.
+func signAnchorReceipt(r *AnchorReceipt) error {
+	priv, pub, err := resolveSignerKey()
+	if err != nil {
+		return err
 	}
 	r.AppPub = hex.EncodeToString(pub)
 	r.AppSignature = ""

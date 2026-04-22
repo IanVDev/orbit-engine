@@ -45,6 +45,7 @@ INVARIANTS=(
   "I18|tracking/cmd/orbit/verify.go|tests/test_integrity.sh"
   "I19|tracking/cmd/orbit/merkle.go|tests/test_integrity.sh"
   "I20|tracking/cmd/orbit/anchor_check.go|tests/test_anchor_verification.sh"
+  "I21|tracking/cmd/orbit/anchor.go|tests/test_trusted_signer.sh"
 )
 
 echo "── Validando ${#INVARIANTS[@]} invariantes do contrato ──"
@@ -148,6 +149,17 @@ grep -qE "len\(leaves\) != rec\.LeafCount" "${REPO_ROOT}/tracking/cmd/orbit/anch
 grep -qE "signAnchorReceipt\(&receipt\)" "${REPO_ROOT}/tracking/cmd/orbit/anchor.go" \
   || _fail "I20: anchor.go não assina receipt no runAnchor"
 echo "  ✓ signature + monotonic + full-match + self-sign no writer"
+
+# ── I21 diretamente verificável: trusted pub hardcoded + check em verify ─
+echo ""
+echo "── I21: trustedAuryaPubKey definido + check em verifyAnchorSignature ─"
+grep -qE 'const trustedAuryaPubKey = "[a-f0-9]{64}"' "${REPO_ROOT}/tracking/cmd/orbit/anchor.go" \
+  || _fail "I21: trustedAuryaPubKey não é const hex 64 chars em anchor.go"
+grep -qE "rec\.AppPub != trustedAuryaPubKey" "${REPO_ROOT}/tracking/cmd/orbit/anchor_check.go" \
+  || _fail "I21: verifyAnchorSignature não compara rec.AppPub com trustedAuryaPubKey"
+grep -qE "resolveSignerKey\(\)" "${REPO_ROOT}/tracking/cmd/orbit/anchor.go" \
+  || _fail "I21: signAnchorReceipt não chama resolveSignerKey (signer fixo)"
+echo "  ✓ trusted pub hardcoded + gate em verify + signer fixo no writer"
 
 # ── Garantias operacionais: existência dos artefatos ────────────────────
 GUARANTEES=(
