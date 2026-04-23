@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,16 +35,49 @@ const (
 	updateVersionTimeout = 5 * time.Second
 )
 
-// releaseURL retorna a URL de download para a plataforma atual.
+// releaseURLs retorna as URLs de download do binário e SHA256 para a plataforma atual.
+// Resolve a versão latest via GitHub redirect (mesmo padrão de install_remote.sh).
 // Pode ser sobrescrita por ORBIT_UPDATE_URL_OVERRIDE (testes/air-gap).
-func releaseURL() string {
+func releaseURLs() (binURL, shaURL string, err error) {
 	if override := os.Getenv("ORBIT_UPDATE_URL_OVERRIDE"); override != "" {
-		return override
+		return override, override + ".sha256", nil
 	}
-	return fmt.Sprintf(
-		"https://github.com/%s/releases/latest/download/%s-%s-%s",
-		updateGitHubRepo, updateBinaryName, runtime.GOOS, runtime.GOARCH,
+	version, err := resolveLatestVersion(updateGitHubRepo)
+	if err != nil {
+		return "", "", fmt.Errorf("falha ao resolver versão latest: %w", err)
+	}
+	bin := fmt.Sprintf(
+		"https://github.com/%s/releases/download/%s/%s-%s-%s-%s",
+		updateGitHubRepo, version, updateBinaryName, version, runtime.GOOS, runtime.GOARCH,
 	)
+	return bin, bin + ".sha256", nil
+}
+
+// resolveLatestVersion faz GET para /releases/latest sem seguir redirect,
+// extrai a versão do Location header (ex: .../releases/tag/v0.1.2 → v0.1.2).
+func resolveLatestVersion(repo string) (string, error) {
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: updateTimeout,
+	}
+	resp, err := client.Get(fmt.Sprintf("https://github.com/%s/releases/latest", repo))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("github não retornou redirect para latest release")
+	}
+	parts := strings.Split(strings.TrimSuffix(loc, "/"), "/")
+	v := parts[len(parts)-1]
+	if !strings.HasPrefix(v, "v") {
+		return "", fmt.Errorf("versão inesperada no redirect %q", loc)
+	}
+	return v, nil
 }
 
 // runUpdate é o ponto de entrada do comando `orbit update`.
@@ -64,20 +99,42 @@ func runUpdate() error {
 	}
 	fmt.Printf("      versão atual: %s\n", currentVersion)
 
-	// ── [2] Download ──────────────────────────────────────────────────────
-	url := releaseURL()
-	fmt.Printf("[1/4] Baixando %s ...\n", url)
+	// ── [2] Resolver versão latest + URLs ─────────────────────────────────────
+	fmt.Printf("[2/4] Resolvendo versão latest...\n")
 
-	tmpPath, err := downloadToTemp(url)
+	binURL, shaURL, err := releaseURLs()
 	if err != nil {
-		return fmt.Errorf("download falhou: %w", err)
+		return fmt.Errorf("falha ao resolver URLs: %w", err)
 	}
-	defer os.Remove(tmpPath) // limpa se algo der errado depois
+	fmt.Printf("      ✓  URLs construídas\n")
 
-	fmt.Printf("      ✓  download concluído\n")
+	// ── [3] Download binário + SHA256 ──────────────────────────────────────
+	fmt.Printf("[3/4] Baixando binário + checksum...\n")
 
-	// ── [3] Validar novo binário ──────────────────────────────────────────
-	fmt.Printf("[2/4] Validando novo binário...\n")
+	tmpPath, err := downloadToTemp(binURL)
+	if err != nil {
+		return fmt.Errorf("download do binário falhou: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	tmpShaPath, err := downloadToTemp(shaURL)
+	if err != nil {
+		return fmt.Errorf("download do .sha256 falhou: %w", err)
+	}
+	defer os.Remove(tmpShaPath)
+
+	fmt.Printf("      ✓  binário + checksum baixados\n")
+
+	// ── [4] Validar SHA256 ────────────────────────────────────────────────
+	fmt.Printf("[4/4] Verificando SHA256...\n")
+
+	if err := verifyChecksum(tmpPath, tmpShaPath); err != nil {
+		return fmt.Errorf("falha na verificação de integridade: %w", err)
+	}
+	fmt.Printf("      ✓  SHA256 confere\n")
+
+	// ── [5] Validar novo binário + instalação ──────────────────────────────
+	fmt.Printf("[5/5] Instalando...\n")
 
 	newVersion, err := queryBinaryVersion(tmpPath)
 	if err != nil {
@@ -92,17 +149,15 @@ func runUpdate() error {
 		return nil
 	}
 
-	// ── [4] Backup ────────────────────────────────────────────────────────
 	backupPath := destPath + ".bak"
-	fmt.Printf("[3/4] Criando backup em %s ...\n", backupPath)
+	fmt.Printf("      criando backup em %s...\n", backupPath)
 
 	if err := copyFile(destPath, backupPath); err != nil {
 		return fmt.Errorf("falha ao criar backup: %w", err)
 	}
 	fmt.Printf("      ✓  backup criado\n")
 
-	// ── [5] Substituição atômica ──────────────────────────────────────────
-	fmt.Printf("[4/4] Instalando em %s ...\n", destPath)
+	fmt.Printf("      instalando em %s...\n", destPath)
 
 	if err := replaceFile(tmpPath, destPath); err != nil {
 		return fmt.Errorf(
@@ -110,10 +165,8 @@ func runUpdate() error {
 			backupPath, err,
 		)
 	}
-	// tmpPath foi movido — não precisa mais do defer Remove
-	fmt.Printf("      ✓  instalado\n")
+	fmt.Printf("      ✓  binário instalado\n")
 
-	// ── Verificação pós-instalação ────────────────────────────────────────
 	installedVersion, err := queryBinaryVersion(destPath)
 	if err != nil {
 		return fmt.Errorf(
@@ -233,4 +286,34 @@ func replaceFile(src, dst string) error {
 		return err
 	}
 	return os.Remove(src)
+}
+
+// verifyChecksum valida o SHA256 do binário contra o arquivo .sha256.
+// Fail-closed: error se mismatch ou arquivo .sha256 malformado.
+func verifyChecksum(binPath, shaPath string) error {
+	shaContent, err := os.ReadFile(shaPath)
+	if err != nil {
+		return fmt.Errorf("falha ao ler .sha256: %w", err)
+	}
+	expected := strings.Fields(string(shaContent))
+	if len(expected) < 1 {
+		return fmt.Errorf("arquivo .sha256 malformado")
+	}
+
+	f, err := os.Open(binPath)
+	if err != nil {
+		return fmt.Errorf("falha ao abrir binário: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("erro ao calcular sha256: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+
+	if actual != expected[0] {
+		return fmt.Errorf("sha256 mismatch — binário adulterado ou corrompido\n  esperado: %s\n  obtido:   %s", expected[0], actual)
+	}
+	return nil
 }

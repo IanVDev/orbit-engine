@@ -61,7 +61,8 @@ type RunResult struct {
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
 // Se jsonMode==true, emite JSON estruturado em vez de texto colorido.
-func runRun(args []string, jsonMode bool) error {
+// noSpinner suprime o spinner de progresso (automático em pipes/CI via TTY detection).
+func runRun(args []string, jsonMode bool, noSpinner bool) error {
 	if err := enforceRuntimePathIntegrity(); err != nil {
 		return err
 	}
@@ -96,6 +97,8 @@ func runRun(args []string, jsonMode bool) error {
 		fmt.Println()
 	}
 
+	sp := NewSpinner("preparando contexto...", noSpinner || jsonMode)
+
 	// ── Execução ──────────────────────────────────────────────────────────
 
 	var stdout, stderr bytes.Buffer
@@ -103,9 +106,11 @@ func runRun(args []string, jsonMode bool) error {
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 
+	sp.SetMsg("executando comando...")
 	startedAt := time.Now()
 	runErr := c.Run()
 	durationMs := time.Since(startedAt).Milliseconds()
+	sp.SetMsg("capturando saída...")
 
 	exitCode := 0
 	if runErr != nil {
@@ -134,7 +139,9 @@ func runRun(args []string, jsonMode bool) error {
 	// IMPORTANTE: calculado sobre o len ORIGINAL, antes da redação (I12).
 	// Redaction altera o texto persistido mas não `outputBytes` → I2 e I3
 	// permanecem consistentes com o verify.
+	sp.SetMsg("gerando proof...")
 	proof := tracking.ComputeHash(sessionID, ts.Time, outputBytes)
+	sp.Stop()
 
 	// I12 SECRET_SAFETY: redige secrets conhecidos antes de persistir.
 	// Aplica em output E em args (secret em argv também é vetor comum).

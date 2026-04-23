@@ -57,9 +57,10 @@ func main() {
 
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
-		jsonMode := fs.Bool("json", false, "output JSON estruturado em vez de texto")
+		jsonMode  := fs.Bool("json",       false, "output JSON estruturado em vez de texto")
+		noSpinner := fs.Bool("no-spinner", false, "desativa spinner de progresso (automático em pipes/CI)")
 		_ = fs.Parse(os.Args[2:])
-		if err := runRun(fs.Args(), *jsonMode); err != nil {
+		if err := runRun(fs.Args(), *jsonMode, *noSpinner); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
 			os.Exit(1)
 		}
@@ -240,6 +241,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  --host <url>    URL do tracking-server (default: http://localhost:9100)")
 	fmt.Fprintln(os.Stderr, "                  Em quickstart, deixe vazio para usar servidor embutido.")
 	fmt.Fprintln(os.Stderr, "  --json          (run) output JSON estruturado")
+	fmt.Fprintln(os.Stderr, "  --no-spinner    (run) desativa spinner de progresso")
 	fmt.Fprintln(os.Stderr, "  --share         (stats) gerar texto curto para compartilhar resultados")
 	fmt.Fprintln(os.Stderr, "  --strict        (doctor) falha com exit 1 se houver WARNINGs")
 	fmt.Fprintln(os.Stderr, "")
