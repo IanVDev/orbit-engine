@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           BIN="dist/orbit-${{ steps.meta.outputs.version }}-linux-amd64"
-          OUT="$(ORBIT_SKIP_GUARD=1 "${BIN}" version)"
+          OUT="$(ORBIT_SKIP_GUARD=1 ORBIT_SKIP_GUARD_IN_CI=1 "${BIN}" version)"
           echo "${OUT}"
           echo "${OUT}" | grep -F "${{ steps.meta.outputs.version }}" \
             || { echo "::error::binário não reporta a tag ${{ steps.meta.outputs.version }}"; exit 1; }

@@ -111,7 +111,7 @@ chmod +x "${TMP}/${BIN_NAME}"
 # ORBIT_SKIP_GUARD=1 — o binário tem startup-guard de PATH/integridade que é
 # irrelevante para esta validação (não estamos no ambiente de instalação do
 # usuário). O gate quer saber: o binário reporta a versão certa?
-REPORTED="$(ORBIT_SKIP_GUARD=1 "${TMP}/${BIN_NAME}" version 2>/dev/null || true)"
+REPORTED="$(ORBIT_SKIP_GUARD=1 ORBIT_SKIP_GUARD_IN_CI=1 "${TMP}/${BIN_NAME}" version 2>/dev/null || true)"
 if [[ -z "${REPORTED}" ]]; then
   _fail "binário não produziu saída de 'version'"
 fi
