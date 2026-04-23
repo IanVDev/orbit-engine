@@ -118,6 +118,9 @@ run G14_anchor_verification bash tests/test_anchor_verification.sh
 # ── G15: I21 trusted anchor signer — pub key pinned ──────────────────
 run G15_trusted_signer bash tests/test_trusted_signer.sh
 
+# ── G16: consistência de versão da prompt skill ──────────────────────
+run G16_skill_version bash tests/test_skill_version_consistency.sh
+
 # ── Relatório final ──────────────────────────────────────────────────
 
 {

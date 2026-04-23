@@ -1,174 +1,139 @@
-# Orbit Prompt Skill — Exportação para Empresa
+# Orbit Prompt Skill
 
-## 📦 O que você recebeu
+<!-- SKILL_VERSION: 1.1.2 -->
 
-**Arquivo:** `orbit-prompt.skill` (v1.1.1)
+**Arquivo:** `orbit-prompt.skill` (v1.1.2)
 
-Um prompt universal que detecta 8 padrões de ineficiência em execução de tarefas.
-**NOVO:** Inclui comando `/orbit-prompt` para melhorar prompts antes de enviar.
+Skill universal para Claude Code com duas superfícies bem separadas:
 
-## ⚡ Começar em 2 minutos
-
-### Opção 1: Usar como arquivo skill
-
-Se sua empresa usa Claude Code:
-
-```bash
-# 1. Distribua o arquivo orbit-prompt.skill aos usuários
-# 2. Instale na interface local de skills
-# 3. O prompt ativa automaticamente em sessões com padrões detectados
-# 4. Use /orbit-prompt para melhorar seus prompts antes de enviar
-```
-
-### Opção 2: Usar como prompt direto
-
-Em qualquer LLM:
-
-```bash
-# 1. Extraia o conteúdo
-unzip orbit-prompt.skill
-
-# 2. Use SKILL.md como prompt de sistema
-# 3. Pronto para usar em ChatGPT, Claude, ou qualquer IA
-# 4. Você pode simular /orbit-prompt manualmente
-```
-
-### Opção 3: Integrar em processos
-
-Para code review, automação, ou análise:
-
-```bash
-# 1. Extraia SKILL.md
-# 2. Incorpore em seus bots/ferramentas
-# 3. Use a seção "PROMPT IMPROVEMENT output" para melhorar prompts automaticamente
-# 4. Customize conforme necessário
-```
-
-## 📚 Documentação incluída
-
-Dentro do arquivo `orbit-prompt.skill` (ZIP):
-
-- **SKILL.md** — Definição completa do prompt + comando `/orbit-prompt`
-- **ONBOARDING.md** — Orientação para novos usuários
-- **QUICK-START.md** — Guia de primeiros passos com `/orbit-prompt` (3 min)
-- **EXAMPLES.md** — 6 cenários reais com diagnóstico E melhoria de prompt
-
-## 🆕 Comando `/orbit-prompt`
-
-**Novo na v1.1.0**
-
-Use para melhorar seu prompt ANTES de enviar:
-
-```bash
-/orbit-prompt "Sua tarefa vaga aqui"
-```
-
-O prompt retorna:
-- Análise do que está faltando
-- Versão melhorada com constraints claros
-- Explicação de cada melhoria
-- Avaliação se está pronto para enviar
-
-**Benefício:** 2 minutos para melhorar = 30 minutos economizados em rework
+1. **Diagnóstico automático** — silencioso por padrão, só responde quando detecta desperdício
+2. **Comando manual** — `/orbit-prompt` para melhorar prompts antes de enviar
 
 ---
 
-## 🎯 Os 8 padrões
+## Usage
 
-O prompt detecta:
+Só existe uma forma recomendada:
 
-1. **Respostas muito longas** — Output > requisição
-2. **Cadeias de correção** — Múltiplas follow-ups corrigindo
-3. **Edições repetidas** — Mesmo arquivo editado 3+ vezes
-4. **Exploração sem plano** — Leitura de muitos arquivos sem direção
-5. **Prompts fracos** — Tarefas complexas sem constraints
-6. **Conteúdo colado** — Código inline em vez de referência
-7. **Teatro de validação** — Artefatos criados mas não executados
-8. **Acúmulo de contexto** — Sessões longas com contexto irrelevante
-
-## 🚀 Casos de uso imediatos
-
-| Caso | Como usar |
-|------|-----------|
-| Code Review | Aplique os padrões como critério de eficiência |
-| Pair Programming | Use em sessões com IA para melhorar foco |
-| Melhorar prompts | Use `/orbit-prompt [tarefa]` antes de enviar |
-| Requisitos complexos | Use `/orbit-prompt` para deixar claro e constrained |
-| Mentoría | Ensine os 8 padrões + `/orbit-prompt` no onboarding |
-| Automação | Integre em CI/CD para análise de PRs e prompts |
-| Treinamento | Use exemplos em retrospectivas |
-
-## ✅ Características
-
-- ✓ Agnóstico de plataforma (funciona em qualquer LLM)
-- ✓ Sem dependências externas
-- ✓ Customizável (é um ZIP com markdown)
-- ✓ Sem especulação (padrões observáveis apenas)
-- ✓ Acionável (diagnósticos com ações específicas)
-- ✓ Silencioso em sucesso (zero ruído)
-- ✓ **Melhora prompts** (novo com `/orbit-prompt`)
-
-## 🔄 Como customizar
-
-```bash
-# 1. Extraia
-unzip orbit-prompt.skill
-
-# 2. Edite SKILL.md (adicione seus padrões corporativos)
-
-# 3. Recompacte
-zip skill-empresa.skill *.md
-
-# 4. Distribua a versão customizada
+```text
+/orbit-prompt "sua tarefa aqui"
 ```
 
-## 📞 Próximos passos
+Retorna o prompt original analisado, uma versão melhorada com constraints claros, e um veredito `READY TO SEND`.
 
-1. **Distribuição:** Compartilhe `orbit-prompt.skill` com seu time
-2. **Onboarding:** Execute `QUICK-START.md` com os usuários
-3. **Aplicação:** Use `/orbit-prompt` em tarefas complexas
-4. **Feedback:** Coletar input sobre integração
+É isso.
 
-## 📊 Adoção esperada
+---
 
-Após 1 mês:
-- ⬇️ Menos correções em code review
-- ⬇️ Menos rework de files
-- ⬆️ Prompts mais claros e constrained
-- ⬆️ Melhor qualidade de sessão
+## Como as duas superfícies se separam
 
-## 🎓 Exemplo com `/orbit-prompt`
+### Superfície 1 — Diagnóstico automático (silencioso)
 
-**Fluxo tradicional (sem melhoria):**
-```
-Tarefa vaga: "Refactor auth module"
-↓
-Resultado: 3 files rewritten, schema changed, routes modified
-↓
-Feedback: "No, just extract middleware"
-↓
-Rework necessário, tokens gastos
-```
+A skill observa a sessão e só emite output quando detecta um dos 8 padrões de desperdício. Em sessão saudável, permanece silenciosa. Você não faz nada.
 
-**Fluxo com `/orbit-prompt`:**
-```
-Tarefa vaga: "Refactor auth module"
-↓
+### Superfície 2 — `/orbit-prompt` (manual, explícito)
+
+Você aciona. Ela responde. Sempre.
+
+```text
 /orbit-prompt "Refactor auth module"
-↓
-Tarefa melhorada: "Extract middleware from auth.ts to middleware/auth.ts,
-keep function signatures, don't touch routes or schema.
-Success = all tests pass."
-↓
-Enviado para Claude
-↓
-Resultado: Exatamente o que foi pedido
-↓
-Feedback: Nenhum (pronto na primeira vez)
 ```
 
-**Tempo economizado:** 2 min com `/orbit-prompt` = 30 min de rework evitado
+Nunca dispara automaticamente — só com o comando explícito.
 
 ---
 
-**Pronto para usar!** Comece com `QUICK-START.md` dentro do arquivo `.skill`.
+## Advanced triggers (opcional)
+
+O modo diagnóstico também reage a frases em linguagem natural. Use se preferir disparar sob demanda em vez de esperar detecção automática:
+
+- `analyze cost`
+- `is this optimal?`
+- `how efficient is this?`
+- `optimize this`
+- `Before answering, apply orbit-engine`
+
+São opcionais. O fluxo recomendado continua sendo `/orbit-prompt` para melhoria de prompt, e detecção automática para diagnóstico.
+
+---
+
+## Os 8 padrões detectados
+
+1. **Unsolicited long responses** — output excede requisição
+2. **Correction chains** — múltiplas follow-ups corrigindo
+3. **Repeated edits** — mesmo arquivo editado 3+ vezes
+4. **Exploratory searching** — leitura de muitos arquivos sem direção
+5. **Weak prompts** — tarefas complexas sem constraints
+6. **Large inline content** — código colado em vez de referenciado
+7. **Validation theater** — artefatos criados mas não executados
+8. **Context accumulation** — sessões longas com contexto irrelevante
+
+---
+
+## Instalação
+
+### Claude Code (recomendado)
+
+1. Distribua `orbit-prompt.skill` ao time
+2. Instale via interface de skills local
+3. Use `/orbit-prompt` em qualquer sessão
+
+### LLM genérico (ChatGPT, Claude API, etc.)
+
+1. `unzip orbit-prompt.skill`
+2. Use `SKILL.md` como prompt de sistema
+3. Simule `/orbit-prompt` manualmente enviando o comando no início da mensagem
+
+---
+
+## Documentação incluída (dentro do ZIP)
+
+- `SKILL.md` — contrato de comportamento (fonte da verdade)
+- `ONBOARDING.md` — orientação para novos usuários
+- `QUICK-START.md` — primeiros passos em 3 minutos
+- `EXAMPLES.md` — 6 cenários reais
+
+---
+
+## Customização
+
+```bash
+unzip orbit-prompt.skill
+# editar SKILL.md
+zip skill-custom.skill *.md
+```
+
+---
+
+## Exemplo
+
+**Sem `/orbit-prompt`:**
+
+```text
+"Refactor auth module"
+→ 3 arquivos reescritos, schema alterado, rotas modificadas
+→ "Não, só extrair o middleware"
+→ rework, tokens gastos
+```
+
+**Com `/orbit-prompt`:**
+
+```text
+/orbit-prompt "Refactor auth module"
+→ "Extract middleware from auth.ts to middleware/auth.ts.
+   Keep function signatures. Don't touch routes or schema.
+   Success = all tests pass."
+→ enviado, entregue, sem correções
+```
+
+2 minutos investidos = 30 minutos de rework evitados.
+
+---
+
+## Características
+
+- Silencioso por padrão em diagnóstico (só fala quando detecta desperdício)
+- Determinístico (sem scoring, sem especulação, sem números inventados)
+- Agnóstico de plataforma (funciona em qualquer LLM)
+- Sem dependências externas
+- Customizável (é um ZIP com markdown)
