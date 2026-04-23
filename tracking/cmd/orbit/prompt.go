@@ -47,13 +47,13 @@ func ClassifyIntent(input string) PromptIntent {
 		strings.Contains(l, "decisão") ||
 		strings.Contains(l, "estrutura"):
 		return IntentArchitecture
-	case strings.Contains(l, "analisar") ||
-		strings.Contains(l, "entender") ||
-		strings.Contains(l, "mapear") ||
-		strings.Contains(l, "investigar") ||
-		strings.Contains(l, "decompor") ||
-		strings.Contains(l, "revisar") ||
-		strings.Contains(l, "refatorar"):
+	case strings.Contains(l, "analis") ||
+		strings.Contains(l, "entend") ||
+		strings.Contains(l, "mape") ||
+		strings.Contains(l, "investig") ||
+		strings.Contains(l, "decomp") ||
+		strings.Contains(l, "revis") ||
+		strings.Contains(l, "refator"):
 		return IntentAnalysis
 	default:
 		return IntentImplementation
