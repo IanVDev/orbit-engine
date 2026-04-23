@@ -1,4 +1,0 @@
-# User session exports — local only, not committed
-*.txt
-*.jsonl
-!.gitignore

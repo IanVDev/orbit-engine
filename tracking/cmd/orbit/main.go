@@ -141,15 +141,6 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "anchor":
-		fs := flag.NewFlagSet("anchor", flag.ExitOnError)
-		host := fs.String("host", "https://aurya.dev/api/v1/anchor", "URL do serviço AURYA de ancoragem externa")
-		_ = fs.Parse(os.Args[2:])
-		if err := runAnchor(os.Stdout, *host); err != nil {
-			fmt.Fprintf(os.Stderr, "\n❌  %v\n", err)
-			os.Exit(1)
-		}
-
 	case "diagnose":
 		fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
 		jsonOut := fs.Bool("json", false, "emite JSON estruturado em vez de texto")
@@ -240,7 +231,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  hygiene       Gerencia o pre-commit hook (install|check)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução (--chain: valida todos)")
-	fmt.Fprintln(os.Stderr, "  anchor        Publica merkle root dos logs no AURYA (ancoragem externa)")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
 	fmt.Fprintln(os.Stderr, "  prompt        Gera prompt estruturado para o Claude a partir de um objetivo")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")

@@ -1,332 +1,58 @@
 # orbit-engine — Makefile
 #
 # Usage:
-#   make test-go              — run all Go tests
-#   make test-python          — run all Python tests
-#   make validate-e2e         — run CLI validators (no external deps)
-#   make validate-promql      — validate governance rules
-#   make gate-release         — ALL checks must pass before tagging
-#   make tag-release VERSION=vX.Y.Z   — git tag (only after gate-release)
-#
-# The gate-release target is the release gate. If it fails, release is blocked.
-# Aliases gate-v1 / tag-v1 são mantidos para retrocompatibilidade.
+#   make build     — compila e instala orbit em ~/.orbit/bin/orbit
+#   make install   — instala em /usr/local/bin/orbit (pode exigir sudo)
+#   make test-go   — roda todos os testes Go
+#   make gate-cli  — gate de release offline (< 120s, fail-closed)
 
-.PHONY: test-go test-go-contract test-python validate-e2e validate-promql gate-cli release-gate gate-server gate-release tag-release gate-v1 tag-v1 clean
+.PHONY: build install test-go gate-cli release-gate tag-release clean
 
-# ── Go tests ──────────────────────────────────────────────────────────
+# ── Build + install local ────────────────────────────────────────────────────
+# scripts/install.sh faz: go build com -ldflags (commit/version) →
+# instala em ~/.orbit/bin/orbit → smoke-test (orbit version) → PATH hint.
+build:
+	@bash scripts/install.sh
 
+# Instala em /usr/local/bin/orbit (caminho global).
+install:
+	@bash scripts/install.sh --prefix /usr/local/bin
+
+# ── Go tests ─────────────────────────────────────────────────────────────────
 test-go:
-	@echo "══ Go tests (all) ══"
-	cd tracking && go test ./... -v -count=1
+	@echo "══ Go tests ══"
+	cd tracking && go test ./... -count=1
 	@echo "✅ Go tests passed"
 
-test-go-contract:
-	@echo "══ v1.0 contract test ══"
-	cd tracking && go test -run "TestV1ContractComplete|TestV1GatewayMetricsContract" -v -count=1
-	@echo "✅ v1.0 contract test passed"
-
-# ── Python tests ──────────────────────────────────────────────────────
-
-test-python:
-	@echo "══ Python tests ══"
-	cd tests && python3 run_tests.py
-	@echo "✅ Python tests passed"
-
-# ── E2E validators (in-process, no external services) ─────────────────
-
-validate-e2e:
-	@echo "══ E2E validate ══"
-	cd tracking && go run ./cmd/validate
-	@echo "✅ E2E validate passed"
-
-validate-env:
-	@echo "══ Environment safety validate ══"
-	cd tracking && go run ./cmd/validate_env
-	@echo "✅ Environment safety passed"
-
-validate-gov:
-	@echo "══ Governance validate ══"
-	cd tracking && go run ./cmd/validate_gov
-	@echo "✅ Governance validate passed"
-
-# ── PromQL governance (quick check) ──────────────────────────────────
-
-validate-promql:
-	@echo "══ PromQL governance ══"
-	@echo "-- Recording rules (must PASS) --"
-	cd tracking && go run ./cmd/validate_promql "orbit:tokens_saved_total:prod"
-	cd tracking && go run ./cmd/validate_promql "orbit:activations_total:prod"
-	cd tracking && go run ./cmd/validate_promql "orbit:sessions_total:prod"
-	cd tracking && go run ./cmd/validate_promql "orbit:event_staleness_seconds:prod"
-	cd tracking && go run ./cmd/validate_promql "orbit_seed_mode"
-	cd tracking && go run ./cmd/validate_promql "orbit_tracking_up"
-	cd tracking && go run ./cmd/validate_promql "orbit_gateway_requests_total"
-	@echo "-- Raw metrics (must FAIL) --"
-	cd tracking && go run ./cmd/validate_promql "orbit_skill_tokens_saved_total" && exit 1 || true
-	cd tracking && go run ./cmd/validate_promql "orbit_skill_activations_total" && exit 1 || true
-	cd tracking && go run ./cmd/validate_promql --strict "orbit_unknown_metric" && exit 1 || true
-	@echo "✅ PromQL governance passed"
-
-# ── PROD GATE v1 — CLI (orbit binary) ─────────────────────────────────
+# ── CLI release gate ─────────────────────────────────────────────────────────
 #
-# Este é o gate REAL para tag de release da CLI. Roda offline em < 120s.
-# Delegated to scripts/gate_cli.sh (contrato único, fail-closed, JSON report).
-#
-# Requer: go (>= version em tracking/go.mod), python3, bash. Não requer
-# Prometheus, Grafana, Docker, nem rede.
-#
+# Gate offline para tag de release da CLI. Roda em < 120s sem rede.
 # Saída: gate_report.json com {gate, status, duration_ms, tail} por gate.
-
-.PHONY: gate-cli
 gate-cli:
 	@bash scripts/gate_cli.sh
 
-# ── RELEASE GATE SOBERANO ─────────────────────────────────────────────
-# Valida distribuição pública pós-release. DIFERENTE do gate-cli:
-#   gate-cli     → pré-build, offline, determinístico (pode rodar a qualquer
-#                  momento; bloqueia merge se código regredir).
-#   release-gate → pós-build, requer rede + tag pública, valida que o
-#                  release é consumível pelo usuário (bloqueia release
-#                  "fantasma" onde tag existe mas binário não está publicado
-#                  ou está corrompido).
-#
-# Uso local:
-#   make release-gate VERSION=v0.1.1
-#   make release-gate VERSION=v0.1.1 PLATFORM=darwin-arm64
-
-.PHONY: release-gate
+# ── Release gate (pós-release, requer rede) ───────────────────────────────────
+# Valida que o binário publicado é consumível (download + sha256 + version).
+# Uso: make release-gate VERSION=v0.1.2
 release-gate:
 	@if [ -z "$(VERSION)" ]; then \
-		echo "ERROR: VERSION required. Usage: make release-gate VERSION=v0.1.1"; \
+		echo "ERROR: VERSION required. Usage: make release-gate VERSION=v0.1.2"; \
 		exit 1; \
 	fi
 	@bash scripts/release_gate.sh --version $(VERSION) --platform $(or $(PLATFORM),linux-amd64)
 
-# ── SERVER STACK GATE (Produto B — tracking-server + gateway) ─────────
-# NÃO é o gate da CLI. Valida a superfície observacional (Produto B) e
-# requer Prometheus/Grafana/Alertmanager para o prelaunch_gate.sh ser útil.
-# Aliases retrocompatíveis `gate-release`/`gate-v1` preservados.
-
-gate-server: test-go-contract test-go test-python validate-e2e validate-promql
-	@echo ""
-	@echo "════════════════════════════════════════════════════════════"
-	@echo "  🟢  SERVER STACK GATE PASSED"
-	@echo ""
-	@echo "  All checks:"
-	@echo "    ✅ Go contract tests"
-	@echo "    ✅ Go full test suite"
-	@echo "    ✅ Python validation tests"
-	@echo "    ✅ E2E in-process validator"
-	@echo "    ✅ PromQL governance"
-	@echo ""
-	@echo "  NOTE: este gate é para Produto B (server stack), não para a"
-	@echo "  CLI. Para tag de release da CLI, use:  make gate-cli"
-	@echo "════════════════════════════════════════════════════════════"
-
-# Aliases retrocompatíveis — apontam para o gate do server stack.
-gate-release: gate-server
-gate-v1: gate-server
-
-# ── Tag (only after gate passes) ─────────────────────────────────────
-# Usage: make tag-release VERSION=v0.1.0
-
+# ── Tag (só após gate passar) ────────────────────────────────────────────────
+# Uso: make tag-release VERSION=v0.1.2
 tag-release:
 	@if [ -z "$(VERSION)" ]; then \
-		echo "ERROR: VERSION required. Usage: make tag-release VERSION=v0.1.1"; \
+		echo "ERROR: VERSION required. Usage: make tag-release VERSION=v0.1.2"; \
 		exit 1; \
 	fi
-	@echo "Re-running Prod Gate v1 before tagging..."
+	@echo "Re-running gate-cli before tagging..."
 	$(MAKE) gate-cli
-	@echo ""
-	@echo "Tagging $(VERSION)..."
-	git tag -a $(VERSION) -m "orbit-engine $(VERSION) — validated release"
+	git tag -a $(VERSION) -m "orbit-engine $(VERSION)"
 	@echo "✅ Tagged $(VERSION). Push with: git push origin $(VERSION)"
 
-# Alias retrocompatível: hardcoded v1.0.0 (preservado para callers antigos).
-tag-v1:
-	$(MAKE) tag-release VERSION=v1.0.0
-
-# ── orbit-check (production readiness) ──────────────────────────────
-
-# Verifica saúde do sistema ao vivo: health, métricas críticas, integridade SHA.
-# Em produção: ENV=production ORBIT_GATEWAY_SHA256=<sha> make orbit-check
-orbit-check:
-	@bash scripts/orbit-check.sh
-
-# Executa a suite de testes do orbit-check (servidores mock, sem dependências externas)
-test-orbit-check:
-	@bash tests/test_orbit_check.sh
-
-# ── Grafana Dashboards ───────────────────────────────────────────────
-
-# Valida o JSON do dashboard de segurança (requer python3)
-validate-dashboard-security:
-	@python3 -c "import json,sys; d=json.load(open('deploy/grafana-dashboard-security.json')); panels=[p for p in d['panels'] if p['type']!='row']; print(f'Dashboard valido: {len(panels)} paineis, uid={d[\"uid\"]}'); [print(f'  id={p[\"id\"]:2d}  {p[\"type\"]:12s}  {p[\"title\"]}') for p in panels]"
-
-# Valida a sintaxe YAML das regras de alerta de segurança (requer pyyaml)
-validate-alerts-security:
-	@python3 -c "import sys; import yaml; data=yaml.safe_load(open('deploy/prometheus-alerts-security.yml')); rules=[r for g in data.get('groups',[]) for r in g.get('rules',[])]; print(f'Alertas validos: {len(rules)} regras'); [print(f'  {r[\"alert\"]}  ({r[\"labels\"][\"severity\"]})') for r in rules]" 2>/dev/null || python3 -c "import json; print('pyyaml nao instalado — validando apenas JSON do dashboard')"
-
-# Importa dashboards Grafana via API HTTP
-# Uso: GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<token> make import-dashboards
-# Gera token em Grafana: Configuration → API Tokens → Create token (role: Admin)
-import-dashboards:
-	@bash scripts/import-grafana-dashboards.sh
-
-# Inicia stack de observabilidade: Prometheus + Grafana (docker-compose)
-# Requer Docker e docker-compose instalados
-# Acesso: Prometheus em http://localhost:9090, Grafana em http://localhost:3000 (admin/admin)
-obs-up:
-	@docker-compose up -d && echo "✅ Stack iniciada: Prometheus (9090) + Grafana (3000)" && sleep 3 && curl -s http://localhost:3000/api/health | grep -q '"ok"' && echo "✅ Grafana pronto para importar dashboards"
-
-# Para a stack de observabilidade
-obs-down:
-	@docker-compose down && echo "✅ Stack parada"
-
-# Logs em tempo real da stack de observabilidade
-obs-logs:
-	@docker-compose logs -f
-
-# Importa dashboards após stack estar rodando
-obs-import: obs-up
-	@echo "Aguardando Grafana ficar pronto..." && sleep 5
-	@GRAFANA_TOKEN=$$(bash scripts/generate-grafana-token.sh || echo "") && \
-	if [ -z "$$GRAFANA_TOKEN" ]; then \
-		echo "⚠️  Token não gerado automaticamente — use:"; \
-		echo "  GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=<seu_token> make import-dashboards"; \
-	else \
-		GRAFANA_URL=http://localhost:3000 GRAFANA_TOKEN=$$GRAFANA_TOKEN make import-dashboards; \
-	fi
-
-# ── Cleanup ──────────────────────────────────────────────────────────────
-
+# ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
 	cd tracking && go clean -testcache
-
-
-# ── Artifact build (para deploy soberano) ────────────────────────────────────
-#
-# Produz um binário versionado com commit SHA, versão e timestamp embutidos.
-# Usado pelo CI/CD para publicar artefatos no bucket de deploy.
-#
-# Uso:
-#   make build-artifact                 → usa commit atual
-#   VERSION=1.2.0 make build-artifact  → especifica versão
-#
-# Variáveis:
-#   VERSION   versão semântica  (padrão: 0.0.0)
-#   GOOS      sistema alvo      (padrão: local)
-#   GOARCH    arquitetura alvo  (padrão: local)
-
-VERSION ?= 0.0.0
-COMMIT  := $(shell git rev-parse --short HEAD)
-BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-GOOS   ?= $(shell go env GOOS)
-GOARCH ?= $(shell go env GOARCH)
-ARTIFACT_NAME := tracking-server-$(COMMIT)-$(GOOS)-$(GOARCH)
-
-.PHONY: build-artifact
-
-build-artifact:
-	@echo "══ build-artifact ══"
-	@echo "  commit:  $(COMMIT)"
-	@echo "  version: $(VERSION)"
-	@echo "  target:  $(GOOS)/$(GOARCH)"
-	@echo "  output:  tracking/$(ARTIFACT_NAME)"
-	cd tracking && go build \
-		-ldflags "-X main.CommitSHA=$(COMMIT) -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)" \
-		-o $(ARTIFACT_NAME) \
-		./cmd/main.go
-	shasum -a 256 tracking/$(ARTIFACT_NAME) > tracking/$(ARTIFACT_NAME).sha256
-	@echo "  sha256:  $$(cat tracking/$(ARTIFACT_NAME).sha256 | cut -c1-16)..."
-	@echo "✅ Artifact pronto: tracking/$(ARTIFACT_NAME)"
-	@echo "   Checksum:        tracking/$(ARTIFACT_NAME).sha256"
-
-# ── SSH / Remote access ───────────────────────────────────────────────────────
-#
-# Required env vars (never commit values):
-#   ORBIT_EC2_HOST    — EC2 public DNS or IP
-#   ORBIT_EC2_USER    — non-root SSH user (e.g. ubuntu, ec2-user)
-#   ORBIT_SSH_KEY     — path to .pem key file
-#
-# Optional:
-#   ORBIT_SSH_PORT    — SSH port (default: 22)
-#   ORBIT_PROJECT_DIR — remote project path (default: /opt/orbit-engine)
-
-.PHONY: ssh-validate ssh-remote-validate ssh-config
-
-ssh-validate:
-	@echo "══ SSH connection + local key validation ══"
-	@bash scripts/ssh_setup.sh
-	@echo "✅ SSH validation passed"
-
-ssh-remote-validate:
-	@echo "══ Remote environment validation ══"
-	@[ -n "$(ORBIT_EC2_HOST)" ]  || (echo "ERROR: ORBIT_EC2_HOST not set" && exit 1)
-	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set" && exit 1)
-	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set" && exit 1)
-	@ssh \
-		-i "$(ORBIT_SSH_KEY)" \
-		-p "$${ORBIT_SSH_PORT:-22}" \
-		-o IdentitiesOnly=yes \
-		-o BatchMode=yes \
-		-o ConnectTimeout=10 \
-		-o StrictHostKeyChecking=accept-new \
-		-o ForwardAgent=no \
-		-o ForwardX11=no \
-		"$(ORBIT_EC2_USER)@$(ORBIT_EC2_HOST)" \
-		'bash -s' < scripts/ssh_remote_validate.sh
-	@echo "✅ Remote environment validation passed"
-
-ssh-config:
-	@echo "══ Rendering SSH config (requires envsubst) ══"
-	@[ -n "$(ORBIT_EC2_HOST)" ]  || (echo "ERROR: ORBIT_EC2_HOST not set" && exit 1)
-	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set" && exit 1)
-	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set" && exit 1)
-	@mkdir -p ~/.ssh/config.d
-	@envsubst < deploy/ssh_config.template > ~/.ssh/config.d/orbit-engine
-	@chmod 600 ~/.ssh/config.d/orbit-engine
-	@echo "✅ SSH config written to ~/.ssh/config.d/orbit-engine"
-	@echo "   Add 'Include ~/.ssh/config.d/*' to the top of ~/.ssh/config if needed"
-
-# ── Sovereign remote validation ──────────────────────────────────────────────
-#
-# make orbit-check-remote — validates a REMOTE orbit deployment over SSH.
-#   Stage 1: ssh-validate     (local key + connectivity)
-#   Stage 2: ssh-remote-validate (baseline environment)
-#   Stage 3: orbit_check_remote  (strict: port, /health 200, /metrics orbit_,
-#                                  sha256 of binary, orbit-gateway.service active)
-#
-# Fail-closed: exits 1 if ANY stage fails.
-# Prints a clear per-stage OK / FAIL summary.
-#
-# Required:
-#   ORBIT_EC2_HOST, ORBIT_EC2_USER, ORBIT_SSH_KEY
-#
-# Optional:
-#   ORBIT_SSH_PORT, ORBIT_PROJECT_DIR
-#   ORBIT_GATEWAY_BIN, ORBIT_GATEWAY_URL, ORBIT_GATEWAY_SHA256
-
-.PHONY: orbit-check-remote
-
-orbit-check-remote:
-	@echo "══ orbit-check-remote — sovereign remote validation ══"
-	@[ -n "$(ORBIT_EC2_HOST)" ]  || (echo "ERROR: ORBIT_EC2_HOST not set"  && exit 1)
-	@[ -n "$(ORBIT_EC2_USER)" ]  || (echo "ERROR: ORBIT_EC2_USER not set"  && exit 1)
-	@[ -n "$(ORBIT_SSH_KEY)" ]   || (echo "ERROR: ORBIT_SSH_KEY not set"   && exit 1)
-	@bash scripts/orbit_check.sh
-
-# ── Build + install local (alias para o instalador canônico) ─────────────────
-# scripts/install.sh faz: go build com -ldflags (commit/version) →
-# instala em ~/.orbit/bin/orbit → smoke-test (orbit version) → PATH.
-.PHONY: build
-build:
-	@bash scripts/install.sh
-
-# ── System install ────────────────────────────────────────────────────────────
-# Instala em /usr/local/bin/orbit (caminho canônico global).
-# Pode requerer sudo dependendo das permissões do diretório.
-# Equivalente a: bash scripts/install.sh --prefix /usr/local/bin
-.PHONY: install
-install:
-	@bash scripts/install.sh --prefix /usr/local/bin
