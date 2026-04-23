@@ -118,6 +118,20 @@ After the first run, the skill activates automatically on complex tasks and long
 
 Full onboarding (30 seconds): [ONBOARDING.md](ONBOARDING.md)
 
+### Generate a structured prompt
+
+```bash
+orbit prompt "criar endpoint de autenticação com jwt"
+```
+
+Prints a Claude-ready prompt with Objective, Scope, Requirements, and Risk — structured for consistent results. Add `--copy` to send it straight to your clipboard:
+
+```bash
+orbit prompt --copy "refatorar módulo de logs"
+```
+
+Paste into Claude Code (or any chat) and send. You get a structured, reproducible request instead of a vague one. Short inputs (under 10 chars) are rejected — orbit won't generate a prompt it can't make useful.
+
 ### Any AI (GPT, Gemini, etc.)
 
 Copy and paste [`orbit-engine.prompt.md`](orbit-engine.prompt.md) at the start of your session.
