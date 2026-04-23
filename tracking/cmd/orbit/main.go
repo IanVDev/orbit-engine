@@ -163,6 +163,15 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "prompt":
+		fs := flag.NewFlagSet("prompt", flag.ExitOnError)
+		copyFlag := fs.Bool("copy", false, "copia o prompt para o clipboard (macOS)")
+		_ = fs.Parse(os.Args[2:])
+		if err := runPrompt(fs.Args(), *copyFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "update":
 		if err := runUpdate(); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
@@ -233,6 +242,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução (--chain: valida todos)")
 	fmt.Fprintln(os.Stderr, "  anchor        Publica merkle root dos logs no AURYA (ancoragem externa)")
 	fmt.Fprintln(os.Stderr, "  diagnose      Analisa o último log e extrai causa provável da falha")
+	fmt.Fprintln(os.Stderr, "  prompt        Gera prompt estruturado para o Claude a partir de um objetivo")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  release       Cria tag + push + (opcional) espera CI + valida release_gate")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
