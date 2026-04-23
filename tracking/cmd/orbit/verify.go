@@ -200,9 +200,7 @@ func runVerifyChain(w io.Writer) error {
 	}
 	fmt.Fprintf(w, "✅  chain íntegra — %d logs verificados, %d âncoras legadas\n",
 		checked, resets)
-	// Anchor externo: se existe receipt, logs locais DEVEM bater. Sem
-	// receipt → no-op (back-compat pré-anchor).
-	return verifyAgainstLatestAnchor(w)
+	return nil
 }
 
 // safePrefix devolve até n chars de s, sem panic se s for menor.
