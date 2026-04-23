@@ -4,7 +4,7 @@
 
 Arquivo: `orbit-prompt.skill` (5.3 KB)
 
-Uma skill compacta que detecta padrões de ineficiência E inclui comando `/prompt` para melhorar prompts antes de enviar.
+Uma skill compacta que detecta padrões de ineficiência E inclui comando `/orbit-prompt` para melhorar prompts antes de enviar.
 
 ---
 
@@ -39,28 +39,28 @@ Compartilhe os seguintes arquivos:
 ### 3. Casos de uso recomendados
 
 #### Para Code Review
-- Adicione `/prompt` como critério de qualidade de requisitos
+- Adicione `/orbit-prompt` como critério de qualidade de requisitos
 - Cite os padrões em reviews (waste detection)
 - Padronize o feedback
 
 #### Para Pair Programming
 - Integre em sessões de pair com IA
-- Use `/prompt` antes de enviar tarefas
+- Use `/orbit-prompt` antes de enviar tarefas
 - Melhore foco e escopo
 
 #### Para Requisitos e Especificações
-- Use `/prompt` ao receber requisitos
+- Use `/orbit-prompt` ao receber requisitos
 - Melhore PRDs antes de implementação
 - Comunique com clareza
 
 #### Para Mentoría e Treinamento
 - Ensine os 8 padrões no onboarding
-- Use `/prompt` como ferramenta educacional
+- Use `/orbit-prompt` como ferramenta educacional
 - Cite em feedback de desempenho
 
 #### Para Automação
 - Integre em CI/CD para análise de PRs
-- Crie um serviço interno `/prompt`
+- Crie um serviço interno `/orbit-prompt`
 - Meça tendências de qualidade de prompts
 
 ---
@@ -91,7 +91,7 @@ zip -q meu-prompt-customizado.skill *.md
 
 **Para times de arquitetura:**
 - Adicione padrões sobre design decisions sem escopo
-- Customize `/prompt` para requisitos arquiteturais
+- Customize `/orbit-prompt` para requisitos arquiteturais
 - Focus em rework evitado
 
 **Para times de dados:**
@@ -111,7 +111,7 @@ zip -q meu-prompt-customizado.skill *.md
 
 **Para times de vendas/marketing:**
 - Customize para comunicação clara de requisitos
-- Use `/prompt` em briefs de campanha
+- Use `/orbit-prompt` em briefs de campanha
 - Melhore alinhamento entre times
 
 ---
@@ -123,12 +123,12 @@ zip -q meu-prompt-customizado.skill *.md
 - [ ] Distribua o arquivo `orbit-prompt.skill`
 - [ ] Compartilhe `PROMPT-SKILL-README.md` com o time
 - [ ] Explique os 8 padrões em uma sessão de 30 min
-- [ ] Mostre exemplo com `/prompt`
+- [ ] Mostre exemplo com `/orbit-prompt`
 
 ### Fase 2: Adoção (Semana 2-3)
 
 - [ ] Use em code reviews (referenciar padrões)
-- [ ] Use `/prompt` em requisitos complexos
+- [ ] Use `/orbit-prompt` em requisitos complexos
 - [ ] Colete feedback inicial
 - [ ] Identifique padrões recorrentes
 
@@ -201,7 +201,7 @@ R: Nenhum. É open-source da Orbit Engine.
 - `EXPORT-PROMPT-SKILL.md` — Documentação técnica
 
 ### Dentro do .skill (descompactar com `unzip`)
-- `SKILL.md` — Prompt completo + `/prompt` command
+- `SKILL.md` — Prompt completo + `/orbit-prompt` command
 - `ONBOARDING.md` — Orientação para novos usuários
 - `QUICK-START.md` — Guia de 3 minutos
 - `EXAMPLES.md` — 6 cenários com diagnóstico e melhoria
@@ -217,7 +217,7 @@ R: Nenhum. É open-source da Orbit Engine.
 
 A Orbit Prompt Skill v1.1.0 combina:
 - ✓ Detecção automática de padrões de ineficiência
-- ✓ Comando `/prompt` para melhorar requisitos
+- ✓ Comando `/orbit-prompt` para melhorar requisitos
 - ✓ Zero dependências externas
 - ✓ Customizável para seu domínio
 - ✓ Pronto para distribuição corporativa

@@ -2,10 +2,10 @@
 
 ## 📦 O que você recebeu
 
-**Arquivo:** `orbit-prompt.skill` (v1.1.0)
+**Arquivo:** `orbit-prompt.skill` (v1.1.1)
 
 Um prompt universal que detecta 8 padrões de ineficiência em execução de tarefas.
-**NOVO:** Inclui comando `/prompt` para melhorar prompts antes de enviar.
+**NOVO:** Inclui comando `/orbit-prompt` para melhorar prompts antes de enviar.
 
 ## ⚡ Começar em 2 minutos
 
@@ -17,7 +17,7 @@ Se sua empresa usa Claude Code:
 # 1. Distribua o arquivo orbit-prompt.skill aos usuários
 # 2. Instale na interface local de skills
 # 3. O prompt ativa automaticamente em sessões com padrões detectados
-# 4. Use /prompt para melhorar seus prompts antes de enviar
+# 4. Use /orbit-prompt para melhorar seus prompts antes de enviar
 ```
 
 ### Opção 2: Usar como prompt direto
@@ -30,7 +30,7 @@ unzip orbit-prompt.skill
 
 # 2. Use SKILL.md como prompt de sistema
 # 3. Pronto para usar em ChatGPT, Claude, ou qualquer IA
-# 4. Você pode simular /prompt manualmente
+# 4. Você pode simular /orbit-prompt manualmente
 ```
 
 ### Opção 3: Integrar em processos
@@ -48,19 +48,19 @@ Para code review, automação, ou análise:
 
 Dentro do arquivo `orbit-prompt.skill` (ZIP):
 
-- **SKILL.md** — Definição completa do prompt + comando `/prompt`
+- **SKILL.md** — Definição completa do prompt + comando `/orbit-prompt`
 - **ONBOARDING.md** — Orientação para novos usuários
-- **QUICK-START.md** — Guia de primeiros passos com `/prompt` (3 min)
+- **QUICK-START.md** — Guia de primeiros passos com `/orbit-prompt` (3 min)
 - **EXAMPLES.md** — 6 cenários reais com diagnóstico E melhoria de prompt
 
-## 🆕 Comando `/prompt`
+## 🆕 Comando `/orbit-prompt`
 
 **Novo na v1.1.0**
 
 Use para melhorar seu prompt ANTES de enviar:
 
 ```bash
-/prompt "Sua tarefa vaga aqui"
+/orbit-prompt "Sua tarefa vaga aqui"
 ```
 
 O prompt retorna:
@@ -92,9 +92,9 @@ O prompt detecta:
 |------|-----------|
 | Code Review | Aplique os padrões como critério de eficiência |
 | Pair Programming | Use em sessões com IA para melhorar foco |
-| Melhorar prompts | Use `/prompt [tarefa]` antes de enviar |
-| Requisitos complexos | Use `/prompt` para deixar claro e constrained |
-| Mentoría | Ensine os 8 padrões + `/prompt` no onboarding |
+| Melhorar prompts | Use `/orbit-prompt [tarefa]` antes de enviar |
+| Requisitos complexos | Use `/orbit-prompt` para deixar claro e constrained |
+| Mentoría | Ensine os 8 padrões + `/orbit-prompt` no onboarding |
 | Automação | Integre em CI/CD para análise de PRs e prompts |
 | Treinamento | Use exemplos em retrospectivas |
 
@@ -106,7 +106,7 @@ O prompt detecta:
 - ✓ Sem especulação (padrões observáveis apenas)
 - ✓ Acionável (diagnósticos com ações específicas)
 - ✓ Silencioso em sucesso (zero ruído)
-- ✓ **Melhora prompts** (novo com `/prompt`)
+- ✓ **Melhora prompts** (novo com `/orbit-prompt`)
 
 ## 🔄 Como customizar
 
@@ -126,7 +126,7 @@ zip skill-empresa.skill *.md
 
 1. **Distribuição:** Compartilhe `orbit-prompt.skill` com seu time
 2. **Onboarding:** Execute `QUICK-START.md` com os usuários
-3. **Aplicação:** Use `/prompt` em tarefas complexas
+3. **Aplicação:** Use `/orbit-prompt` em tarefas complexas
 4. **Feedback:** Coletar input sobre integração
 
 ## 📊 Adoção esperada
@@ -137,7 +137,7 @@ Após 1 mês:
 - ⬆️ Prompts mais claros e constrained
 - ⬆️ Melhor qualidade de sessão
 
-## 🎓 Exemplo com `/prompt`
+## 🎓 Exemplo com `/orbit-prompt`
 
 **Fluxo tradicional (sem melhoria):**
 ```
@@ -150,11 +150,11 @@ Feedback: "No, just extract middleware"
 Rework necessário, tokens gastos
 ```
 
-**Fluxo com `/prompt`:**
+**Fluxo com `/orbit-prompt`:**
 ```
 Tarefa vaga: "Refactor auth module"
 ↓
-/prompt "Refactor auth module"
+/orbit-prompt "Refactor auth module"
 ↓
 Tarefa melhorada: "Extract middleware from auth.ts to middleware/auth.ts,
 keep function signatures, don't touch routes or schema.
@@ -167,7 +167,7 @@ Resultado: Exatamente o que foi pedido
 Feedback: Nenhum (pronto na primeira vez)
 ```
 
-**Tempo economizado:** 2 min com `/prompt` = 30 min de rework evitado
+**Tempo economizado:** 2 min com `/orbit-prompt` = 30 min de rework evitado
 
 ---
 

@@ -8,11 +8,11 @@
 
 ## 🎯 Novidade Principal
 
-**Comando `/prompt`** para melhorar prompts antes de enviar.
+**Comando `/orbit-prompt`** para melhorar prompts antes de enviar.
 
 Usuários podem agora:
 1. Escrever um prompt vago
-2. Executar `/prompt [seu prompt]`
+2. Executar `/orbit-prompt [seu prompt]`
 3. Receber uma versão melhorada com constraints claros
 4. Enviar a versão melhorada para Claude
 
@@ -33,13 +33,13 @@ Usuários podem agora:
 1. **`PROMPT-SKILL-README.md`** (3.8 KB)
    - Guia rápido para começar (2 minutos)
    - Casos de uso imediatos
-   - Exemplo com `/prompt`
+   - Exemplo com `/orbit-prompt`
 
 2. **`EXPORT-PROMPT-SKILL.md`** (2.8 KB)
    - Documentação técnica completa
    - 3 opções de integração
    - Guia de customização
-   - Detalhe do comando `/prompt`
+   - Detalhe do comando `/orbit-prompt`
 
 3. **`DISTRIBUTION.md`** (4.0 KB)
    - Guia corporativo de adoção
@@ -56,7 +56,7 @@ Usuários podem agora:
 ## ✨ O que mudou da v1.0 para v1.1.0
 
 ### Novo
-- ✓ **Comando `/prompt`** — Melhora prompts vaguos
+- ✓ **Comando `/orbit-prompt`** — Melhora prompts vaguos
 - ✓ **PROMPT IMPROVEMENT output format** — Saída estruturada para melhorias
 - ✓ **Análise de gaps** — O que está faltando no prompt original
 - ✓ **Recomendações específicas** — Por que cada melhoria foi feita
@@ -68,9 +68,9 @@ Usuários podem agora:
 - ✓ **DIAGNOSIS output format** — Formato de diagnóstico
 
 ### Melhorado
-- ✓ **Documentação expandida** — Exemplos com `/prompt`
+- ✓ **Documentação expandida** — Exemplos com `/orbit-prompt`
 - ✓ **EXAMPLES.md** — Agora com 6 cenários (era 5)
-- ✓ **QUICK-START.md** — Inclui seção sobre `/prompt`
+- ✓ **QUICK-START.md** — Inclui seção sobre `/orbit-prompt`
 - ✓ **ONBOARDING.md** — Explica ambos os modos
 
 ---
@@ -92,7 +92,7 @@ Diagnóstico com padrões e ações
 ```
 Prompt vago do usuário
 ↓
-/prompt "seu prompt aqui"
+/orbit-prompt "seu prompt aqui"
 ↓
 Análise de gaps
 ↓
@@ -125,7 +125,7 @@ orbit-prompt.skill (ZIP)
 └── EXAMPLES.md (8.2 KB)
     ├── 6 cenários reais
     ├── Diagnóstico em cada um
-    └── Melhoria com /prompt em alguns
+    └── Melhoria com /orbit-prompt em alguns
 ```
 
 ---
@@ -134,21 +134,21 @@ orbit-prompt.skill (ZIP)
 
 ### Para Desenvolvimento
 - **Code Review:** Use diagnóstico como critério de eficiência
-- **Requisitos:** Use `/prompt` para melhorar specs
-- **Prompts complexos:** Use `/prompt` antes de enviar
+- **Requisitos:** Use `/orbit-prompt` para melhorar specs
+- **Prompts complexos:** Use `/orbit-prompt` antes de enviar
 
 ### Para Treinamento
 - **Onboarding:** Explique os 8 padrões
 - **Exemplos:** Mostre cenários reais do `EXAMPLES.md`
-- **Educação:** Use `/prompt` como ferramenta pedagógica
+- **Educação:** Use `/orbit-prompt` como ferramenta pedagógica
 
 ### Para Automação
 - **CI/CD:** Integre diagnóstico em análise de PRs
-- **APIs:** Crie um serviço `/prompt` interno
+- **APIs:** Crie um serviço `/orbit-prompt` interno
 - **Bots:** Use em bots de review de código
 
 ### Para Comunicação
-- **Requisitos:** Melhore PRDs com `/prompt`
+- **Requisitos:** Melhore PRDs com `/orbit-prompt`
 - **Especificações:** Clarifique specs técnicas
 - **Alinhamento:** Normalize como requisitos são comunicados
 
@@ -239,7 +239,7 @@ orbit-prompt.skill (ZIP)
 ## 📝 Notas de versão
 
 ### v1.1.0 (23 de Abril de 2026)
-- ✅ Novo comando `/prompt`
+- ✅ Novo comando `/orbit-prompt`
 - ✅ Formato estruturado para melhorias
 - ✅ Análise de gaps in prompts
 - ✅ Ready assessment
@@ -279,4 +279,4 @@ zip -q export-orbit-prompt-v1.1.0.zip orbit-prompt.skill *.md
 
 ---
 
-**Orbit Engine v1.1.0 — Prompt Efficiency + `/prompt` Command**
+**Orbit Engine v1.1.0 — Prompt Efficiency + `/orbit-prompt` Command**

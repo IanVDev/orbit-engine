@@ -8,11 +8,11 @@
 
 A skill de prompt universal da Orbit Engine, empacotada para distribuição e uso em ambientes corporativos.
 
-**Novidade na v1.1.0:** Comando `/prompt` para melhorar prompts antes de enviar.
+**Novidade na v1.1.0:** Comando `/orbit-prompt` para melhorar prompts antes de enviar.
 
 ## Conteúdo
 
-- `SKILL.md` — Definição completa do prompt + comando `/prompt`
+- `SKILL.md` — Definição completa do prompt + comando `/orbit-prompt`
 - `ONBOARDING.md` — Orientação inicial para novos usuários
 - `QUICK-START.md` — Guia prático de primeiros passos (3 min)
 - `EXAMPLES.md` — 6 cenários reais com exemplos de saída (diagnóstico + melhoria)
@@ -27,7 +27,7 @@ Se sua empresa usa Claude Code com suporte a skills customizadas:
 2. Os usuários podem instalar via interface local
 3. A skill ativa automaticamente:
    - **Diagnóstico:** Detecta padrões de ineficiência em sessões
-   - **Melhoria de prompt:** Use `/prompt [tarefa]` antes de enviar
+   - **Melhoria de prompt:** Use `/orbit-prompt [tarefa]` antes de enviar
 
 ### Opção 2: Como prompt standalone
 
@@ -43,7 +43,7 @@ Use o conteúdo de `SKILL.md` como um prompt de sistema em qualquer aplicação 
 - Claude (via API)
 - Qualquer outro LLM
 
-**Para simular `/prompt` manualmente:**
+**Para simular `/orbit-prompt` manualmente:**
 - Siga a seção "PROMPT IMPROVEMENT output" do SKILL.md
 - Siga o fluxo de análise e reescrita
 
@@ -58,19 +58,19 @@ Adapte os padrões detectados para:
 
 ---
 
-## O comando `/prompt` (NOVO na v1.1.0)
+## O comando `/orbit-prompt` (NOVO na v1.1.0)
 
 ### Sintaxe
 
 ```
-/prompt [tarefa vaga do usuário]
+/orbit-prompt [tarefa vaga do usuário]
 ```
 
 ### Exemplo
 
 **Entrada:**
 ```
-/prompt "Refactor the authentication module"
+/orbit-prompt "Refactor the authentication module"
 ```
 
 **Saída:**
@@ -101,7 +101,7 @@ READY TO SEND: YES
 Reason: Constraints are clear, rework risk is low, success is testable.
 ```
 
-### O que `/prompt` analisa
+### O que `/orbit-prompt` analisa
 
 1. **Targets missing** — Quais arquivos/funções/componentes?
 2. **Scope undefined** — Qual é o escopo exato?
@@ -109,7 +109,7 @@ Reason: Constraints are clear, rework risk is low, success is testable.
 4. **Acceptance criteria unclear** — Como saber que está pronto?
 5. **Ambiguity risk** — Pode ser interpretado de formas diferentes?
 
-### O que `/prompt` retorna
+### O que `/orbit-prompt` retorna
 
 1. **ANALYSIS** — O que está faltando (específico, não genérico)
 2. **IMPROVED PROMPT** — Versão reescrita com todos os gaps preenchidos
@@ -123,24 +123,24 @@ Reason: Constraints are clear, rework risk is low, success is testable.
 ### Para desenvolvimento
 
 - Incorpore o prompt em pipelines de revisão de código
-- Use `/prompt` para melhorar requisitos antes de implementar
+- Use `/orbit-prompt` para melhorar requisitos antes de implementar
 - Customize os padrões para domínios específicos (arquitetura, dados, etc.)
 
 ### Para treinamento
 
 - Eduque times sobre padrões de ineficiência com os exemplos
-- Ensine como usar `/prompt` para melhorar comunicação
+- Ensine como usar `/orbit-prompt` para melhorar comunicação
 - Use o diagnóstico como base para retrospectivas
 
 ### Para automação
 
 - Integre os padrões em bots de análise
-- Crie um serviço `/prompt` como API interna
+- Crie um serviço `/orbit-prompt` como API interna
 - Construa dashboards de saúde de sessão e qualidade de prompts
 
 ### Para requisitos
 
-- Use `/prompt` ao receber requisitos dos stakeholders
+- Use `/orbit-prompt` ao receber requisitos dos stakeholders
 - Melhore PRDs e especificações
 - Padronize como requisitos são comunicados
 
@@ -153,7 +153,7 @@ Reason: Constraints are clear, rework risk is low, success is testable.
 ✓ **Silencioso em sucesso** — Não gera ruído em sessões saudáveis
 ✓ **Acionável** — Cada recomendação é específica e prática
 ✓ **Agnóstico de plataforma** — Funciona com qualquer LLM
-✓ **Melhora prompts** — `/prompt` deixa tarefas claras e constrained
+✓ **Melhora prompts** — `/orbit-prompt` deixa tarefas claras e constrained
 
 ## Padrões detectados (diagnóstico automático)
 
@@ -213,7 +213,7 @@ A skill é agnóstica de plataforma. Para customizar:
 - **Versão:** 1.1.0
 - **Data:** 23 de Abril de 2026
 - **Compatibilidade:** Claude Code >=0.1.2
-- **Novidades:** Comando `/prompt` para melhoria de prompts
+- **Novidades:** Comando `/orbit-prompt` para melhoria de prompts
 
 ---
 
