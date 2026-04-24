@@ -6,6 +6,7 @@
 //	run           Executa comando externo com geração de proof
 //	stats         Tokens processados, execuções e decisões automáticas
 //	context-pack  Gera context-pack para transição entre conversas (alias: ctx)
+//	git           Subcomandos git (verify-merge)
 //	doctor        Diagnóstico de instalação e conflitos de PATH
 //	verify        Re-valida o proof SHA256 de um log de execução
 //	diagnose      Analisa o último log e extrai causa provável da falha
@@ -93,6 +94,12 @@ func main() {
 		_ = flag.NewFlagSet("analyze", flag.ExitOnError).Parse(os.Args[2:])
 		if err := runAnalyze(); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "git":
+		if err := runGitSubcmd(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌  %v\n", err)
 			os.Exit(1)
 		}
 
@@ -228,6 +235,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  stats         Tokens processados, execuções e decisões automáticas")
 	fmt.Fprintln(os.Stderr, "  analyze       [DEPRECATED] alias de `orbit doctor --alert-only`")
 	fmt.Fprintln(os.Stderr, "  context-pack  Gera context-pack para transição entre conversas (alias: ctx)")
+	fmt.Fprintln(os.Stderr, "  git           Subcomandos git (verify-merge)")
 	fmt.Fprintln(os.Stderr, "  hygiene       Gerencia o pre-commit hook (install|check)")
 	fmt.Fprintln(os.Stderr, "  doctor        Diagnóstico de instalação e conflitos de PATH")
 	fmt.Fprintln(os.Stderr, "  verify        Re-valida o proof SHA256 de um log de execução (--chain: valida todos)")
