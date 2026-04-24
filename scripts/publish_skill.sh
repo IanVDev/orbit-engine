@@ -30,6 +30,8 @@ REPO_VERSION="${REPO_VERSION:-}"
 SKILL_ZIP="orbit-prompt-skill/orbit-prompt.skill"
 README_PROMPT="README.md"
 CHANGELOG_PROMPT="CHANGELOG.md"
+PUBLIC_SKILLS_DIR="skills/orbit-prompt"
+PUBLIC_LAYOUT_CHECK="scripts/check_skill_public_layout.sh"
 SKILL_TAG_PREFIX="prompt-skill-v"
 EXPECTED_REMOTE="IanVDev/orbit-prompt"
 
@@ -163,7 +165,10 @@ echo ""
 echo "  actions:"
 [[ "${CREATE_ENGINE_TAG}" -eq 1 ]] && echo "    - orbit-engine: criar tag ${SKILL_TAG} em HEAD"
 echo "    - orbit-prompt: copiar orbit-prompt.skill do orbit-engine"
+echo "    - orbit-prompt: re-extrair skill em ${PUBLIC_SKILLS_DIR}/ (layout público indexável)"
 echo "    - orbit-prompt: atualizar README markers (Repo=${REPO_VERSION}, Skill=v${SKILL_VER})"
+[[ -f "${ORBIT_PROMPT}/${PUBLIC_LAYOUT_CHECK}" ]] \
+  && echo "    - orbit-prompt: validar ${PUBLIC_LAYOUT_CHECK} (guard final)"
 echo "    - orbit-prompt: git add + commit + tag ${REPO_VERSION}"
 echo "    - push: orbit-engine main --tags"
 echo "    - push: orbit-prompt main --tags"
@@ -188,19 +193,39 @@ fi
 cp "${ORBIT_ENGINE}/${SKILL_ZIP}" "${ORBIT_PROMPT}/orbit-prompt.skill"
 info "orbit-prompt: artefato copiado"
 
-# orbit-prompt: atualiza README markers (preservando espaçamento)
+# orbit-prompt: re-extrai skill no layout público (SkillsMP indexação)
 cd "${ORBIT_PROMPT}"
+mkdir -p "${PUBLIC_SKILLS_DIR}"
+# Remove só .md existentes (evita stale files se nomes mudarem entre versões).
+# Não mexe em subpastas ou outros arquivos que possam existir lá.
+rm -f "${PUBLIC_SKILLS_DIR}"/*.md
+(cd "${PUBLIC_SKILLS_DIR}" && unzip -q -o "${ORBIT_PROMPT}/orbit-prompt.skill")
+# Paranoia anti-metadado macOS (caso o unzip tenha jogado algo).
+find "${PUBLIC_SKILLS_DIR}" \( -name ".DS_Store" -o -name "__MACOSX" \) -exec rm -rf {} + 2>/dev/null || true
+info "orbit-prompt: skill re-extraída em ${PUBLIC_SKILLS_DIR}/"
+
+# orbit-prompt: atualiza README markers (preservando espaçamento)
 sed -i.bak -E "s/^(Repo:[[:space:]]+)v[0-9]+\.[0-9]+\.[0-9]+\$/\1${REPO_VERSION}/" "${README_PROMPT}"
 sed -i.bak -E "s/^(Skill:[[:space:]]+)v[0-9]+\.[0-9]+\.[0-9]+\$/\1v${SKILL_VER}/" "${README_PROMPT}"
 sed -i.bak -E "s/^(Version:[[:space:]]+)[0-9]+\.[0-9]+\.[0-9]+\$/\1${REPO_VERSION_NUM}/" "${README_PROMPT}"
 rm -f "${README_PROMPT}.bak"
 info "orbit-prompt: README markers atualizados"
 
+# Guard final: se orbit-prompt tem seu próprio check, roda. Divergência → FAIL.
+if [[ -f "${PUBLIC_LAYOUT_CHECK}" ]]; then
+  if ! bash "${PUBLIC_LAYOUT_CHECK}" >/dev/null 2>&1; then
+    echo "[FAIL] ${PUBLIC_LAYOUT_CHECK} falhou após update — saída:" >&2
+    bash "${PUBLIC_LAYOUT_CHECK}" || true
+    exit 1
+  fi
+  info "orbit-prompt: ${PUBLIC_LAYOUT_CHECK} PASS"
+fi
+
 # Sanity: working tree agora tem changes
 [[ -n "$(git status --porcelain)" ]] \
-  || fail "orbit-prompt: nada para commitar após update — release no-op (artefato/markers idênticos?)"
+  || fail "orbit-prompt: nada para commitar após update — release no-op (artefato/markers/layout idênticos?)"
 
-git add orbit-prompt.skill "${README_PROMPT}" "${CHANGELOG_PROMPT}"
+git add orbit-prompt.skill "${README_PROMPT}" "${CHANGELOG_PROMPT}" "${PUBLIC_SKILLS_DIR}"
 git commit -m "feat: ${REPO_VERSION} — embed skill v${SKILL_VER}"
 git tag -a "${REPO_VERSION}" -m "orbit-prompt ${REPO_VERSION} — embed skill v${SKILL_VER}"
 info "orbit-prompt: commit + tag ${REPO_VERSION}"
