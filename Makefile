@@ -6,7 +6,7 @@
 #   make test-go   — roda todos os testes Go
 #   make gate-cli  — gate de release offline (< 120s, fail-closed)
 
-.PHONY: build install test-go gate-cli release-gate tag-release clean
+.PHONY: build install test-go gate-cli release-gate tag-release publish-skill clean
 
 # ── Build + install local ────────────────────────────────────────────────────
 # scripts/install.sh faz: go build com -ldflags (commit/version) →
@@ -52,6 +52,20 @@ tag-release:
 	$(MAKE) gate-cli
 	git tag -a $(VERSION) -m "orbit-engine $(VERSION)"
 	@echo "✅ Tagged $(VERSION). Push with: git push origin $(VERSION)"
+
+# ── Publish skill (orbit-engine SSOT → orbit-prompt distribuição) ────────────
+# Coordena release entre os dois repos. Fail-closed em qualquer inconsistência.
+#
+# Uso:
+#   make publish-skill REPO_VERSION=v0.3.0
+#   make publish-skill REPO_VERSION=v0.3.0 DRY_RUN=1
+#
+# Pré-requisito humano: entrada `## [X.Y.Z]` no topo de orbit-prompt/CHANGELOG.md.
+# Sem isso o script falha e mostra o template a preencher.
+publish-skill:
+	@REPO_VERSION=$(REPO_VERSION) DRY_RUN=$(or $(DRY_RUN),0) \
+		ORBIT_PROMPT_REPO=$(ORBIT_PROMPT_REPO) \
+		bash scripts/publish_skill.sh
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
