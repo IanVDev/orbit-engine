@@ -86,15 +86,21 @@ SKILL_VER=$(awk '
 pass "skill version: ${SKILL_VER}"
 
 # ── P4. orbit-engine: tag da skill ──────────────────────────────────────
+# Se a tag existe: bytes do skill no commit taggeado devem bater com HEAD.
+#   (garante que a tag ainda representa o skill atual, sem exigir que a tag
+#    fique em HEAD — releases de distribuição fazem commits novos no engine
+#    que não precisam mover a tag do skill.)
+# Se não existe: cria em HEAD (commit atual contém o estado selado).
 SKILL_TAG="${SKILL_TAG_PREFIX}${SKILL_VER}"
 CREATE_ENGINE_TAG=0
 
 if git rev-parse --verify "refs/tags/${SKILL_TAG}" >/dev/null 2>&1; then
-  TAG_COMMIT=$(git rev-parse "${SKILL_TAG}^{}" 2>/dev/null || git rev-parse "${SKILL_TAG}")
-  HEAD_COMMIT=$(git rev-parse HEAD)
-  [[ "${TAG_COMMIT}" == "${HEAD_COMMIT}" ]] \
-    || fail "tag ${SKILL_TAG} aponta ${TAG_COMMIT:0:7}, mas HEAD=${HEAD_COMMIT:0:7}"
-  pass "orbit-engine tag ${SKILL_TAG} já existe em HEAD"
+  TAG_HASH=$(git rev-parse "${SKILL_TAG}:${SKILL_ZIP}" 2>/dev/null) \
+    || fail "tag ${SKILL_TAG} não contém ${SKILL_ZIP}"
+  HEAD_HASH=$(git rev-parse "HEAD:${SKILL_ZIP}")
+  [[ "${TAG_HASH}" == "${HEAD_HASH}" ]] \
+    || fail "tag ${SKILL_TAG}: skill bytes divergem de HEAD (tag=${TAG_HASH:0:7}, head=${HEAD_HASH:0:7})"
+  pass "orbit-engine tag ${SKILL_TAG} válida (skill bytes batem com HEAD)"
 else
   CREATE_ENGINE_TAG=1
   info "orbit-engine: tag ${SKILL_TAG} será criada em HEAD"
