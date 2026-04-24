@@ -80,6 +80,7 @@ tests/evidence_log.jsonl
 # Each build changes 13MB of bytes; tracking it pollutes git history
 # and breaks every merge. Rebuild locally instead.
 tracking/orbit
+tracking/cmd/orbit/orbit
 
 # --- Claude Code local state (per-machine, not shareable) ---
 .claude/settings.local.json
