@@ -168,7 +168,7 @@ orbit verify ~/.orbit/logs/<file>.json
 orbit verify --chain     # verifies every log in sequence
 ```
 
-**Sanitization.** Secrets matching known patterns are replaced with `[REDACTED]` before the file is written. The original output is shown in the terminal; only the redacted version is persisted.
+**Sanitization.** Secrets matching known patterns (`Authorization: Bearer`, `password=`, `x-authorization:`, AWS keys, etc.) are redacted before display in the terminal and before persistence. The redacted version appears on screen and is stored in the log. The SHA256 proof is derived from the original `output_bytes` count, not from the redacted text — so proof integrity is preserved regardless of how many values were redacted.
 
 **Retention.** Logs are not automatically deleted. Use `ORBIT_MAX_LOGS=<n>` to limit the number of files retained. Recommended for long-running installations:
 
@@ -230,6 +230,10 @@ $ orbit run go test ./...
   Decision:    TRIGGER_ANALYZE
   Guidance:    auth_test.go:47 — assertion failure on token refresh
 ```
+
+**Live output.** In interactive terminals, `orbit run` streams stdout and stderr in real time as the command runs. Sensitive values (`Authorization: Bearer`, `x-authorization:`, `password=`, and similar patterns) are redacted before display — `[REDACTED]` appears on screen instead of the raw value. The SHA256 proof is generated from the original captured `output_bytes`, not from the redacted text, so proof integrity is unaffected.
+
+In `--json` mode, CI environments, or non-TTY pipes, the live UI is not rendered. The `live_output_mode` field in the run result and log (`"interactive"`, `"ci"`, or `"json"`) records which mode was active.
 
 ### orbit doctor
 

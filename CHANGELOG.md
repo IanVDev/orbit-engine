@@ -5,6 +5,23 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Redacted live output** — in interactive terminals, `orbit run` streams stdout and stderr in real time. Sensitive values are redacted before display; proofs are generated from the original captured bytes.
+- **Live output metadata** — run results and log files now include `live_output_mode`, `live_output_lines`, `live_output_redactions`, and `live_output_truncated_lines` fields (omitempty).
+
+### Fixed
+
+- **Hygiene test isolation** — `setupRepo` now uses `git init --template=` to prevent the user's global `init.templateDir` from copying hooks into temporary test repositories, stabilizing `TestHygieneInstallFresh`, `TestHygieneCheckMissing`, and `TestAutoInstallInsideRepo`.
+
+### Security
+
+- Terminal live output redacts sensitive values (`Authorization: Bearer`, `x-authorization:`, `password=`, `token=`, `api-key`) before any write to the terminal. The SHA256 proof is derived from `output_bytes` of the original captured output, not from the redacted text.
+
+---
+
 ## [0.2.2] — 2026-04-25
 
 ### 🎯 Marco

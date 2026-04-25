@@ -83,6 +83,7 @@ tracking/orbit
 tracking/cmd/orbit/orbit
 
 # --- Claude Code local state (per-machine, not shareable) ---
+.claude/settings.json
 .claude/settings.local.json
 .claude/worktrees/
 gate_report.json

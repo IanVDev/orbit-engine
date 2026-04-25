@@ -25,6 +25,10 @@ Do not open a public issue for security concerns.
 These are blocked by `.gitignore`. If you need to work with internal logic,
 use the private repository (see below).
 
+## Terminal output redaction
+
+`orbit run` redacts sensitive values before display in the terminal and before writing to `~/.orbit/logs/`. The SHA256 proof is derived from the original `output_bytes` count, not from the redacted output — proof integrity is preserved regardless of how many values were redacted. The `live_output_mode` field in run results records whether live output was active (`"interactive"`, `"ci"`, or `"json"`).
+
 ## Repository separation
 
 | Repo | Visibility | Contains |
