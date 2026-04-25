@@ -36,7 +36,9 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 FAIL=0
 ENTRIES=()
 
-_now_ms() { date +%s%3N; }
+# date +%s%3N não funciona no macOS (BSD date não suporta %N).
+# python3 já é pré-requisito do gate e funciona em Linux e macOS.
+_now_ms() { python3 -c "import time; print(int(time.time()*1000))"; }
 
 run() {
   local name="$1"; shift
@@ -120,6 +122,9 @@ run G15_trusted_signer bash tests/test_trusted_signer.sh
 
 # ── G16: consistência de versão da prompt skill ──────────────────────
 run G16_skill_version bash tests/test_skill_version_consistency.sh
+
+# ── G17: slash command bridge — orbit-prompt ─────────────────────────
+run G17_slash_command_bridge bash scripts/check_claude_slash_command_bridge.sh
 
 # ── Relatório final ──────────────────────────────────────────────────
 

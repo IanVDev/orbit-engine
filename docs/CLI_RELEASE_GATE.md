@@ -23,7 +23,7 @@ Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 
 ---
 
-## Os 16 gates (todos devem PASS)
+## Os 17 gates (todos devem PASS)
 
 | # | Gate | O que valida | Script |
 |---|------|-------------|--------|
@@ -43,6 +43,7 @@ Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 | G14 | `G14_anchor_verification` | I20: signature Ed25519 + monotonic anti-replay + full-match + leaf_count | `tests/test_anchor_verification.sh` |
 | G15 | `G15_trusted_signer` | I21: AppPub == trustedAuryaPubKey (pub key pinned) | `tests/test_trusted_signer.sh` |
 | G16 | `G16_skill_version` | Consistência SKILL.md (SSOT) ↔ marcador README ↔ tag `prompt-skill-v*` | `tests/test_skill_version_consistency.sh` |
+| G17 | `G17_slash_command_bridge` | Skill orbit-prompt tem bridge `/orbit-prompt` em `.claude/commands/` | `scripts/check_claude_slash_command_bridge.sh` |
 
 Cada Gi emite `{gate, status, duration_ms, tail}` em `gate_report.json`.
 

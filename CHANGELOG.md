@@ -5,6 +5,55 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
 
+## [0.2.2] — 2026-04-25
+
+### 🎯 Marco
+
+**DX fix: orbit-prompt slash command bridge** — entrypoint oficial `/orbit-prompt`
+agora aparece no autocomplete do Claude Code. Gate G17 garante que a skill nunca
+fique sem bridge correspondente.
+
+**feat(safe): hardening do modo --safe** — detecção de `find -delete` e
+`git push --force-with-lease`; 6 testes anti-regressão para comandos indiretos
+(sh -c, bash -c, python -c, curl|bash, find -delete, force-push). Documentação
+explícita: `--safe` é pré-visualização de risco, nunca sandbox.
+
+### Adicionado
+
+- **`.claude/commands/orbit-prompt.md`** — slash command bridge para Claude Code.
+  Invoca a skill orbit-prompt com `$ARGUMENTS`. Entrypoint oficial: `/orbit-prompt`.
+- **`skills/orbit-prompt/SKILL.md`** — manifesto canônico da skill no repo.
+- **`scripts/check_claude_slash_command_bridge.sh`** — valida que a skill tem bridge
+  correspondente. Exit 1 se skill existe sem command file.
+- **Gate G17** (`G17_slash_command_bridge`) em `scripts/gate_cli.sh` — bloqueia
+  release se a bridge estiver ausente.
+- **Dois novos padrões de risco em `--safe`**:
+  - `find ... -delete` → HIGH (deleção recursiva irreversível via find)
+  - `git push --force-with-lease` → HIGH (reescrita de histórico remoto)
+- **6 testes anti-regressão** para comandos indiretos em `--safe`:
+  `TestSafe_IndirectCommandNeverExecutes` — prova que sh/bash/python/curl|bash/
+  find -delete/git force-push não criam processo nem efeito colateral.
+
+### Corrigido
+
+- Documentação do `--safe` tornada explícita: `--safe never executes the command`,
+  `--safe is risk preview, not sandbox`. README e safe_mode.go atualizados.
+
+### Alterado
+
+- `docs/CLI_RELEASE_GATE.md` — tabela expandida para 17 gates.
+- `README.md` — seção `orbit run --safe` e subsection `/orbit-prompt` adicionadas.
+
+### Verificação
+
+```bash
+make gate-cli   # → 17/17 PASS
+go test ./tracking/cmd/orbit/... -run 'Safe|Risk'   # → novos testes passam
+bash scripts/check_claude_slash_command_bridge.sh   # → PASS
+```
+
+---
+
 ## [0.1.2] — 2026-04-22
 
 ### 🎯 Marco

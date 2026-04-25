@@ -254,6 +254,26 @@ orbit diagnose            # analyze most recent log
 orbit diagnose --json     # structured output
 ```
 
+### orbit run --safe
+
+```bash
+orbit run --safe <command> [args...]
+```
+
+Analyzes the command's risk level **without executing it**. No process is created, no file is modified.
+
+```
+$ orbit run --safe rm -rf /
+  Comando recebido:  rm -rf /
+  🔴 Risco: CRITICAL
+  Fatores:
+    - destruição de sistema de arquivos raiz (rm -rf /)
+  ⚠️   execution skipped (safe mode)
+  Nenhum processo foi criado. Nenhum arquivo foi modificado.
+```
+
+`--safe` is a **risk preview**, not a sandbox. It never executes the command. Dangerous commands remain dangerous outside Orbit — `--safe` does not make them safe.
+
 ### orbit stats
 
 ```bash
@@ -266,6 +286,26 @@ orbit stats --share       # shareable summary
 Drag the `skill/` folder into the Claude Code interface, or drag individual `.md` files from inside `skill/`.
 
 After installing, use `orbit run` normally. The skill activates when risk patterns are detected in the session.
+
+#### /orbit-prompt
+
+The `orbit-prompt` skill ships as a separate artifact (`orbit-prompt-skill/orbit-prompt.skill`) and exposes a slash command in Claude Code:
+
+```text
+/orbit-prompt <sua tarefa aqui>
+```
+
+Example:
+
+```text
+/orbit-prompt "Refactor auth module"
+→ IMPROVED: "Extract middleware from auth.ts to middleware/auth.ts.
+   Keep function signatures. Don't touch routes or schema.
+   Success = all tests pass."
+→ VERDICT: READY TO SEND
+```
+
+> **Autocomplete note.** If `/orbit-prompt` does not appear in the Claude Code autocomplete, install the skill via the Claude Code interface and restart the session. The slash command bridge is at `.claude/commands/orbit-prompt.md`.
 
 ---
 
