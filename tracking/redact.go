@@ -9,16 +9,25 @@
 // Isso mantém I2 (proof) e I3 (schema) consistentes.
 package tracking
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
-// secretPatterns cobre os formatos mais comuns que vazam em CLI:
+// MaxPayloadBytes é o limite antes de truncar payloads em logs.
+// Payloads acima desse limite são truncados e marcados com [TRUNCATED].
+const MaxPayloadBytes = 4096
+
+// secretPatterns cobre os formatos mais comuns que vazam em CLI ou HTTP:
 //   - Bearer tokens (Authorization: Bearer xxx)
+//   - X-Authorization header (x-authorization: xxx)
 //   - API keys sk-live/sk-test (Stripe, OpenAI, Anthropic)
 //   - AWS access keys (AKIA...)
 //   - password=/api_key=/token= (env/config inline)
 //   - SSH private key headers
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}`),
+	regexp.MustCompile(`(?i)(x-authorization\s*:\s*)[^\s"']+`),
 	regexp.MustCompile(`sk-(live|test|proj)-[A-Za-z0-9_\-]{10,}`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	regexp.MustCompile(`(?i)(password|api[_-]?key|secret|token)\s*[=:]\s*[^\s"']+`),
@@ -44,4 +53,13 @@ func RedactSecrets(s string) string {
 		})
 	}
 	return out
+}
+
+// TruncatePayload trunca s se len(s) > maxBytes, adicionando marcador.
+// Garante que payloads longos não causem exposição excessiva em logs.
+func TruncatePayload(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes] + fmt.Sprintf(" [TRUNCATED: %d bytes omitidos]", len(s)-maxBytes)
 }

@@ -19,6 +19,7 @@ var redactors = []struct {
 	repl string
 }{
 	{regexp.MustCompile(`(?i)(Bearer)\s+[A-Za-z0-9._\-+/=]+`), `$1 [REDACTED]`},
+	{regexp.MustCompile(`(?i)(x-authorization\s*:)\s*[^\s"']+`), `$1 [REDACTED]`},
 	{regexp.MustCompile(`(?i)(password|token|api[_-]?key)(\s*[:=]\s*)([^\s&"'<>,]+)`), `$1$2[REDACTED]`},
 }
 

@@ -116,7 +116,17 @@ func main() {
 		deep := fs.Bool("deep", false, "diagnóstico profundo: symlinks, wrappers, commit mismatch, origem de texto")
 		jsonOut := fs.Bool("json", false, "emite relatório estruturado em JSON (suprime saída humana)")
 		alertOnly := fs.Bool("alert-only", false, "silencioso: imprime apenas blocos para risco >= HIGH (substitui `orbit analyze`)")
+		security := fs.Bool("security", false, "checklist de segurança para exposição pública (sempre strict)")
 		_ = fs.Parse(os.Args[2:])
+		if *security {
+			if err := runDoctorSecurity(*jsonOut); err != nil {
+				if !*jsonOut {
+					fmt.Fprintf(os.Stderr, "❌  %v\n", err)
+				}
+				os.Exit(1)
+			}
+			return
+		}
 		if err := runDoctorWithMode(*strict, *fix, *deep, *jsonOut, *alertOnly); err != nil {
 			if !*jsonOut {
 				fmt.Fprintf(os.Stderr, "❌  %v\n", err)
