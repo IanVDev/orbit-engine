@@ -57,6 +57,10 @@ type RunResult struct {
 	// timestamp. "" = genesis (primeiro log) ou predecessor legado sem hash.
 	// Encadeia os logs: remover/reordenar quebra o match em verify --chain.
 	PrevProof string `json:"prev_proof,omitempty"`
+	// SafeMode é true quando a execução foi bloqueada por --safe.
+	// exit_code=-1 quando SafeMode=true — nunca houve processo real.
+	// omitempty: ausente em logs normais (back-compat garantida).
+	SafeMode bool `json:"safe_mode,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.

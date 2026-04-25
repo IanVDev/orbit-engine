@@ -60,7 +60,15 @@ func main() {
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		jsonMode  := fs.Bool("json",       false, "output JSON estruturado em vez de texto")
 		noSpinner := fs.Bool("no-spinner", false, "desativa spinner de progresso (automático em pipes/CI)")
+		safe      := fs.Bool("safe",       false, "simula execução: exibe análise de risco sem executar nada")
 		_ = fs.Parse(os.Args[2:])
+		if *safe {
+			if err := runSafe(fs.Args(), *jsonMode); err != nil {
+				fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if err := runRun(fs.Args(), *jsonMode, *noSpinner); err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
 			os.Exit(1)
