@@ -90,10 +90,12 @@ func TestAnalyzeSafeRisk_HighPatterns(t *testing.T) {
 		args []string
 	}{
 		{"git push force", "git", []string{"push", "--force", "origin", "main"}},
+		{"git push force-with-lease", "git", []string{"push", "--force-with-lease", "origin", "main"}},
 		{"git reset hard", "git", []string{"reset", "--hard", "HEAD~3"}},
 		{"sudo rm", "sudo", []string{"rm", "-rf", "/var/log"}},
 		{"chmod recursive", "chmod", []string{"-R", "777", "/etc"}},
 		{"drop table", "psql", []string{"-c", "DROP TABLE users"}},
+		{"find -delete", "find", []string{".", "-name", "*.log", "-delete"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -152,6 +154,96 @@ func TestAnalyzeSafeRisk_NoneForSafeCommands(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Anti-regressão: --safe NUNCA executa
 // ---------------------------------------------------------------------------
+
+// TestSafe_IndirectCommandNeverExecutes é a garantia de que comandos indiretos
+// (shell wrappers, pipes, python, find -delete) também não criam efeito colateral.
+// Cada caso passa um comando que CRIARIA ou REMOVERIA um arquivo se executado.
+// Após runSafe, verificamos que o estado do sistema é idêntico ao inicial.
+func TestSafe_IndirectCommandNeverExecutes(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ORBIT_HOME", tmp)
+
+	cases := []struct {
+		name       string
+		cmd        string
+		args       func(marker string) []string
+		preCreate  bool // se true, cria o marker antes; o comando o destruiria
+		expectExst bool // true = marker deve existir após runSafe
+	}{
+		{
+			name:       "sh -c touch",
+			cmd:        "sh",
+			args:       func(m string) []string { return []string{"-c", "touch " + m} },
+			preCreate:  false,
+			expectExst: false, // sh não deve criar o arquivo
+		},
+		{
+			name:       "bash -c rm",
+			cmd:        "bash",
+			args:       func(m string) []string { return []string{"-c", "rm -rf " + m} },
+			preCreate:  true,
+			expectExst: true, // bash não deve apagar o arquivo
+		},
+		{
+			name: "python3 -c os.system touch",
+			cmd:  "python3",
+			args: func(m string) []string {
+				return []string{"-c", `import os; os.system("touch ` + m + `")`}
+			},
+			preCreate:  false,
+			expectExst: false,
+		},
+		{
+			name:       "curl pipe bash",
+			cmd:        "curl",
+			args:       func(m string) []string { return []string{"https://example.com/install.sh", "|", "bash"} },
+			preCreate:  false,
+			expectExst: false,
+		},
+		{
+			name:       "find -delete",
+			cmd:        "find",
+			args:       func(m string) []string { return []string{m, "-delete"} },
+			preCreate:  true,
+			expectExst: true, // find -delete não deve apagar o arquivo
+		},
+		{
+			name:       "git push --force-with-lease",
+			cmd:        "git",
+			args:       func(m string) []string { return []string{"push", "--force-with-lease", "origin", "main"} },
+			preCreate:  false,
+			expectExst: false, // git não cria marcador — apenas validamos risco sem crash
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			marker := tmp + "/marker-" + strings.ReplaceAll(c.name, " ", "-")
+
+			if c.preCreate {
+				if err := os.WriteFile(marker, []byte("alive"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			args := c.args(marker)
+			err := runSafe(append([]string{c.cmd}, args...), false)
+			if err != nil {
+				t.Fatalf("runSafe retornou erro inesperado: %v", err)
+			}
+
+			_, statErr := os.Stat(marker)
+			exists := statErr == nil
+
+			if c.expectExst && !exists {
+				t.Fatalf("REGRESSÃO CRÍTICA [%s]: runSafe --safe destruiu arquivo existente", c.name)
+			}
+			if !c.expectExst && exists {
+				t.Fatalf("REGRESSÃO CRÍTICA [%s]: runSafe --safe criou arquivo — comando foi executado", c.name)
+			}
+		})
+	}
+}
 
 // TestSafe_NeverCreatesProcess é a garantia central de fail-closed:
 // runSafe não deve jamais criar um processo filho.

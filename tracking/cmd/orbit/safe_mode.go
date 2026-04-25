@@ -4,6 +4,12 @@
 // arquivo. O caminho --safe é completamente separado de run.go — não existe
 // forma de um bug aqui "cair de volta" para execução real.
 //
+// --safe NUNCA executa o comando. Isso inclui comandos passados como string
+// para shells (sh -c, bash -c), wrappers Python (python -c "os.system(...)"),
+// pipes destrutivos (curl | bash) ou qualquer outro padrão indireto.
+// --safe é pré-visualização de risco, NÃO sandbox. Comandos perigosos
+// continuam perigosos fora do Orbit — --safe não os torna seguros.
+//
 // Fluxo:
 //  1. Recebe comando + args (strings apenas — nunca processo)
 //  2. Classifica risco estaticamente (pattern matching sobre strings)
@@ -152,9 +158,10 @@ func analyzeSafeRisk(cmd string, args []string) safeAnalysis {
 		}
 	}
 
-	// git push --force
+	// git push --force / --force-with-lease
 	if strings.Contains(lo, "git") && strings.Contains(lo, "push") &&
-		(strings.Contains(lo, "--force") || strings.Contains(lo, " -f ")) {
+		(strings.Contains(lo, "--force") || strings.Contains(lo, " -f ") ||
+			strings.Contains(lo, "--force-with-lease")) {
 		bump(riskHigh, "git push --force — sobrescreve histórico remoto")
 	}
 
@@ -172,6 +179,11 @@ func analyzeSafeRisk(cmd string, args []string) safeAnalysis {
 	if (strings.Contains(lo, "chmod") || strings.Contains(lo, "chown")) &&
 		strings.Contains(lo, "-r") {
 		bump(riskHigh, "alteração recursiva de permissões/proprietário")
+	}
+
+	// find com -delete (deleção recursiva irreversível)
+	if strings.Contains(lo, "find") && strings.Contains(lo, "-delete") {
+		bump(riskHigh, "find -delete — deleção recursiva irreversível via find")
 	}
 
 	// ── MEDIUM ───────────────────────────────────────────────────────────────
