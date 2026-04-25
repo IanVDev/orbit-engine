@@ -32,7 +32,9 @@ func setupRepo(t *testing.T) (repoDir string) {
 
 	repo := t.TempDir()
 	for _, args := range [][]string{
-		{"init", "-q"},
+		// --template= impede que init.templateDir do usuário copie hooks
+		// para o repo temporário, garantindo ambiente isolado para os testes.
+		{"init", "-q", "--template="},
 		{"config", "user.email", "t@t"},
 		{"config", "user.name", "t"},
 		{"config", "commit.gpgsign", "false"},
