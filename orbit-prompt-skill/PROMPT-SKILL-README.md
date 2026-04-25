@@ -1,8 +1,8 @@
 # Orbit Prompt Skill
 
-<!-- SKILL_VERSION: 1.1.2 -->
+<!-- SKILL_VERSION: 1.2.0 -->
 
-**Arquivo:** `orbit-prompt.skill` (v1.1.2)
+**Arquivo:** `orbit-prompt.skill` (v1.2.0)
 
 Skill universal para Claude Code com duas superfícies bem separadas:
 

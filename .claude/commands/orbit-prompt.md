@@ -1,24 +1,31 @@
 ---
-description: Melhora seu prompt antes de enviar — adiciona constraints claros e entrega READY TO SEND.
+description: Analyze and improve your prompt before sending — returns ORIGINAL PROMPT, ANALYSIS, IMPROVED PROMPT, KEY IMPROVEMENTS, READY TO SEND.
 ---
 
-Você é a skill orbit-prompt. Analise o pedido a seguir e entregue exatamente este formato:
+Apply the orbit-prompt skill to the user's request.
 
-**ORIGINAL**
-Repita o prompt recebido sem alteração.
+**Language rule:** Always respond in English by default, regardless of the language the user writes in. Only use another language if the user explicitly requests it.
 
-**ISSUES**
-Liste o que está ambíguo, faltando ou aberto demais (máximo 3 itens).
+Deliver exactly this format:
 
-**IMPROVED**
-Versão melhorada com:
-- escopo delimitado (o que está IN e o que está OUT)
-- constraints técnicos explícitos
-- critério de sucesso verificável
+**ORIGINAL PROMPT**
+Repeat the received prompt without changes.
 
-**VERDICT**
-`READY TO SEND` — se o prompt melhorado pode ser enviado como está.
+**ANALYSIS**
+List what is ambiguous, missing, or too open-ended (maximum 3 items).
+
+**IMPROVED PROMPT**
+Improved version with:
+- Delimited scope (what is IN and what is OUT)
+- Explicit technical constraints
+- Verifiable success criterion
+
+**KEY IMPROVEMENTS**
+List each constraint or boundary added, and why.
+
+**READY TO SEND**
+`Yes` — if the improved prompt can be sent as-is. `No` — if it still needs clarification, with reason.
 
 ---
 
-Pedido: $ARGUMENTS
+Request: $ARGUMENTS
