@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import type { TrustLevel, ObservatoryDiagnostic } from "@/lib/observatory-aggregator";
 
 interface DiagnosisView {
   timestamp: string;
@@ -16,6 +17,14 @@ interface DiagnosisView {
 }
 
 interface DashboardStats {
+  // Observatory health
+  trust_level: TrustLevel;
+  trusted_events: number;
+  rejected_events: number;
+  degraded_events: number;
+  execution_without_log: number;
+  diagnostics: ObservatoryDiagnostic[];
+  // Métricas de execução
   total_execucoes: number;
   sucesso: number;
   falhas: number;
@@ -82,6 +91,24 @@ const ERROR_TYPE_STYLE: Record<string, string> = {
   go_test_assertion: "bg-accent/15 text-accent",
   go_build_error:    "bg-degraded/20 text-degraded",
   file_line_only:    "bg-text-3/15 text-text-2",
+};
+
+const TRUST_LEVEL_LABEL: Record<TrustLevel, string> = {
+  ok: "OK",
+  degraded: "DEGRADED",
+  critical: "CRITICAL",
+};
+
+const TRUST_LEVEL_COLOR: Record<TrustLevel, string> = {
+  ok: "text-healthy",
+  degraded: "text-degraded",
+  critical: "text-atrisk",
+};
+
+const TRUST_LEVEL_BORDER: Record<TrustLevel, string> = {
+  ok: "border-healthy/30",
+  degraded: "border-degraded/50",
+  critical: "border-atrisk/60",
 };
 
 function fmtTime(iso: string | null): string {
@@ -163,6 +190,82 @@ function Bar({
   );
 }
 
+// TrustLevelCard — primeiro card, mais importante.
+// Se DEGRADED ou CRITICAL, mostra diagnostics inline.
+function TrustLevelCard({
+  level,
+  diagnostics,
+  trustedEvents,
+  rejectedEvents,
+  degradedEvents,
+  executionWithoutLog,
+}: {
+  level: TrustLevel;
+  diagnostics: ObservatoryDiagnostic[];
+  trustedEvents: number;
+  rejectedEvents: number;
+  degradedEvents: number;
+  executionWithoutLog: number;
+}) {
+  return (
+    <div
+      className={`rounded-[var(--radius-lg)] border ${TRUST_LEVEL_BORDER[level]} bg-surface/70 p-5 col-span-2 sm:col-span-3 lg:col-span-2`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-mono text-text-3 uppercase tracking-wider">
+          Trust Level
+        </span>
+        <span
+          className={`font-mono text-xs px-2 py-0.5 rounded font-semibold ${
+            level === "ok"
+              ? "bg-healthy/15 text-healthy"
+              : level === "degraded"
+                ? "bg-degraded/20 text-degraded"
+                : "bg-atrisk/20 text-atrisk"
+          }`}
+        >
+          {TRUST_LEVEL_LABEL[level]}
+        </span>
+      </div>
+
+      <div className="flex items-baseline gap-2">
+        <span className={`text-3xl font-bold font-mono ${TRUST_LEVEL_COLOR[level]}`}>
+          {trustedEvents}
+        </span>
+        <span className="text-xs font-mono text-text-3">
+          trusted
+          {rejectedEvents > 0 && (
+            <span className="text-atrisk ml-2">· {rejectedEvents} rejected</span>
+          )}
+          {degradedEvents > 0 && (
+            <span className="text-degraded ml-2">· {degradedEvents} degraded</span>
+          )}
+          {executionWithoutLog > 0 && (
+            <span className="text-atrisk ml-2">· {executionWithoutLog} sem log</span>
+          )}
+        </span>
+      </div>
+
+      {diagnostics.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-border-soft pt-3">
+          {diagnostics.map((d) => (
+            <div key={d.code} className="font-mono text-xs text-text-2">
+              <span
+                className={`font-semibold mr-1 ${
+                  d.code === "EXECUTION_WITHOUT_LOG" ? "text-atrisk" : "text-degraded"
+                }`}
+              >
+                {d.code}:
+              </span>
+              {d.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -202,7 +305,7 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <span className="font-mono text-text-3 animate-pulse">
-          Carregando dados do Orbit...
+          Carregando dados do Orbit Observatory...
         </span>
       </div>
     );
@@ -213,7 +316,7 @@ export default function DashboardPage() {
       <div className="min-h-screen flex items-center justify-center p-8">
         <div className="rounded-[var(--radius-lg)] border border-atrisk/40 bg-surface/70 p-6 max-w-lg w-full">
           <div className="font-mono text-xs text-atrisk uppercase tracking-wider mb-2">
-            ORBIT — FAIL CLOSED
+            ORBIT OBSERVATORY — FAIL CLOSED
           </div>
           <div className="text-text font-mono text-sm">{fetchError}</div>
           <button
@@ -241,7 +344,7 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-text tracking-tight">
-            Orbit — Dashboard
+            Orbit Observatory
           </h1>
           <p className="text-sm text-text-3 font-mono mt-1">
             Dados locais de <code className="text-text-2">~/.orbit/logs/</code>
@@ -249,7 +352,15 @@ export default function DashboardPage() {
         </div>
         <div className="text-right">
           <div className="flex items-center gap-2 justify-end">
-            <span className="w-2 h-2 rounded-full bg-healthy animate-pulse inline-block" />
+            <span
+              className={`w-2 h-2 rounded-full inline-block ${
+                stats.trust_level === "ok"
+                  ? "bg-healthy animate-pulse"
+                  : stats.trust_level === "degraded"
+                    ? "bg-degraded animate-pulse"
+                    : "bg-atrisk animate-pulse"
+              }`}
+            />
             <span className="text-xs font-mono text-text-3">ao vivo · 5s</span>
           </div>
           {lastPoll && (
@@ -260,8 +371,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Métricas principais */}
+      {/* Linha 1: Trust Level + métricas principais */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+        <TrustLevelCard
+          level={stats.trust_level}
+          diagnostics={stats.diagnostics ?? []}
+          trustedEvents={stats.trusted_events}
+          rejectedEvents={stats.rejected_events}
+          degradedEvents={stats.degraded_events}
+          executionWithoutLog={stats.execution_without_log}
+        />
         <StatCard label="Execuções" value={stats.total_execucoes} accent="accent" />
         <StatCard
           label="Taxa de Sucesso"

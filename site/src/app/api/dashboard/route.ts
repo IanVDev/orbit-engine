@@ -2,10 +2,19 @@ import { readdir, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import os from "os";
+import {
+  classifyExecutionEvent,
+  computeHealthLevel,
+  buildDiagnostics,
+  type TrustLevel,
+  type EventTrust,
+  type ObservatoryDiagnostic,
+} from "@/lib/observatory-aggregator";
 
 const ORBIT_DIR = path.join(os.homedir(), ".orbit");
 const LOGS_DIR = path.join(ORBIT_DIR, "logs");
 const LEDGER_PATH = path.join(ORBIT_DIR, "client_ledger.jsonl");
+const METRICS_DIR = path.join(ORBIT_DIR, "metrics");
 
 const FAILURE_TYPES: Record<number, string> = {
   0: "none",
@@ -17,9 +26,6 @@ const FAILURE_TYPES: Record<number, string> = {
 
 // Padrão de nome de arquivo: {ts}_{nano?}_{hex8}_exit{code}.json
 const FILENAME_SESSION_RE = /([0-9a-f]{8})_exit\d+\.json$/;
-
-// Campos obrigatórios em logs versionados (version >= 1)
-const EXECUTION_ESSENTIAL = ["timestamp", "exit_code", "command", "language"] as const;
 
 // Contrato do payload `diagnosis` persistido pelo Go no momento do run
 // (ver tracking/cmd/orbit/diagnose.go → DiagnosisPayload).
@@ -55,6 +61,7 @@ interface RawLog {
   execution_id?: string;
   anchor_status?: string;
   decision?: string;
+  proof?: string;
   diagnosis?: DiagnosisPayload;
   [key: string]: unknown;
 }
@@ -91,6 +98,8 @@ interface ExecLog extends RawLog {
   session_id: string | null;
   parent_event_id: string | null;
   failure_type: string;
+  trust: EventTrust;
+  reject_reason?: string;
 }
 
 interface LedgerEntry {
@@ -105,6 +114,14 @@ interface LedgerEntry {
 }
 
 interface DashboardStats {
+  // Observatory health
+  trust_level: TrustLevel;
+  trusted_events: number;
+  rejected_events: number;
+  degraded_events: number;
+  execution_without_log: number;
+  diagnostics: ObservatoryDiagnostic[];
+  // Métricas de execução
   total_execucoes: number;
   sucesso: number;
   falhas: number;
@@ -128,7 +145,6 @@ interface DashboardStats {
   atualizado_em: string;
 }
 
-const VALID_CONFIDENCE: ReadonlySet<string> = new Set(["high", "medium"]);
 const RECENT_DIAGNOSES_LIMIT = 10;
 
 // Fail-closed: devolve view pronta para surfacear ou null.
@@ -292,16 +308,6 @@ function isExecutionLog(data: RawLog): boolean {
   return "exit_code" in data || "version" in data;
 }
 
-function validateExecution(data: RawLog, file: string): void {
-  if (data.version !== undefined) {
-    for (const field of EXECUTION_ESSENTIAL) {
-      if (!(field in data)) {
-        throw new Error(`Campo essencial '${field}' ausente em ${file}`);
-      }
-    }
-  }
-}
-
 function tsToEpoch(iso: string): number {
   try {
     return new Date(iso).getTime() / 1000;
@@ -337,39 +343,75 @@ function linkSkillEvents(executions: ExecLog[], ledger: LedgerEntry[]): void {
   }
 }
 
-async function parseLogs(): Promise<{ executions: ExecLog[]; anchors: RawLog[] }> {
-  if (!existsSync(LOGS_DIR)) return { executions: [], anchors: [] };
+// readExecutionWithoutLogMetric lê o contador persistido pelo Go em
+// ~/.orbit/metrics/execution_without_log_total.count.
+// Arquivo ausente = 0 (métrica zerada é estado normal).
+async function readExecutionWithoutLogMetric(): Promise<number> {
+  const metricPath = path.join(METRICS_DIR, "execution_without_log_total.count");
+  try {
+    const content = await readFile(metricPath, "utf-8");
+    const n = parseInt(content.trim(), 10);
+    return isNaN(n) ? 0 : n;
+  } catch {
+    return 0;
+  }
+}
+
+interface ParseLogsResult {
+  executions: ExecLog[];
+  anchors: RawLog[];
+  rejectedCount: number;
+  rejectedReasons: Record<string, number>;
+  degradedCount: number;
+}
+
+async function parseLogs(): Promise<ParseLogsResult> {
+  if (!existsSync(LOGS_DIR)) {
+    return { executions: [], anchors: [], rejectedCount: 0, rejectedReasons: {}, degradedCount: 0 };
+  }
 
   const files = (await readdir(LOGS_DIR)).filter((f) => f.endsWith(".json")).sort();
   const executions: ExecLog[] = [];
   const anchors: RawLog[] = [];
+  let rejectedCount = 0;
+  const rejectedReasons: Record<string, number> = {};
+  let degradedCount = 0;
 
   for (const file of files) {
     const content = await readFile(path.join(LOGS_DIR, file), "utf-8");
     const data = JSON.parse(content) as RawLog;
 
+    // Hard fail: estrutura inválida é erro de parse, não de schema.
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
       throw new Error(`Evento inválido em ${file}: esperado objeto`);
     }
 
-    if (!data.timestamp) {
-      throw new Error(`Campo essencial 'timestamp' ausente em ${file}`);
-    }
-
     if (isExecutionLog(data)) {
-      validateExecution(data, file);
+      const classification = classifyExecutionEvent(data as Record<string, unknown>);
+
+      if (classification.trust === "rejected") {
+        rejectedCount++;
+        const r = classification.reason ?? "unknown";
+        rejectedReasons[r] = (rejectedReasons[r] ?? 0) + 1;
+      } else if (classification.trust === "degraded") {
+        degradedCount++;
+      }
+
       executions.push({
         ...data,
         session_id: deriveSessionId(file),
         parent_event_id: null,
         failure_type: failureType(data.exit_code),
+        trust: classification.trust,
+        reject_reason: classification.reason,
       });
     } else {
+      // Âncoras: validação mais leve — apenas exige que seja objeto.
       anchors.push(data);
     }
   }
 
-  return { executions, anchors };
+  return { executions, anchors, rejectedCount, rejectedReasons, degradedCount };
 }
 
 async function parseLedger(): Promise<LedgerEntry[]> {
@@ -391,11 +433,40 @@ function aggregate(
   executions: ExecLog[],
   anchors: RawLog[],
   ledger: LedgerEntry[],
+  executionWithoutLog: number,
+  rejectedCount: number,
+  rejectedReasons: Record<string, number>,
+  degradedCount: number,
 ): DashboardStats {
-  const total = executions.length;
+  // Contar trusted/degraded/rejected
+  const trustedEvents = executions.filter((e) => e.trust === "trusted").length;
+
+  const trustLevel = computeHealthLevel({
+    trusted: trustedEvents,
+    degraded: degradedCount,
+    rejected: rejectedCount,
+    executionWithoutLog,
+  });
+
+  const diagnostics = buildDiagnostics({
+    rejected: rejectedCount,
+    rejectedReasons,
+    degradedCount,
+    executionWithoutLog,
+  });
+
+  // Stats calculados apenas sobre eventos não-rejected (trusted + degraded)
+  const validExecutions = executions.filter((e) => e.trust !== "rejected");
+  const total = validExecutions.length;
 
   if (total === 0) {
     return {
+      trust_level: trustLevel,
+      trusted_events: trustedEvents,
+      rejected_events: rejectedCount,
+      degraded_events: degradedCount,
+      execution_without_log: executionWithoutLog,
+      diagnostics,
       total_execucoes: 0,
       sucesso: 0,
       falhas: 0,
@@ -420,10 +491,10 @@ function aggregate(
     };
   }
 
-  const sucesso = executions.filter((e) => e.exit_code === 0).length;
+  const sucesso = validExecutions.filter((e) => e.exit_code === 0).length;
   const falhas = total - sucesso;
 
-  const durations = executions
+  const durations = validExecutions
     .map((e) => e.duration_ms)
     .filter((d): d is number => typeof d === "number");
 
@@ -437,7 +508,7 @@ function aggregate(
   const sessionIds = new Set<string>();
   const timestamps: string[] = [];
 
-  for (const e of executions) {
+  for (const e of validExecutions) {
     const cmd = e.command ?? "unknown";
     comandos[cmd] = (comandos[cmd] ?? 0) + 1;
 
@@ -459,9 +530,15 @@ function aggregate(
     0,
   );
 
-  const silenced = collectSilenced(executions);
+  const silenced = collectSilenced(validExecutions);
 
   return {
+    trust_level: trustLevel,
+    trusted_events: trustedEvents,
+    rejected_events: rejectedCount,
+    degraded_events: degradedCount,
+    execution_without_log: executionWithoutLog,
+    diagnostics,
     total_execucoes: total,
     sucesso,
     falhas,
@@ -477,12 +554,12 @@ function aggregate(
     skill_events: ledger.length,
     tokens_estimados,
     ultimo_evento: timestamps.length ? [...timestamps].sort().at(-1)! : null,
-    recent_diagnoses: collectRecentDiagnoses(executions),
+    recent_diagnoses: collectRecentDiagnoses(validExecutions),
     silenced_events: silenced.count,
     silenced_by_command: silenced.byCommand,
     expansion_policy: expansionPolicyView(),
     expansion_candidates: collectExpansionCandidates(
-      executions,
+      validExecutions,
       Date.now() / 1000,
     ),
     atualizado_em: new Date().toISOString(),
@@ -491,12 +568,18 @@ function aggregate(
 
 export async function GET() {
   try {
-    const [{ executions, anchors }, ledger] = await Promise.all([
-      parseLogs(),
-      parseLedger(),
-    ]);
+    const [{ executions, anchors, rejectedCount, rejectedReasons, degradedCount }, ledger, executionWithoutLog] =
+      await Promise.all([parseLogs(), parseLedger(), readExecutionWithoutLogMetric()]);
     linkSkillEvents(executions, ledger);
-    const stats = aggregate(executions, anchors, ledger);
+    const stats = aggregate(
+      executions,
+      anchors,
+      ledger,
+      executionWithoutLog,
+      rejectedCount,
+      rejectedReasons,
+      degradedCount,
+    );
     return Response.json(stats);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
