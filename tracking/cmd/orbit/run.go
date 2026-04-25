@@ -17,7 +17,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,6 +60,12 @@ type RunResult struct {
 	// exit_code=-1 quando SafeMode=true — nunca houve processo real.
 	// omitempty: ausente em logs normais (back-compat garantida).
 	SafeMode bool `json:"safe_mode,omitempty"`
+	// Metadados de live output — omitempty para back-compat com logs antigos.
+	LiveOutputEnabled    bool   `json:"live_output_enabled,omitempty"`
+	LiveOutputLines      int    `json:"live_output_lines,omitempty"`
+	LiveOutputRedactions int    `json:"live_output_redactions,omitempty"`
+	LiveOutputTruncated  int    `json:"live_output_truncated_lines,omitempty"`
+	LiveOutputMode       string `json:"live_output_mode,omitempty"`
 }
 
 // runRun executa o comando fornecido e exibe o resultado com proof.
@@ -101,19 +106,31 @@ func runRun(args []string, jsonMode bool, noSpinner bool) error {
 		fmt.Println()
 	}
 
-	sp := NewSpinner("preparando contexto...", noSpinner || jsonMode)
+	// Live output: ativo em terminal interativo sem --json e sem --no-spinner.
+	liveEnabled := !jsonMode && !noSpinner && stderrIsTTY()
+	liveMode := "ci"
+	switch {
+	case jsonMode:
+		liveMode = "json"
+	case liveEnabled:
+		liveMode = "interactive"
+	}
+	lo := NewLiveOutput(os.Stderr, liveEnabled)
+
+	sp := NewSpinner("preparando contexto...", noSpinner || jsonMode || liveEnabled)
 
 	// ── Execução ──────────────────────────────────────────────────────────
 
-	var stdout, stderr bytes.Buffer
 	c := exec.Command(cmdName, cmdArgs...)
-	c.Stdout = &stdout
-	c.Stderr = &stderr
+	c.Stdout = lo.StdoutWriter()
+	c.Stderr = lo.StderrWriter()
 
+	lo.Start()
 	sp.SetMsg("executando comando...")
 	startedAt := time.Now()
 	runErr := c.Run()
 	durationMs := time.Since(startedAt).Milliseconds()
+	lo.Stop()
 	sp.SetMsg("capturando saída...")
 
 	exitCode := 0
@@ -131,12 +148,11 @@ func runRun(args []string, jsonMode bool, noSpinner bool) error {
 		}
 	}
 
-	// Combina stdout + stderr na mesma saída (reflete o que o usuário veria).
-	output := stdout.String()
-	if stderr.Len() > 0 {
-		output += stderr.String()
-	}
-	outputBytes := int64(len(output))
+	// I-PROOF: outputBytes calculado sobre bytes originais (antes da redação).
+	// Entrelaçamento de stdout/stderr não altera len — proof permanece equivalente.
+	rawOutput := lo.RawBytes()
+	output := string(rawOutput)
+	outputBytes := int64(len(rawOutput))
 
 	// ── Proof ─────────────────────────────────────────────────────────────
 	// proof = sha256(sessionID + timestamp + outputBytes)
@@ -178,24 +194,29 @@ func runRun(args []string, jsonMode bool, noSpinner bool) error {
 	}
 
 	result := RunResult{
-		Version:      LogSchemaVersion,
-		Command:      cmdName,
-		Args:         redactedArgs,
-		ExitCode:     exitCode,
-		Output:       output,
-		Proof:        proof,
-		SessionID:    sessionID,
-		Timestamp:    ts.Time.Format(time.RFC3339Nano),
-		DurationMs:   durationMs,
-		Language:     DetectLanguage(cmdName, cmdArgs),
-		OutputBytes:  outputBytes,
-		Event:        string(event),
-		Decision:     string(decision.Action),
-		Reason:       decision.Reason,
-		Criticality:  string(criticality),
-		SnapshotPath: snapshotPath,
-		Guidance:     guidance,
-		Diagnosis:    diagPayload,
+		Version:             LogSchemaVersion,
+		Command:             cmdName,
+		Args:                redactedArgs,
+		ExitCode:            exitCode,
+		Output:              output,
+		Proof:               proof,
+		SessionID:           sessionID,
+		Timestamp:           ts.Time.Format(time.RFC3339Nano),
+		DurationMs:          durationMs,
+		Language:            DetectLanguage(cmdName, cmdArgs),
+		OutputBytes:         outputBytes,
+		Event:               string(event),
+		Decision:            string(decision.Action),
+		Reason:              decision.Reason,
+		Criticality:         string(criticality),
+		SnapshotPath:        snapshotPath,
+		Guidance:            guidance,
+		Diagnosis:           diagPayload,
+		LiveOutputEnabled:   liveEnabled,
+		LiveOutputLines:     lo.Lines,
+		LiveOutputRedactions: lo.Redactions,
+		LiveOutputTruncated: lo.Truncated,
+		LiveOutputMode:      liveMode,
 	}
 
 	// Persistência append-only em $ORBIT_HOME/logs/. FAIL-CLOSED: se o log
@@ -263,17 +284,20 @@ func runRun(args []string, jsonMode bool, noSpinner bool) error {
 	}
 
 	// ── Output text ───────────────────────────────────────────────────────
+	// Suprimido quando live output já exibiu o conteúdo em tempo real.
 
-	fmt.Println(col(ansiDim, "  ── output ──────────────────────────────────────────"))
-	if output != "" {
-		for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
-			fmt.Println("  " + line)
+	if !liveEnabled {
+		fmt.Println(col(ansiDim, "  ── output ──────────────────────────────────────────"))
+		if output != "" {
+			for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
+				fmt.Println("  " + line)
+			}
+		} else {
+			fmt.Println(col(ansiDim, "  (sem output)"))
 		}
-	} else {
-		fmt.Println(col(ansiDim, "  (sem output)"))
+		fmt.Println(col(ansiDim, "  ─────────────────────────────────────────────────────"))
+		fmt.Println()
 	}
-	fmt.Println(col(ansiDim, "  ─────────────────────────────────────────────────────"))
-	fmt.Println()
 
 	// Contexto → resultado → significado → próximo passo
 	PrintKV("Exit code:", fmt.Sprintf("%d", exitCode))
