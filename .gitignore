@@ -93,6 +93,8 @@ tracking/main
 tracking/orbit-gateway
 tracking/tracking-server
 tracking/tracking-server-*
+tracking/tracking-server.bak
+tracking/*.bak
 tracking/validate_env
 tracking/validate_gov
 tracking/validate

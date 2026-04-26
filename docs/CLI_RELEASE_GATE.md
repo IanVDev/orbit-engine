@@ -18,6 +18,8 @@ make gate-cli
 Se retorna 🟢 **PASS**, a tag pode ser criada (`make tag-release VERSION=vX.Y.Z`).
 Se retorna 🔴 **FAIL**, a release está bloqueada. Sem subjetividade.
 
+`make gate-cli` gera `gate_report.json` com o resultado de cada gate. Esse arquivo é um artefato local de diagnóstico — **não commitar** (coberto por `.gitignore`).
+
 **Requer apenas**: `go`, `python3`, `bash`. **Não requer**: rede, Prometheus,
 Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 
