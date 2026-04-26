@@ -79,8 +79,8 @@ echo ""
 run G1_go_test bash -c 'cd tracking && go test ./... -count=1'
 
 # ── G6: Contrato do log estruturado v1 ────────────────────────────────
-# Requer ORBIT_SKIP_GUARD=1 pelo mesmo motivo que G13.
-run G6_log_contract bash -c "ORBIT_SKIP_GUARD=1 bash tests/test_log_contract.sh"
+# I16: em CI (GITHUB_ACTIONS=true), ORBIT_SKIP_GUARD requer double-ack.
+run G6_log_contract bash -c "ORBIT_SKIP_GUARD=1 ORBIT_SKIP_GUARD_IN_CI=1 bash tests/test_log_contract.sh"
 
 # ── G8: Makefile sem targets duplicados ──────────────────────────────
 run G8_no_mk_dup bash tests/test_makefile_no_dup.sh
@@ -89,9 +89,8 @@ run G8_no_mk_dup bash tests/test_makefile_no_dup.sh
 run G11_gate_doc_parity bash tests/test_gate_doc_parity.sh
 
 # ── G13: integrity — body_hash + chain + merkle + 1-byte tamper ──────
-# Requer ORBIT_SKIP_GUARD=1 porque o binário compilado sem ldflags de
-# release falha o startup guard (binário de dev, não-release).
-run G13_integrity bash -c "ORBIT_SKIP_GUARD=1 bash tests/test_integrity.sh"
+# I16: em CI (GITHUB_ACTIONS=true), ORBIT_SKIP_GUARD requer double-ack.
+run G13_integrity bash -c "ORBIT_SKIP_GUARD=1 ORBIT_SKIP_GUARD_IN_CI=1 bash tests/test_integrity.sh"
 
 # ── G16: consistência de versão da prompt skill ──────────────────────
 run G16_skill_version bash tests/test_skill_version_consistency.sh
