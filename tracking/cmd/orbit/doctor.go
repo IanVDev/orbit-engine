@@ -572,9 +572,11 @@ func probeHealth(res *doctorResult, url string, timeoutSec int) {
 	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		res.add("Tracking-server /health", sevCritical,
+		// tracking-server é opcional — orbit run funciona sem ele.
+		// Ausência é WARNING, não CRITICAL.
+		res.add("Tracking-server /health", sevWarning,
 			fmt.Sprintf("inacessível: %v", err),
-			"inicie o tracking-server em :9100")
+			"inicie o tracking-server em :9100 para habilitar orbit stats")
 		return
 	}
 	defer resp.Body.Close()
