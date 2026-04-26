@@ -368,10 +368,14 @@ func collectPathInfo(res *doctorResult) {
 		}
 	}
 
+	seen := make(map[string]struct{})
 	for _, dir := range res.pathDirs {
 		candidate := filepath.Join(dir, "orbit")
 		if _, statErr := os.Stat(candidate); statErr == nil {
-			res.allFound = append(res.allFound, candidate)
+			if _, dup := seen[candidate]; !dup {
+				res.allFound = append(res.allFound, candidate)
+				seen[candidate] = struct{}{}
+			}
 		}
 	}
 }
