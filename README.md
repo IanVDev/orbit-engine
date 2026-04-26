@@ -16,13 +16,26 @@ The installer detects OS×ARCH, verifies the binary with `sha256sum -c`, install
 Custom prefix / pinned version:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh | \
-  bash -s -- --version v0.1.2 --prefix /usr/local/bin
+  bash -s -- --version <version> --prefix /usr/local/bin
 ```
 
-### Manual install
+Replace `<version>` with the desired tag (e.g. `v0.2.2`). Check [Releases](https://github.com/IanVDev/orbit-engine/releases) for the latest.
+
+### Manual install (inspect before running)
+
+If you prefer to inspect the installer before executing it:
 
 ```bash
-VERSION="v0.1.2"
+curl -fsSL https://raw.githubusercontent.com/IanVDev/orbit-engine/main/scripts/install_remote.sh \
+  -o install_orbit.sh
+cat install_orbit.sh          # inspect before running
+bash install_orbit.sh
+```
+
+For a pinned version on a specific platform:
+
+```bash
+VERSION="$(gh release view --repo IanVDev/orbit-engine --json tagName -q .tagName)"
 OS="darwin"; ARCH="arm64"    # or: linux / amd64
 
 BASE="https://github.com/IanVDev/orbit-engine/releases/download/${VERSION}"
@@ -32,7 +45,7 @@ curl -fsSLo "${BIN}" "${BASE}/${BIN}"
 curl -fsSLo "${BIN}.sha256" "${BASE}/${BIN}.sha256"
 sha256sum -c "${BIN}.sha256"   # must pass — do not skip
 chmod +x "${BIN}"
-sudo install -m 0755 "${BIN}" /usr/local/bin/orbit
+install -m 0755 "${BIN}" ~/.orbit/bin/orbit
 orbit version
 ```
 
@@ -56,7 +69,7 @@ orbit version
 
 Redaction is applied before persistence, not at read time. The SHA256 proof covers the original `output_bytes` count, not the redacted string — so proof integrity is preserved.
 
-**Network.** The tracking server (`orbit run` target) binds to `127.0.0.1:9100` by default. No outgoing connections are made to external hosts unless explicitly configured.
+**Network.** The optional local tracking server binds to `127.0.0.1:9100` by default. `orbit run` works fully without it — the server is only needed for aggregated metrics (`orbit stats`). No outgoing connections are made to external hosts unless explicitly configured.
 
 ---
 
@@ -149,7 +162,7 @@ Logs are written to `~/.orbit/logs/` as JSON files, one per execution.
 
 ```json
 {
-  "schema_version": 1,
+  "version": 1,
   "session_id": "run-1713886800000000000",
   "command": "go test ./...",
   "exit_code": 1,
@@ -241,6 +254,7 @@ In `--json` mode, CI environments, or non-TTY pipes, the live UI is not rendered
 orbit doctor              # environment diagnostics (PATH, binary, tracking server)
 orbit doctor --security   # security configuration check (always strict)
 orbit doctor --strict     # treat warnings as errors
+orbit doctor --deep       # deep diagnostics: symlinks, wrappers, commit mismatch
 orbit doctor --json       # structured JSON output
 ```
 
@@ -253,8 +267,11 @@ orbit verify --chain                     # verify entire chain
 
 ### orbit diagnose
 
+Extracts the probable failure cause from the most recent log — file path, line number, error type, and next-step guidance — so you don't have to scan raw output.
+
 ```bash
 orbit diagnose            # analyze most recent log
+orbit diagnose <file>     # analyze a specific log file
 orbit diagnose --json     # structured output
 ```
 
@@ -310,6 +327,29 @@ Example:
 ```
 
 > **Autocomplete note.** If `/orbit-prompt` does not appear in the Claude Code autocomplete, install the skill via the Claude Code interface and restart the session. The slash command bridge is at `.claude/commands/orbit-prompt.md`.
+
+### All commands
+
+| Command | Description |
+|---|---|
+| `orbit run <cmd>` | Execute with proof, live output, and log |
+| `orbit run --safe <cmd>` | Risk preview without execution |
+| `orbit run --json <cmd>` | Structured JSON output |
+| `orbit doctor` | Environment diagnostics |
+| `orbit doctor --security` | Security posture check (strict) |
+| `orbit doctor --deep` | Deep diagnostics (symlinks, wrappers, path) |
+| `orbit verify <file>` | Verify a single log's proof |
+| `orbit verify --chain` | Verify entire log chain |
+| `orbit diagnose` | Extract probable failure cause from last log |
+| `orbit stats` | Aggregate metrics from local store |
+| `orbit hygiene install` | Install pre-commit hook in current repo |
+| `orbit hygiene check` | Check if pre-commit hook is present |
+| `orbit context-pack` | Generate context pack for session transitions |
+| `orbit logs prune` | Prune logs older than a threshold |
+| `orbit update` | Update the orbit binary |
+| `orbit version` | Print installed version |
+| `orbit quickstart` | Full onboarding walkthrough |
+| `orbit analyze` | *(deprecated)* Alias for `orbit doctor --alert-only` |
 
 ---
 
