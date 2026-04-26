@@ -46,7 +46,7 @@ func runQuickstartE2E(t *testing.T, bin string) string {
 	// ORBIT_SKIP_GUARD permite rodar mesmo quando o PATH do dev tem outras
 	// cópias de orbit instaladas — o guard é sobre integridade de instalação,
 	// não sobre o comportamento do quickstart em si.
-	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1", "ORBIT_SKIP_GUARD_IN_CI=1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

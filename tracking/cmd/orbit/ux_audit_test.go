@@ -86,7 +86,7 @@ func runOrbit(t *testing.T, expectExit0 bool, args ...string) string {
 	}
 	cmd := exec.Command(uxAuditBin, args...)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1", "ORBIT_SKIP_GUARD_IN_CI=1")
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -445,7 +445,7 @@ func TestInstall_BuildAndVerifyVersion(t *testing.T) {
 
 	// O binário já foi compilado por TestMain — validamos diretamente.
 	cmd := exec.Command(uxAuditBin, "version")
-	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1", "ORBIT_SKIP_GUARD_IN_CI=1")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("orbit version falhou: %v\noutput: %s", err, out)
@@ -479,7 +479,7 @@ func TestInstall_CopyToTempDirAndRun(t *testing.T) {
 	}
 
 	cmd := exec.Command(dest, "version")
-	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1", "ORBIT_SKIP_GUARD_IN_CI=1")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("binário copiado falhou em version: %v\noutput: %s", err, out)

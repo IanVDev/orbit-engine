@@ -394,7 +394,7 @@ func runOrbitForDoctorTest(t *testing.T, bin string, args ...string) string {
 	cmd.Dir = t.TempDir()
 	// ORBIT_SKIP_GUARD lets the doctor run even if the dev machine has
 	// duplicate orbit installs. We're testing doctor itself, not the guard.
-	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1")
+	cmd.Env = append(os.Environ(), "ORBIT_SKIP_GUARD=1", "ORBIT_SKIP_GUARD_IN_CI=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

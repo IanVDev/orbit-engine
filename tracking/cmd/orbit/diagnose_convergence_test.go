@@ -234,6 +234,7 @@ func runOrbitIn(t *testing.T, binary, orbitHome, workdir string, args ...string)
 	cmd.Env = append(os.Environ(),
 		"ORBIT_HOME="+orbitHome,
 		"ORBIT_SKIP_GUARD=1",
+		"ORBIT_SKIP_GUARD_IN_CI=1",
 	)
 	// `orbit run go test ./...` vai sair com exit!=0 (teste falho) —
 	// não quebramos aqui, é exatamente o que queremos capturar.
