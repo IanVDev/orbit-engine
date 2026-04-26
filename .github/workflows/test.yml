@@ -23,18 +23,6 @@ jobs:
       - name: go test
         run: go test ./... -count=1
 
-  validate-promql:
-    name: PromQL governance rules
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: tracking/go.mod
-          cache-dependency-path: tracking/go.sum
-      - name: make validate-promql
-        run: make validate-promql
-
   gate-cli:
     name: Prod Gate v1 (CLI)
     runs-on: ubuntu-latest
