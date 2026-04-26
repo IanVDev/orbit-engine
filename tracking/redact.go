@@ -19,14 +19,14 @@ import (
 const MaxPayloadBytes = 4096
 
 // secretPatterns cobre os formatos mais comuns que vazam em CLI ou HTTP:
-//   - Bearer tokens (Authorization: Bearer xxx)
+//   - Bearer tokens (Authorization: Bearer xxx) — qualquer comprimento
 //   - X-Authorization header (x-authorization: xxx)
 //   - API keys sk-live/sk-test (Stripe, OpenAI, Anthropic)
 //   - AWS access keys (AKIA...)
 //   - password=/api_key=/token= (env/config inline)
 //   - SSH private key headers
 var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}`),
+	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._\-+/=]+`),
 	regexp.MustCompile(`(?i)(x-authorization\s*:\s*)[^\s"']+`),
 	regexp.MustCompile(`sk-(live|test|proj)-[A-Za-z0-9_\-]{10,}`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
