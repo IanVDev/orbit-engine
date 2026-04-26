@@ -25,29 +25,21 @@ Grafana, Docker, Alertmanager. Roda offline em **< 120 s** em ambiente limpo.
 
 ---
 
-## Os 17 gates (todos devem PASS)
+## Os 7 gates ativos (todos devem PASS)
 
 | # | Gate | O que valida | Script |
 |---|------|-------------|--------|
 | G1 | `G1_go_test` | Testes Go da árvore `tracking/...` | `go test ./...` |
-| G2 | `G2_no_user_writes` | Invariante *"Orbit não escreve fora de `$ORBIT_HOME`"* | `tests/test_no_user_writes.sh` |
-| G3 | `G3_readme_claims` | Léxico do README hero (detect/record/diagnose/observe/prove) | `tests/test_readme_claims.sh` |
-| G4 | `G4_python_evals` | 18 evals do skill (ativação/silêncio) | `tests/run_tests.py` |
-| G5 | `G5_smoke_e2e` | Binário real: `version`, `run` (ok + fail), `verify` (ok + tamper), `doctor --json` | `tests/smoke_e2e.sh` |
 | G6 | `G6_log_contract` | Schema v1 do log persistido + paridade com `run --json` | `tests/test_log_contract.sh` |
-| G7 | `G7_rollback` | `scripts/orbit_rollback.sh` restaura `.bak` após update quebrado | `tests/test_rollback.sh` |
 | G8 | `G8_no_mk_dup` | Makefile sem *"overriding recipe"* | `tests/test_makefile_no_dup.sh` |
-| G9 | `G9_docs_scope` | Docs públicos não apontam gate do Produto B | `tests/test_docs_dont_claim_v1.sh` |
-| G10 | `G10_skill_contract` | Frontmatter + seções invariantes em `skill/SKILL.md` | `tests/test_skill_contract.sh` |
 | G11 | `G11_gate_doc_parity` | Contagem de gates neste doc bate com `scripts/gate_cli.sh` | `tests/test_gate_doc_parity.sh` |
-| G12 | `G12_system_contract` | Cada invariante de `docs/SYSTEM_CONTRACT.md` aponta código+teste existentes | `tests/test_system_contract.sh` |
 | G13 | `G13_integrity` | I17 body_hash (1 byte → verify FAIL) + I18 chain break + I19 merkle determinístico | `tests/test_integrity.sh` |
-| G14 | `G14_anchor_verification` | I20: signature Ed25519 + monotonic anti-replay + full-match + leaf_count | `tests/test_anchor_verification.sh` |
-| G15 | `G15_trusted_signer` | I21: AppPub == trustedAuryaPubKey (pub key pinned) | `tests/test_trusted_signer.sh` |
 | G16 | `G16_skill_version` | Consistência SKILL.md (SSOT) ↔ marcador README ↔ tag `prompt-skill-v*` | `tests/test_skill_version_consistency.sh` |
 | G17 | `G17_slash_command_bridge` | Skill orbit-prompt tem bridge `/orbit-prompt` em `.claude/commands/` | `scripts/check_claude_slash_command_bridge.sh` |
 
 Cada Gi emite `{gate, status, duration_ms, tail}` em `gate_report.json`.
+
+Gates G2, G3, G4, G5, G7, G9, G10, G12, G14, G15 foram removidos: scripts referenciados não existem no repositório. Esses vetores de validação são candidatos a backlog — nenhum gate fake é incluído.
 
 ---
 
@@ -73,7 +65,7 @@ Bump de schema (`version: 2`) é **breaking**.
 
 ---
 
-## Proof / Tampering (travado por G5)
+## Proof / Tampering
 
 `orbit verify` recalcula `sha256(session_id + timestamp + output_bytes)`
 (`tracking/cmd/orbit/verify.go:15-17`). Adulterar qualquer um dos 3 campos do
@@ -81,20 +73,8 @@ escopo → `verify` retorna exit 1. Adulterar `output` sem alterar `output_bytes
 **não é detectado** — esse é o contrato atual, deliberado (o proof é um
 *commit-marker*, não um blob-hash).
 
----
-
-## Rollback (travado por G7)
-
-`scripts/update_orbit.sh` grava `<dest>.bak` antes de substituir o binário.
-`scripts/orbit_rollback.sh` restaura esse `.bak` com validação fail-closed:
-
-1. Backup existe?
-2. Backup executa `version`?
-3. `mv` atômico (com fallback `sudo`)?
-4. Binário restaurado executa `version`?
-
-Qualquer FAIL → script aborta com mensagem acionável. Testado em ciclo
-completo (old→new→rollback→old) por `tests/test_rollback.sh`.
+O G13 (`test_integrity.sh`) cobre body_hash, chain e merkle — mas não cobre o
+smoke E2E completo do binário real. Smoke E2E (antigo G5) está em backlog.
 
 ---
 
@@ -127,28 +107,9 @@ Esses artefatos continuam existindo no repo e são validados por `make gate-serv
 
 ---
 
-## Evidência atual
+## Evidência
 
-Última execução:
+Execute `make gate-cli` e verifique que todos os 7 gates retornam PASS.
+O relatório é salvo em `gate_report.json` (artefato local, não commitar).
 
-```
-[PASS] G1_go_test                   (~14s)
-[PASS] G2_no_user_writes            (<1s)
-[PASS] G3_readme_claims             (<1s)
-[PASS] G4_python_evals              (<1s)
-[PASS] G5_smoke_e2e                 (~2s)
-[PASS] G6_log_contract              (~1s)
-[PASS] G7_rollback                  (~2s)
-[PASS] G8_no_mk_dup                 (<1s)
-[PASS] G9_docs_scope                (<1s)
-[PASS] G10_skill_contract           (<1s)
-[PASS] G11_gate_doc_parity          (<1s)
-[PASS] G12_system_contract          (<1s)
-[PASS] G13_integrity                (~3s)
-[PASS] G14_anchor_verification      (~5s)
-[PASS] G15_trusted_signer           (~3s)
-
-🟢 PROD GATE v1: PASS — 15 gates OK
-```
-
-Se você vê qualquer gate diferente de PASS, **não tague**.
+Se qualquer gate retornar FAIL, **não tague**.
