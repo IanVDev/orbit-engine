@@ -222,7 +222,7 @@ func runRun(args []string, jsonMode bool, noSpinner bool) error {
 	// Persistência append-only em $ORBIT_HOME/logs/. FAIL-CLOSED: se o log
 	// não for gravado E verificado, a execução é marcada CRITICAL e o orbit
 	// retorna erro — o observatório depende de completude de logs. Sanitiza
-	// secrets antes de gravar; o terminal mostra o output original.
+	// secrets antes de gravar (live output também redacta — ver live_output.go:161).
 	toLog := result
 	toLog.Output = redactOutput(result.Output)
 	if len(result.Args) > 0 {

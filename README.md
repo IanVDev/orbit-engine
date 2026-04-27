@@ -69,7 +69,7 @@ orbit version
 
 Redaction is applied before persistence, not at read time. The SHA256 proof covers the original `output_bytes` count, not the redacted string — so proof integrity is preserved.
 
-**Network.** The optional local tracking server binds to `127.0.0.1:9100` by default. `orbit run` works fully without it — the server is only needed for aggregated metrics (`orbit stats`). No outgoing connections are made to external hosts unless explicitly configured.
+**Network.** The optional local tracking server binds to `127.0.0.1:9100` by default. `orbit run` works fully without it. `orbit stats` shows local history from `~/.orbit/sessions.jsonl` without the server; real-time metrics (the `/metrics` panel) require the server to be running. No outgoing connections are made to external hosts unless explicitly configured.
 
 ---
 
@@ -121,9 +121,9 @@ export ORBIT_HMAC_SECRET="$(openssl rand -hex 32)"
 |---|---|
 | `ORBIT_MODE=public` without `ORBIT_HMAC_SECRET` | Process exits at startup with `[SECURITY] FATAL` |
 | `ORBIT_REMOTE_TRACKING=on` without `ORBIT_HMAC_SECRET` | Process exits at startup with `[SECURITY] FATAL` |
-| `ORBIT_BIND_ALL=1` without `ORBIT_HMAC_SECRET` | `orbit doctor --security` reports CRITICAL |
+| `ORBIT_BIND_ALL=1` without `ORBIT_HMAC_SECRET` | `orbit doctor --security` reports CRITICAL (server starts, but configuration is flagged) |
 
-**Fail-closed** means the server refuses to start, not that it starts in a degraded state.
+**Fail-closed** (first two rows) means the server refuses to start via `log.Fatalf`, not that it starts in a degraded state. `ORBIT_BIND_ALL=1` without HMAC is a configuration warning, not a startup block.
 
 **HMAC authentication.** When `ORBIT_HMAC_SECRET` is set, all requests to `/track` and `/reconcile` must include a valid `X-Orbit-Signature` header (HMAC-SHA256 of the request body). Requests without a valid signature are rejected with HTTP 401.
 
