@@ -101,12 +101,20 @@ Defaults out of the box (no configuration required):
 | Behavior | Default |
 |---|---|
 | Log storage | `~/.orbit/logs/` — local disk only |
-| Tracking server bind | `127.0.0.1:9100` — loopback only |
+| Outgoing network | none — no data leaves your machine |
 | Remote tracking | disabled |
 | HMAC authentication | disabled (dev mode) |
 | Secret redaction | always active (Bearer tokens, API keys, AWS keys, SSH headers) |
 
 Redaction is applied **before** display in the terminal **and** before writing to disk. The SHA256 proof covers the original `output_bytes` count, not the redacted string — so proof integrity is preserved regardless of how many values were redacted.
+
+**Tracking server.** The orbit CLI does not start a server automatically. The optional tracking server is a separate component used for aggregated metrics (`orbit stats`). When used:
+
+- `orbit quickstart` starts an embedded server on `127.0.0.1:<random-port>` (loopback, random port, never 9100 — only lives for the duration of quickstart)
+- An external tracking server, if deployed, defaults to `127.0.0.1:9100` (loopback only). Setting `ORBIT_BIND_ALL=1` exposes it on all interfaces and requires `ORBIT_HMAC_SECRET` in public mode.
+- `orbit doctor` checks `localhost:9100/health` and reports WARNING if unreachable — absence is expected in most local setups.
+
+`orbit run`, `orbit verify`, `orbit diagnose`, and `orbit doctor` all work without any tracking server running.
 
 Verify your current posture at any time:
 
