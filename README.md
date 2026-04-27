@@ -1,7 +1,6 @@
 # orbit-engine
 
-[![release](https://img.shields.io/github/v/release/IanVDev/orbit-engine)](https://github.com/IanVDev/orbit-engine/releases)
-[![license](https://img.shields.io/github/license/IanVDev/orbit-engine)](LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Local CLI for traceable command execution with verifiable evidence.**
 
