@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -227,6 +228,17 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "history":
+		err := runHistory(os.Args[2:])
+		if err != nil {
+			var exitErr *exitCodeError
+			if errors.As(err, &exitErr) {
+				os.Exit(exitErr.code)
+			}
+			fmt.Fprintf(os.Stderr, "\n❌  ERRO: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("orbit version %s (commit=%s build=%s)\n", Version, Commit, BuildTime)
 
@@ -261,6 +273,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  prompt        Gera prompt estruturado para o Claude a partir de um objetivo")
 	fmt.Fprintln(os.Stderr, "  update        Atualiza o binário orbit via GitHub Releases")
 	fmt.Fprintln(os.Stderr, "  release       Cria tag + push + (opcional) espera CI + valida release_gate")
+	fmt.Fprintln(os.Stderr, "  history       Lista registros locais de execução (--limit, --failed, --json, --detail)")
 	fmt.Fprintln(os.Stderr, "  version       Versão instalada")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Flags:")

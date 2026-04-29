@@ -83,9 +83,25 @@ Every `orbit run` writes one JSON file to `~/.orbit/logs/` with: command, exit c
 | `orbit hygiene install` | Install pre-commit hook in current repo |
 | `orbit hygiene check` | Check if pre-commit hook is present |
 | `orbit context-pack` | Generate context pack for session transitions (alias: `ctx`) |
+| `orbit history` | Browse local execution history with secret redaction |
 | `orbit update` | Update the orbit binary |
 | `orbit version` | Print installed version |
 | `orbit quickstart` | Full onboarding walkthrough |
+
+### orbit history
+
+Lists local execution logs from `~/.orbit/logs/`.
+
+```bash
+orbit history                        # table: most recent first
+orbit history --failed               # only executions with exit_code != 0
+orbit history --detail <session_id>  # full details for a specific execution
+orbit history --json                 # structured JSON output
+```
+
+Sensitive fields (`output`, `args`, `guidance`, `decision_reason`) are redacted
+before any rendering. Records missing `session_id` or `timestamp` are excluded
+from trusted output and reported as degraded integrity (exit code 2).
 
 Full reference and internals: [GUIDE.md](GUIDE.md).
 
